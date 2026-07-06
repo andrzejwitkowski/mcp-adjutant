@@ -28,14 +28,26 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Download embedding test fixtures
+        run: bash scripts/download-embedding-fixtures.sh
+
       - name: Check formatting
         run: cargo fmt -- --check
+        env:
+          CXX: g++
 
       - name: Run Clippy (Linter)
         run: cargo clippy --all-targets -- -D warnings
+        env:
+          CXX: g++
 
       - name: Run Backend Tests
         run: cargo test --all-targets
+        env:
+          CXX: g++
 
   frontend-react:
     name: React Frontend (Lint & Build)

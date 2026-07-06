@@ -6,6 +6,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mcp_adjutant::ProjectCacheManager;
 
+fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/embedding");
+    (fixtures.join("model.onnx"), fixtures.join("tokenizer.json"))
+}
+
+fn open_cache_manager(project_root: &Path) -> ProjectCacheManager {
+    let (model_path, tokenizer_path) = embedding_fixture_paths();
+    ProjectCacheManager::new(project_root, &model_path, &tokenizer_path)
+        .expect("initialize cache manager with embedding engine")
+}
+
 fn unique_temp_project(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -49,7 +60,7 @@ fn cache_miss_for_unknown_query() {
     fs::create_dir_all(&project_root).expect("create project root");
     write_demo_cargo_manifest(&project_root);
 
-    let cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
+    let cache = open_cache_manager(&project_root);
 
     let result = cache
         .try_get_valid_insight("unknown query")
@@ -66,8 +77,7 @@ fn finds_project_root_from_nested_directory() {
     fs::create_dir_all(project_root.join("src/nested")).expect("create nested dirs");
     write_demo_cargo_manifest(&project_root);
 
-    let cache = ProjectCacheManager::new(&project_root.join("src/nested"))
-        .expect("cache manager should initialize");
+    let cache = open_cache_manager(&project_root.join("src/nested"));
 
     assert_eq!(
         cache.project_root(),
@@ -85,7 +95,7 @@ fn appends_adjutant_directory_to_existing_gitignore() {
     write_demo_cargo_manifest(&project_root);
     fs::write(project_root.join(".gitignore"), "target/\n").expect("gitignore");
 
-    ProjectCacheManager::new(&project_root).expect("cache manager should initialize");
+    open_cache_manager(&project_root);
 
     let gitignore = fs::read_to_string(project_root.join(".gitignore")).expect("read gitignore");
     assert!(gitignore.contains(".adjutant/"));
@@ -102,7 +112,7 @@ fn store_and_retrieve_valid_insight() {
     let source_file = project_root.join("src/lib.rs");
     fs::write(&source_file, "pub fn hello() {}\n").expect("write source");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "how does hello work?",
@@ -130,7 +140,7 @@ fn modified_file_invalidates_cached_insight() {
     let source_file = project_root.join("src/lib.rs");
     fs::write(&source_file, "pub fn hello() {}\n").expect("write source");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "explain hello",
@@ -170,7 +180,7 @@ fn re_store_insight_refreshes_dependencies() {
     fs::write(&first_file, "fn a() {}\n").expect("write first file");
     fs::write(&second_file, "fn b() {}\n").expect("write second file");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "dual dependency query",
@@ -222,7 +232,7 @@ fn git_content_change_invalidates_cached_insight() {
         .output()
         .expect("git add");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "git tracked insight",
@@ -250,7 +260,7 @@ fn git_tracking_after_store_invalidates_cached_insight() {
     let source_file = project_root.join("src/lib.rs");
     fs::write(&source_file, "pub fn tracked() {}\n").expect("write source");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "pre-git query",
@@ -292,7 +302,7 @@ fn git_tracked_dependency_change_invalidates_cache() {
         .output()
         .expect("git add");
 
-    let mut cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
+    let mut cache = open_cache_manager(&project_root);
     cache
         .store_insight(
             "tracked query",
