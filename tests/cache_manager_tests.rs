@@ -1,7 +1,8 @@
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mcp_adjutant::ProjectCacheManager;
 
@@ -11,18 +12,42 @@ fn unique_temp_project(name: &str) -> PathBuf {
         .expect("system time")
         .as_nanos();
 
-    std::env::temp_dir().join(format!("mcp-adjutant-integration-{name}-{nanos}"))
+    std::env::temp_dir().join(format!("mcp-adjutant-cache-{name}-{nanos}"))
+}
+
+fn write_demo_cargo_manifest(project_root: &Path) {
+    fs::write(
+        project_root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\n",
+    )
+    .expect("write cargo manifest");
+}
+
+fn init_git_repo(project_root: &Path) {
+    Command::new("git")
+        .current_dir(project_root)
+        .args(["init"])
+        .output()
+        .expect("git init");
+
+    Command::new("git")
+        .current_dir(project_root)
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("git config email");
+
+    Command::new("git")
+        .current_dir(project_root)
+        .args(["config", "user.name", "Cache Test"])
+        .output()
+        .expect("git config name");
 }
 
 #[test]
 fn cache_miss_for_unknown_query() {
     let project_root = unique_temp_project("cache-miss");
     fs::create_dir_all(&project_root).expect("create project root");
-    fs::write(
-        project_root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write cargo manifest");
+    write_demo_cargo_manifest(&project_root);
 
     let cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
 
@@ -36,14 +61,109 @@ fn cache_miss_for_unknown_query() {
 }
 
 #[test]
+fn finds_project_root_from_nested_directory() {
+    let project_root = unique_temp_project("root-detect");
+    fs::create_dir_all(project_root.join("src/nested")).expect("create nested dirs");
+    write_demo_cargo_manifest(&project_root);
+
+    let cache = ProjectCacheManager::new(&project_root.join("src/nested"))
+        .expect("cache manager should initialize");
+
+    assert_eq!(
+        cache.project_root(),
+        fs::canonicalize(&project_root).unwrap()
+    );
+    assert!(project_root.join(".adjutant").is_dir());
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn appends_adjutant_directory_to_existing_gitignore() {
+    let project_root = unique_temp_project("gitignore");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+    fs::write(project_root.join(".gitignore"), "target/\n").expect("gitignore");
+
+    ProjectCacheManager::new(&project_root).expect("cache manager should initialize");
+
+    let gitignore = fs::read_to_string(project_root.join(".gitignore")).expect("read gitignore");
+    assert!(gitignore.contains(".adjutant/"));
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn store_and_retrieve_valid_insight() {
+    let project_root = unique_temp_project("cache-hit");
+    fs::create_dir_all(project_root.join("src")).expect("create src");
+    write_demo_cargo_manifest(&project_root);
+
+    let source_file = project_root.join("src/lib.rs");
+    fs::write(&source_file, "pub fn hello() {}\n").expect("write source");
+
+    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    cache
+        .store_insight(
+            "how does hello work?",
+            "## Insight\nCalls `hello`.",
+            vec![source_file.clone()],
+        )
+        .expect("store insight");
+
+    let cached = cache
+        .try_get_valid_insight("how does hello work?")
+        .expect("lookup")
+        .expect("cache hit");
+
+    assert_eq!(cached, "## Insight\nCalls `hello`.");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn modified_file_invalidates_cached_insight() {
+    let project_root = unique_temp_project("cache-invalidate");
+    fs::create_dir_all(project_root.join("src")).expect("create src");
+    write_demo_cargo_manifest(&project_root);
+
+    let source_file = project_root.join("src/lib.rs");
+    fs::write(&source_file, "pub fn hello() {}\n").expect("write source");
+
+    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    cache
+        .store_insight(
+            "explain hello",
+            "## Insight\nOriginal.",
+            vec![source_file.clone()],
+        )
+        .expect("store insight");
+
+    std::thread::sleep(Duration::from_millis(1100));
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&source_file)
+        .expect("open source");
+    writeln!(file, "// changed").expect("modify source");
+
+    let cached = cache
+        .try_get_valid_insight("explain hello")
+        .expect("lookup");
+    assert!(cached.is_none(), "modified file should invalidate cache");
+
+    let retry = cache
+        .try_get_valid_insight("explain hello")
+        .expect("lookup after invalidation");
+    assert!(retry.is_none(), "invalidated insight should be deleted");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
 fn re_store_insight_refreshes_dependencies() {
     let project_root = unique_temp_project("re-store");
     fs::create_dir_all(project_root.join("src")).expect("create src");
-    fs::write(
-        project_root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write cargo manifest");
+    write_demo_cargo_manifest(&project_root);
 
     let first_file = project_root.join("src/a.rs");
     let second_file = project_root.join("src/b.rs");
@@ -87,30 +207,46 @@ fn re_store_insight_refreshes_dependencies() {
 }
 
 #[test]
-fn git_tracked_dependency_change_invalidates_cache() {
-    let project_root = unique_temp_project("git-tracked");
+fn git_content_change_invalidates_cached_insight() {
+    let project_root = unique_temp_project("git-invalidate");
     fs::create_dir_all(project_root.join("src")).expect("create src");
-    fs::write(
-        project_root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write cargo manifest");
+    write_demo_cargo_manifest(&project_root);
+    init_git_repo(&project_root);
+
+    let source_file = project_root.join("src/lib.rs");
+    fs::write(&source_file, "pub fn hello() {}\n").expect("write source");
 
     Command::new("git")
         .current_dir(&project_root)
-        .args(["init"])
+        .args(["add", "."])
         .output()
-        .expect("git init");
-    Command::new("git")
-        .current_dir(&project_root)
-        .args(["config", "user.email", "test@example.com"])
-        .output()
-        .expect("git config email");
-    Command::new("git")
-        .current_dir(&project_root)
-        .args(["config", "user.name", "Cache Test"])
-        .output()
-        .expect("git config name");
+        .expect("git add");
+
+    let mut cache = ProjectCacheManager::new(&project_root).expect("cache manager");
+    cache
+        .store_insight(
+            "git tracked insight",
+            "## Insight\nTracked.",
+            vec![source_file.clone()],
+        )
+        .expect("store insight");
+
+    fs::write(&source_file, "pub fn hello() {}\npub fn world() {}\n").expect("rewrite source");
+
+    let cached = cache
+        .try_get_valid_insight("git tracked insight")
+        .expect("lookup");
+    assert!(cached.is_none(), "git blob change should invalidate cache");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn git_tracked_dependency_change_invalidates_cache() {
+    let project_root = unique_temp_project("git-tracked");
+    fs::create_dir_all(project_root.join("src")).expect("create src");
+    write_demo_cargo_manifest(&project_root);
+    init_git_repo(&project_root);
 
     let source_file = project_root.join("src/lib.rs");
     fs::write(&source_file, "pub fn tracked() {}\n").expect("write source");
