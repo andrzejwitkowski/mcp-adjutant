@@ -14,9 +14,9 @@ async fn text_pruner_mock_loops_mutates_and_stops_when_short_enough() {
         "loop should stop when output is short enough"
     );
     assert!(
-        result.accumulated_data.len() < 100,
+        result.accumulated_data.chars().count() < 100,
         "pruned output should be under 100 characters, got {}",
-        result.accumulated_data.len()
+        result.accumulated_data.chars().count()
     );
     assert!(
         result.iterations > 1,

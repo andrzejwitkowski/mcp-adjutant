@@ -20,17 +20,19 @@ impl AutonomousAgent for TextPrunerMock {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let source = if context.accumulated_data.is_empty() {
+        let source = if context.iterations <= 1 {
             &context.input_prompt
         } else {
             &context.accumulated_data
         };
 
-        let target_len = prune_target_len(source.len(), context.iterations);
+        let source_char_len = source.chars().count();
+        let feedback_rounds = mutation_rounds(&context.input_prompt);
+        let target_len = prune_target_len(source_char_len, context.iterations, feedback_rounds);
         let pruned = source.chars().take(target_len).collect::<String>();
 
+        context.is_finished = pruned.chars().count() < MAX_OUTPUT_CHARS;
         context.accumulated_data = pruned;
-        context.is_finished = context.accumulated_data.len() < MAX_OUTPUT_CHARS;
 
         Ok(())
     }
@@ -41,8 +43,15 @@ impl AutonomousAgent for TextPrunerMock {
     }
 }
 
-fn prune_target_len(current_len: usize, iteration: u32) -> usize {
-    let keep_percent = 70u32.saturating_sub(iteration.saturating_mul(10)).max(20);
+fn mutation_rounds(input_prompt: &str) -> u32 {
+    input_prompt.matches(MUTATION_SUFFIX).count() as u32
+}
+
+fn prune_target_len(current_len: usize, iteration: u32, feedback_rounds: u32) -> usize {
+    let keep_percent = 70u32
+        .saturating_sub(iteration.saturating_mul(10))
+        .saturating_sub(feedback_rounds.saturating_mul(5))
+        .max(20);
     (current_len * keep_percent as usize / 100).max(1)
 }
 
@@ -52,7 +61,12 @@ mod tests {
 
     #[test]
     fn prune_target_len_shrinks_progressively() {
-        assert!(prune_target_len(300, 1) < 300);
-        assert!(prune_target_len(300, 3) < prune_target_len(300, 1));
+        assert!(prune_target_len(300, 1, 0) < 300);
+        assert!(prune_target_len(300, 3, 0) < prune_target_len(300, 1, 0));
+    }
+
+    #[test]
+    fn prune_target_len_responds_to_mutation_feedback() {
+        assert!(prune_target_len(300, 2, 2) < prune_target_len(300, 2, 0));
     }
 }
