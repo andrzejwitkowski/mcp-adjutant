@@ -1,16 +1,19 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use mcp_adjutant::agent::{AgentLoopOrchestrator, ChatClient, ScoutAgent, SCOUT_SYSTEM_PROMPT};
+use mcp_adjutant::agent::{
+    AgentLoopOrchestrator, ChatClient, ScoutAgent, ScoutModelTurn, ScoutToolCall,
+    SCOUT_SYSTEM_PROMPT,
+};
 
 struct ScriptClient {
-    responses: Mutex<VecDeque<String>>,
+    responses: Mutex<VecDeque<ScoutModelTurn>>,
 }
 
 impl ScriptClient {
-    fn new(responses: Vec<&str>) -> Self {
+    fn new(responses: Vec<ScoutModelTurn>) -> Self {
         Self {
-            responses: Mutex::new(responses.into_iter().map(str::to_owned).collect()),
+            responses: Mutex::new(responses.into_iter().collect()),
         }
     }
 }
@@ -18,22 +21,34 @@ impl ScriptClient {
 struct ReactiveScriptClient;
 
 impl ChatClient for ReactiveScriptClient {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<String, String> {
+    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String> {
         assert_eq!(system_prompt, SCOUT_SYSTEM_PROMPT);
 
         if user_message.contains("Call sites at lines") {
-            return Ok("ACTION: finalize(report=\"found invoke calls\")\n".to_string());
+            return Ok(ScoutModelTurn {
+                content: Some("Raport gotowy.".to_string()),
+                tool_calls: vec![ScoutToolCall {
+                    name: "finalize".to_string(),
+                    arguments: serde_json::json!({ "report": "found invoke calls" }),
+                }],
+            });
         }
 
-        Ok(
-            "ACTION: ast_calls(file=\"tests/fixtures/scout/sample.rs\", method=\"invoke\")\n"
-                .to_string(),
-        )
+        Ok(ScoutModelTurn {
+            content: Some("Szukam wywołań AST.".to_string()),
+            tool_calls: vec![ScoutToolCall {
+                name: "ast_calls".to_string(),
+                arguments: serde_json::json!({
+                    "file": "tests/fixtures/scout/sample.rs",
+                    "method": "invoke"
+                }),
+            }],
+        })
     }
 }
 
 impl ChatClient for ScriptClient {
-    fn complete(&self, system_prompt: &str, _user_message: &str) -> Result<String, String> {
+    fn complete(&self, system_prompt: &str, _user_message: &str) -> Result<ScoutModelTurn, String> {
         assert!(
             system_prompt.contains("PHASE_1_SCOUT"),
             "system prompt should include scout contract"
@@ -54,8 +69,24 @@ impl ChatClient for ScriptClient {
 #[tokio::test]
 async fn scout_agent_executes_react_tools_then_finalizes() {
     let client = ScriptClient::new(vec![
-        "Thought: szeroki zwiad\nACTION: read_file(file=\"tests/fixtures/scout/readme.txt\", start=1, end=2)\n",
-        "Thought: raport gotowy\nACTION: finalize(report=\"## Scout\\n- alpha marker\")\n",
+        ScoutModelTurn {
+            content: Some("Szeroki zwiad pliku.".to_string()),
+            tool_calls: vec![ScoutToolCall {
+                name: "read_file".to_string(),
+                arguments: serde_json::json!({
+                    "file": "tests/fixtures/scout/readme.txt",
+                    "start": 1,
+                    "end": 2
+                }),
+            }],
+        },
+        ScoutModelTurn {
+            content: Some("Raport gotowy.".to_string()),
+            tool_calls: vec![ScoutToolCall {
+                name: "finalize".to_string(),
+                arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
+            }],
+        },
     ]);
 
     let agent = ScoutAgent::new(client);

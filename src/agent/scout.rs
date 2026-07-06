@@ -2,24 +2,123 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::PhaseProfile;
 use crate::tools::{read_file_range, run_ripgrep, AstUsageFinder};
 
 pub const SCOUT_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotem zwiadowczym (PHASE_1_SCOUT). Twoim celem jest zebranie i skondensowanie kontekstu kodu.
-Masz do dyspozycji 3 akcje, które możesz wywołać, pisząc dokładnie:
-- ACTION: ripgrep(pattern="fraza")
-- ACTION: ast_calls(file="sciezka", method="nazwa")
-- ACTION: read_file(file="sciezka", start=10, end=30)
-- ACTION: finalize(report="TU_TWÓJ_FINALNY_SKONDENSOWANY_RAPORT_MARKDOWN")
 
-Zasada wyboru: Jeśli nie znasz lokalizacji kodu, użyj najpierw 'ripgrep' (szeroka sieć). Gdy znasz pliki, użyj 'ast_calls' (skalpel AST), aby precyzyjnie wyciągnąć miejsca wywołań i odrzucić komentarze. Gdy zbierzesz esencję, wywołaj 'finalize'.
+Masz do dyspozycji narzędzia (tool calls):
+- ripgrep — szeroki zwiad tekstowy po repozytorium
+- ast_calls — precyzyjny skalpel AST: miejsca wywołań metody w pliku
+- read_file — wycinek pliku po numerach linii
+- finalize — zakończenie zwiadu ze skondensowanym raportem markdown
 
-Odpowiadaj sekwencją Thought -> Action -> Observation."#;
+Zasada wyboru: Jeśli nie znasz lokalizacji kodu, użyj najpierw ripgrep. Gdy znasz pliki, użyj ast_calls, aby precyzyjnie wyciągnąć miejsca wywołań i odrzucić komentarze. Gdy zbierzesz esencję, wywołaj finalize.
+
+Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj dokładnie jedno narzędzie."#;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoutToolCall {
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoutModelTurn {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ScoutToolCall>,
+}
 
 pub trait ChatClient: Send + Sync {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<String, String>;
+    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String>;
+}
+
+pub fn scout_tool_definitions() -> Value {
+    json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "ripgrep",
+                "description": "Szeroki zwiad tekstowy: uruchamia ripgrep z kontekstem linii.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Wzorzec wyszukiwania przekazywany do ripgrep."
+                        }
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ast_calls",
+                "description": "Skalpel AST: zwraca numery linii fizycznych wywołań metody (bez komentarzy i stringów).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Ścieżka do pliku .rs / .ts / .tsx."
+                        },
+                        "method": {
+                            "type": "string",
+                            "description": "Nazwa wywoływanej metody/funkcji."
+                        }
+                    },
+                    "required": ["file", "method"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Czyta wycinek pliku po numerach linii (1-based, włącznie).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Ścieżka do pliku."
+                        },
+                        "start": {
+                            "type": "integer",
+                            "description": "Pierwsza linia (>= 1)."
+                        },
+                        "end": {
+                            "type": "integer",
+                            "description": "Ostatnia linia (>= start)."
+                        }
+                    },
+                    "required": ["file", "start", "end"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "finalize",
+                "description": "Kończy zwiad i zwraca skondensowany raport markdown.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "report": {
+                            "type": "string",
+                            "description": "Finalny skondensowany raport markdown."
+                        }
+                    },
+                    "required": ["report"]
+                }
+            }
+        }
+    ])
 }
 
 pub struct DeepSeekClient {
@@ -36,6 +135,8 @@ impl DeepSeekClient {
 struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
+    tools: Value,
+    tool_choice: &'static str,
     temperature: f32,
     max_tokens: u32,
 }
@@ -58,11 +159,23 @@ struct ChatChoice {
 
 #[derive(Deserialize)]
 struct ChatChoiceMessage {
-    content: String,
+    content: Option<String>,
+    tool_calls: Option<Vec<ApiToolCall>>,
+}
+
+#[derive(Deserialize)]
+struct ApiToolCall {
+    function: ApiToolFunction,
+}
+
+#[derive(Deserialize)]
+struct ApiToolFunction {
+    name: String,
+    arguments: String,
 }
 
 impl ChatClient for DeepSeekClient {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<String, String> {
+    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String> {
         let url = format!(
             "{}/chat/completions",
             self.profile.base_url.trim_end_matches('/')
@@ -79,6 +192,8 @@ impl ChatClient for DeepSeekClient {
                     content: user_message,
                 },
             ],
+            tools: scout_tool_definitions(),
+            tool_choice: "auto",
             temperature: self.profile.temperature,
             max_tokens: self.profile.max_tokens,
         };
@@ -98,11 +213,31 @@ impl ChatClient for DeepSeekClient {
             .into_json()
             .map_err(|err| format!("deepseek response parse failed: {err}"))?;
 
-        body.choices
+        let message = body
+            .choices
             .into_iter()
             .next()
-            .map(|choice| choice.message.content)
-            .ok_or_else(|| "deepseek returned no choices".to_string())
+            .map(|choice| choice.message)
+            .ok_or_else(|| "deepseek returned no choices".to_string())?;
+
+        let tool_calls = message
+            .tool_calls
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| {
+                let arguments = serde_json::from_str(&call.function.arguments)
+                    .map_err(|err| format!("invalid tool arguments JSON: {err}"))?;
+                Ok(ScoutToolCall {
+                    name: call.function.name,
+                    arguments,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        Ok(ScoutModelTurn {
+            content: message.content,
+            tool_calls,
+        })
     }
 }
 
@@ -126,47 +261,29 @@ impl<C: ChatClient> ScoutAgent<C> {
         }
     }
 
-    fn parse_action(response: &str) -> Result<ScoutAction, String> {
-        let action_line = response
-            .lines()
-            .find(|line| line.trim_start().starts_with("ACTION:"))
-            .ok_or_else(|| "model response missing ACTION line".to_string())?;
-
-        let action_body = action_line
-            .split_once("ACTION:")
-            .map(|(_, body)| body.trim())
-            .unwrap_or(action_line);
-
-        if let Some(inner) = action_body
-            .strip_prefix("ripgrep(pattern=")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            let pattern = unquote(inner)?;
-            return Ok(ScoutAction::Ripgrep { pattern });
+    fn parse_tool_call(call: &ScoutToolCall) -> Result<ScoutAction, String> {
+        match call.name.as_str() {
+            "ripgrep" => {
+                let pattern = required_str(&call.arguments, "pattern")?;
+                Ok(ScoutAction::Ripgrep { pattern })
+            }
+            "ast_calls" => {
+                let file = required_str(&call.arguments, "file")?;
+                let method = required_str(&call.arguments, "method")?;
+                Ok(ScoutAction::AstCalls { file, method })
+            }
+            "read_file" => {
+                let file = required_str(&call.arguments, "file")?;
+                let start = required_usize(&call.arguments, "start")?;
+                let end = required_usize(&call.arguments, "end")?;
+                Ok(ScoutAction::ReadFile { file, start, end })
+            }
+            "finalize" => {
+                let report = required_str(&call.arguments, "report")?;
+                Ok(ScoutAction::Finalize { report })
+            }
+            other => Err(format!("unsupported tool: {other}")),
         }
-
-        if action_body.starts_with("ast_calls(") && action_body.ends_with(')') {
-            let inner = &action_body["ast_calls(".len()..action_body.len() - 1];
-            let file = parse_kv(inner, "file")?;
-            let method = parse_kv(inner, "method")?;
-            return Ok(ScoutAction::AstCalls { file, method });
-        }
-
-        if action_body.starts_with("read_file(") && action_body.ends_with(')') {
-            let inner = &action_body["read_file(".len()..action_body.len() - 1];
-            let file = parse_kv(inner, "file")?;
-            let start = parse_usize_kv(inner, "start")?;
-            let end = parse_usize_kv(inner, "end")?;
-            return Ok(ScoutAction::ReadFile { file, start, end });
-        }
-
-        if action_body.starts_with("finalize(report=") && action_body.ends_with(')') {
-            let inner = &action_body["finalize(report=".len()..action_body.len() - 1];
-            let report = unquote(inner)?;
-            return Ok(ScoutAction::Finalize { report });
-        }
-
-        Err(format!("unsupported ACTION: {action_body}"))
     }
 
     fn execute_action(action: &ScoutAction) -> Result<String, String> {
@@ -207,40 +324,20 @@ enum ScoutAction {
     },
 }
 
-fn parse_kv(payload: &str, key: &str) -> Result<String, String> {
-    let needle = format!("{key}=");
-    let segment = payload
-        .split(',')
-        .map(str::trim)
-        .find(|part| part.starts_with(&needle))
-        .ok_or_else(|| format!("missing {key} in ACTION"))?;
-
-    let raw = segment[needle.len()..].trim();
-    unquote(raw)
+fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
 }
 
-fn parse_usize_kv(payload: &str, key: &str) -> Result<usize, String> {
-    let needle = format!("{key}=");
-    let segment = payload
-        .split(',')
-        .map(str::trim)
-        .find(|part| part.starts_with(&needle))
-        .ok_or_else(|| format!("missing {key} in ACTION"))?;
-
-    let raw = segment[needle.len()..].trim();
-    raw.parse::<usize>()
-        .map_err(|_| format!("{key} must be a positive integer"))
-}
-
-fn unquote(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        Ok(value[1..value.len() - 1]
-            .replace("\\\"", "\"")
-            .replace("\\n", "\n"))
-    } else {
-        Err(format!("expected quoted value, got: {value}"))
-    }
+fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))
 }
 
 #[async_trait]
@@ -259,12 +356,21 @@ impl<C: ChatClient> AutonomousAgent for ScoutAgent<C> {
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
         let user_message = Self::build_user_message(context);
-        let model_response = self.client.complete(SCOUT_SYSTEM_PROMPT, &user_message)?;
+        let model_turn = self.client.complete(SCOUT_SYSTEM_PROMPT, &user_message)?;
 
-        let action = Self::parse_action(&model_response)?;
+        let tool_call = model_turn
+            .tool_calls
+            .first()
+            .ok_or_else(|| "model response missing tool call".to_string())?;
+
+        let action = Self::parse_tool_call(tool_call)?;
         let observation = Self::execute_action(&action)?;
 
-        let step = format!("Thought/Action:\n{model_response}\nObservation:\n{observation}\n");
+        let thought = model_turn.content.unwrap_or_default();
+        let step = format!(
+            "Thought:\n{thought}\nTool: {}({})\nObservation:\n{observation}\n",
+            tool_call.name, tool_call.arguments
+        );
         context.accumulated_data.push_str(&step);
 
         if let ScoutAction::Finalize { report } = action {
@@ -288,10 +394,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_action_reads_ripgrep() {
-        let action = ScoutAgent::<ScriptMock>::parse_action(
-            "Thought: szukam\nACTION: ripgrep(pattern=\"foo bar\")\n",
-        )
+    fn scout_tool_definitions_include_all_tools() {
+        let tools = scout_tool_definitions();
+        let names: Vec<_> = tools
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .map(|tool| {
+                tool["function"]["name"]
+                    .as_str()
+                    .expect("tool name")
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "ripgrep".to_string(),
+                "ast_calls".to_string(),
+                "read_file".to_string(),
+                "finalize".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_tool_call_reads_ripgrep() {
+        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&ScoutToolCall {
+            name: "ripgrep".to_string(),
+            arguments: json!({ "pattern": "foo bar" }),
+        })
         .expect("parse");
 
         assert_eq!(
@@ -303,10 +436,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_action_reads_finalize_with_escapes() {
-        let action = ScoutAgent::<ScriptMock>::parse_action(
-            "ACTION: finalize(report=\"## Scout\\n- done\")\n",
-        )
+    fn parse_tool_call_reads_finalize() {
+        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&ScoutToolCall {
+            name: "finalize".to_string(),
+            arguments: json!({ "report": "## Scout\n- done" }),
+        })
         .expect("parse");
 
         assert_eq!(
@@ -320,8 +454,11 @@ mod tests {
     struct ScriptMock;
 
     impl ChatClient for ScriptMock {
-        fn complete(&self, _: &str, _: &str) -> Result<String, String> {
-            Ok(String::new())
+        fn complete(&self, _: &str, _: &str) -> Result<ScoutModelTurn, String> {
+            Ok(ScoutModelTurn {
+                content: None,
+                tool_calls: vec![],
+            })
         }
     }
 }
