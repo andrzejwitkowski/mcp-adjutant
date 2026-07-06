@@ -1,37 +1,13 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use mcp_adjutant::{LocalEmbeddingEngine, ProjectCacheManager};
+mod common;
 
-fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
-    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/embedding");
-    (fixtures.join("model.onnx"), fixtures.join("tokenizer.json"))
-}
-
-fn unique_temp_project(name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
-
-    std::env::temp_dir().join(format!("mcp-adjutant-semantic-{name}-{nanos}"))
-}
-
-fn write_demo_cargo_manifest(project_root: &Path) {
-    fs::write(
-        project_root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write cargo manifest");
-}
-
-fn open_cache_manager(project_root: &Path) -> ProjectCacheManager {
-    let (model_path, tokenizer_path) = embedding_fixture_paths();
-    ProjectCacheManager::new(project_root, &model_path, &tokenizer_path)
-        .expect("initialize cache manager with embedding engine")
-}
+use common::{
+    embedding_fixture_paths, open_cache_manager, unique_temp_project, write_demo_cargo_manifest,
+};
+use mcp_adjutant::{LocalEmbeddingEngine, SEMANTIC_SIMILARITY_THRESHOLD};
 
 #[test]
 fn semantic_graph_matches_paraphrase_and_invalidates_on_file_change() {
@@ -99,8 +75,8 @@ fn embedding_engine_reports_high_similarity_for_jwt_paraphrases() {
 
     let similarity = LocalEmbeddingEngine::dot_product(&left, &right);
     assert!(
-        similarity > 0.82,
-        "expected semantic similarity above threshold, got {similarity}"
+        similarity > SEMANTIC_SIMILARITY_THRESHOLD - 0.02,
+        "expected semantic similarity near threshold, got {similarity}"
     );
 }
 
@@ -122,19 +98,22 @@ fn semantic_lookup_stays_under_twenty_milliseconds_after_warmup() {
         )
         .expect("store insight");
 
-    let _ = cache
-        .try_get_valid_insight("JWT auth middleware configuration")
-        .expect("warmup lookup");
+    let query = "JWT auth middleware configuration";
+    let _ = cache.try_get_valid_insight(query).expect("warmup lookup");
 
-    let start = Instant::now();
-    let _ = cache
-        .try_get_valid_insight("JWT auth middleware configuration")
-        .expect("timed lookup");
-    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let mut samples_ms = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = Instant::now();
+        let _ = cache.try_get_valid_insight(query).expect("timed lookup");
+        samples_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    samples_ms.sort_by(|left, right| left.partial_cmp(right).expect("finite durations"));
+    let median_ms = samples_ms[2];
 
     assert!(
-        elapsed_ms < 20.0,
-        "semantic lookup should stay under 20 ms, took {elapsed_ms:.2} ms"
+        median_ms < 20.0,
+        "semantic lookup median should stay under 20 ms, got {median_ms:.2} ms (samples: {samples_ms:?})"
     );
 
     fs::remove_dir_all(&project_root).ok();

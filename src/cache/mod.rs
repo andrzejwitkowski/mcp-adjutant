@@ -4,4 +4,4 @@ mod manager;
 mod project;
 
 pub use embedding::LocalEmbeddingEngine;
-pub use manager::ProjectCacheManager;
+pub use manager::{ProjectCacheManager, SEMANTIC_SIMILARITY_THRESHOLD};

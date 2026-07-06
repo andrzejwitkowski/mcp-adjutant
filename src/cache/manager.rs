@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use bytemuck;
 use rusqlite::{params, Connection, Error as RusqliteError};
 
-use super::embedding::LocalEmbeddingEngine;
+use super::embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 use super::file_state::{capture_code_node_snapshot, is_code_node_dirty, CodeNodeSnapshot};
 use super::project::{
     current_unix_timestamp, hash_query_text, normalize_relative_path, prepare_project_cache,
@@ -166,11 +166,10 @@ impl ProjectCacheManager {
             let (query_id, blob) =
                 row.map_err(|err| format!("failed to read stored embedding row: {err}"))?;
 
-            if blob.len() % std::mem::size_of::<f32>() != 0 {
+            let Some(stored_embedding) = decode_embedding_blob(&blob) else {
                 continue;
-            }
+            };
 
-            let stored_embedding = bytemuck::cast_slice::<u8, f32>(&blob);
             let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored_embedding);
 
             if similarity >= SEMANTIC_SIMILARITY_THRESHOLD
@@ -222,4 +221,13 @@ impl ProjectCacheManager {
 
         Ok(())
     }
+}
+
+fn decode_embedding_blob(blob: &[u8]) -> Option<&[f32]> {
+    let expected_bytes = EMBEDDING_DIM * std::mem::size_of::<f32>();
+    if blob.len() != expected_bytes {
+        return None;
+    }
+
+    bytemuck::try_cast_slice(blob).ok()
 }

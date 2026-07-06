@@ -3,9 +3,10 @@ use std::sync::Mutex;
 
 use ort::session::Session;
 use ort::value::Tensor;
-use tokenizers::Tokenizer;
+use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
 pub const EMBEDDING_DIM: usize = 384;
+const MAX_SEQUENCE_LENGTH: usize = 512;
 
 pub struct LocalEmbeddingEngine {
     // ponytail: Mutex because ort::Session::run needs &mut while generate takes &self
@@ -25,12 +26,21 @@ impl LocalEmbeddingEngine {
                 )
             })?;
 
-        let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(|err| {
+        let mut tokenizer = Tokenizer::from_file(tokenizer_path).map_err(|err| {
             format!(
                 "failed to load tokenizer at {}: {err}",
                 tokenizer_path.display()
             )
         })?;
+
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: MAX_SEQUENCE_LENGTH,
+                stride: 0,
+                strategy: TruncationStrategy::LongestFirst,
+                direction: TruncationDirection::Right,
+            }))
+            .map_err(|err| format!("failed to configure tokenizer truncation: {err}"))?;
 
         Ok(Self {
             session: Mutex::new(session),

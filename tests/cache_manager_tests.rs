@@ -1,38 +1,12 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use mcp_adjutant::ProjectCacheManager;
+mod common;
 
-fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
-    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/embedding");
-    (fixtures.join("model.onnx"), fixtures.join("tokenizer.json"))
-}
-
-fn open_cache_manager(project_root: &Path) -> ProjectCacheManager {
-    let (model_path, tokenizer_path) = embedding_fixture_paths();
-    ProjectCacheManager::new(project_root, &model_path, &tokenizer_path)
-        .expect("initialize cache manager with embedding engine")
-}
-
-fn unique_temp_project(name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
-
-    std::env::temp_dir().join(format!("mcp-adjutant-cache-{name}-{nanos}"))
-}
-
-fn write_demo_cargo_manifest(project_root: &Path) {
-    fs::write(
-        project_root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .expect("write cargo manifest");
-}
+use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
 
 fn init_git_repo(project_root: &Path) {
     Command::new("git")
