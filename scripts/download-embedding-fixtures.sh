@@ -11,6 +11,11 @@ declare -A EXPECTED_SHA256=(
   ["tokenizer.json"]="d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
 )
 
+declare -A REMOTE_PATHS=(
+  ["model.onnx"]="onnx/model.onnx"
+  ["tokenizer.json"]="tokenizer.json"
+)
+
 verify_sha256() {
   local file="$1"
   local expected="$2"
@@ -32,7 +37,7 @@ download_fixture() {
   fi
 
   rm -f "$destination"
-  curl -fsSL -o "$destination" "${BASE_URL}/${filename}"
+  curl --http1.1 -fsSL -o "$destination" "${BASE_URL}/${REMOTE_PATHS[$filename]}"
   verify_sha256 "$destination" "$expected"
 }
 
