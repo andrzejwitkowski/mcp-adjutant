@@ -1,0 +1,97 @@
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use mcp_adjutant::{AdjutantConfig, AdjutantConfigError, AgentPhase, Provider};
+
+fn unique_temp_path(test_name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+
+    std::env::temp_dir().join(format!("mcp-adjutant-{test_name}-{nanos}"))
+}
+
+#[test]
+fn default_config_roundtrip_preserves_all_fields() {
+    let temp_dir = unique_temp_path("default-roundtrip");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let config_path = temp_dir.join("config.json");
+
+    let original = AdjutantConfig::default();
+    original
+        .save_to_file(&config_path)
+        .expect("save default config");
+
+    let loaded = AdjutantConfig::load_from_file(&config_path).expect("load saved config");
+    assert_eq!(original, loaded);
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn custom_config_roundtrip_preserves_all_fields() {
+    let temp_dir = unique_temp_path("custom-roundtrip");
+    let config_path = temp_dir.join("nested/config.json");
+
+    let mut config = AdjutantConfig {
+        server_port: 9_001,
+        storage_path: "/tmp/custom-config.json".to_string(),
+        ..Default::default()
+    };
+
+    let builder_profile = config.get_profile(&AgentPhase::Builder).clone();
+    config.phases.insert(
+        AgentPhase::Builder,
+        mcp_adjutant::PhaseProfile {
+            provider: Provider::OpenAI,
+            api_key: Some("sk-test".to_string()),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            max_tokens: 16_384,
+            temperature: 0.5,
+        },
+    );
+
+    config
+        .save_to_file(&config_path)
+        .expect("save custom config");
+    assert!(config_path.exists());
+
+    let loaded = AdjutantConfig::load_from_file(&config_path).expect("load custom config");
+    assert_eq!(config, loaded);
+    assert_ne!(loaded.get_profile(&AgentPhase::Builder), &builder_profile);
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn load_from_corrupted_json_returns_parse_error() {
+    let temp_dir = unique_temp_path("corrupted-json");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let config_path = temp_dir.join("broken.json");
+    std::fs::write(&config_path, "{ not valid json").expect("write broken json");
+
+    let error = AdjutantConfig::load_from_file(&config_path).expect_err("expected parse error");
+    match error {
+        AdjutantConfigError::Json(_) => {}
+        other => panic!("expected JSON error, got {other:?}"),
+    }
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn save_creates_missing_parent_directories() {
+    let temp_dir = unique_temp_path("nested-save");
+    let config_path = temp_dir.join("deep/nested/dir/config.json");
+
+    let config = AdjutantConfig::default();
+    config
+        .save_to_file(&config_path)
+        .expect("save into nested path");
+
+    assert!(config_path.is_file());
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
