@@ -242,6 +242,42 @@ fn git_content_change_invalidates_cached_insight() {
 }
 
 #[test]
+fn git_tracking_after_store_invalidates_cached_insight() {
+    let project_root = unique_temp_project("git-tracked-after-store");
+    fs::create_dir_all(project_root.join("src")).expect("create src");
+    write_demo_cargo_manifest(&project_root);
+
+    let source_file = project_root.join("src/lib.rs");
+    fs::write(&source_file, "pub fn tracked() {}\n").expect("write source");
+
+    let mut cache = ProjectCacheManager::new(&project_root).expect("initialize cache");
+    cache
+        .store_insight(
+            "pre-git query",
+            "## Insight\nBefore git.",
+            vec![source_file.clone()],
+        )
+        .expect("store insight");
+
+    init_git_repo(&project_root);
+    Command::new("git")
+        .current_dir(&project_root)
+        .args(["add", "."])
+        .output()
+        .expect("git add");
+
+    let cached = cache
+        .try_get_valid_insight("pre-git query")
+        .expect("lookup");
+    assert!(
+        cached.is_none(),
+        "new git blob identity should invalidate a snapshot stored without git sha"
+    );
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
 fn git_tracked_dependency_change_invalidates_cache() {
     let project_root = unique_temp_project("git-tracked");
     fs::create_dir_all(project_root.join("src")).expect("create src");

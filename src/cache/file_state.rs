@@ -47,7 +47,7 @@ pub fn is_code_node_dirty(project_root: &Path, node: &CodeNodeSnapshot) -> Resul
         git_blob_sha(project_root, &absolute_path),
     ) {
         (Some(stored_sha), Some(current_sha)) if stored_sha != &current_sha => Ok(true),
-        (Some(_), None) => Ok(true),
+        (Some(_), None) | (None, Some(_)) => Ok(true),
         _ => Ok(false),
     }
 }
