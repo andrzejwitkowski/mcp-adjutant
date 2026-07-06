@@ -1,17 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, ChatClient, ScoutAgent, ScoutModelTurn, ScoutToolCall,
-    SCOUT_SYSTEM_PROMPT,
-};
+use mcp_adjutant::agent::{AgentLoopOrchestrator, ScoutAgent, SCOUT_SYSTEM_PROMPT};
+use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmToolCall};
 
 struct ScriptClient {
-    responses: Mutex<VecDeque<ScoutModelTurn>>,
+    responses: Mutex<VecDeque<LlmModelTurn>>,
 }
 
 impl ScriptClient {
-    fn new(responses: Vec<ScoutModelTurn>) -> Self {
+    fn new(responses: Vec<LlmModelTurn>) -> Self {
         Self {
             responses: Mutex::new(responses.into_iter().collect()),
         }
@@ -20,23 +18,28 @@ impl ScriptClient {
 
 struct ReactiveScriptClient;
 
-impl ChatClient for ReactiveScriptClient {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String> {
+impl LlmClient for ReactiveScriptClient {
+    fn complete_with_tools(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        _tools: serde_json::Value,
+    ) -> Result<LlmModelTurn, String> {
         assert_eq!(system_prompt, SCOUT_SYSTEM_PROMPT);
 
         if user_message.contains("Call sites at lines") {
-            return Ok(ScoutModelTurn {
+            return Ok(LlmModelTurn {
                 content: Some("Raport gotowy.".to_string()),
-                tool_calls: vec![ScoutToolCall {
+                tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "found invoke calls" }),
                 }],
             });
         }
 
-        Ok(ScoutModelTurn {
+        Ok(LlmModelTurn {
             content: Some("Szukam wywołań AST.".to_string()),
-            tool_calls: vec![ScoutToolCall {
+            tool_calls: vec![LlmToolCall {
                 name: "ast_calls".to_string(),
                 arguments: serde_json::json!({
                     "file": "tests/fixtures/scout/sample.rs",
@@ -47,8 +50,13 @@ impl ChatClient for ReactiveScriptClient {
     }
 }
 
-impl ChatClient for ScriptClient {
-    fn complete(&self, system_prompt: &str, _user_message: &str) -> Result<ScoutModelTurn, String> {
+impl LlmClient for ScriptClient {
+    fn complete_with_tools(
+        &self,
+        system_prompt: &str,
+        _user_message: &str,
+        _tools: serde_json::Value,
+    ) -> Result<LlmModelTurn, String> {
         assert!(
             system_prompt.contains("PHASE_1_SCOUT"),
             "system prompt should include scout contract"
@@ -69,9 +77,9 @@ impl ChatClient for ScriptClient {
 #[tokio::test]
 async fn scout_agent_executes_react_tools_then_finalizes() {
     let client = ScriptClient::new(vec![
-        ScoutModelTurn {
+        LlmModelTurn {
             content: Some("Szeroki zwiad pliku.".to_string()),
-            tool_calls: vec![ScoutToolCall {
+            tool_calls: vec![LlmToolCall {
                 name: "read_file".to_string(),
                 arguments: serde_json::json!({
                     "file": "tests/fixtures/scout/readme.txt",
@@ -80,9 +88,9 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
                 }),
             }],
         },
-        ScoutModelTurn {
+        LlmModelTurn {
             content: Some("Raport gotowy.".to_string()),
-            tool_calls: vec![ScoutToolCall {
+            tool_calls: vec![LlmToolCall {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
             }],

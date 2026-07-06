@@ -1,11 +1,10 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::traits::{AgentContext, AutonomousAgent};
-use crate::domain::PhaseProfile;
+use crate::llm::{LlmClient, LlmModelTurn, LlmToolCall};
 use crate::tools::{read_file_range, run_ripgrep, AstUsageFinder};
 
 pub const SCOUT_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotem zwiadowczym (PHASE_1_SCOUT). Twoim celem jest zebranie i skondensowanie kontekstu kodu.
@@ -20,21 +19,8 @@ Zasada wyboru: Jeśli nie znasz lokalizacji kodu, użyj najpierw ripgrep. Gdy zn
 
 Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj dokładnie jedno narzędzie."#;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScoutToolCall {
-    pub name: String,
-    pub arguments: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScoutModelTurn {
-    pub content: Option<String>,
-    pub tool_calls: Vec<ScoutToolCall>,
-}
-
-pub trait ChatClient: Send + Sync {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String>;
-}
+pub type ScoutToolCall = LlmToolCall;
+pub type ScoutModelTurn = LlmModelTurn;
 
 pub fn scout_tool_definitions() -> Value {
     json!([
@@ -121,131 +107,11 @@ pub fn scout_tool_definitions() -> Value {
     ])
 }
 
-pub struct DeepSeekClient {
-    profile: PhaseProfile,
-}
-
-impl DeepSeekClient {
-    pub fn new(profile: PhaseProfile) -> Self {
-        Self { profile }
-    }
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    tools: Value,
-    tool_choice: &'static str,
-    temperature: f32,
-    max_tokens: u32,
-}
-
-#[derive(Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatChoiceMessage {
-    content: Option<String>,
-    tool_calls: Option<Vec<ApiToolCall>>,
-}
-
-#[derive(Deserialize)]
-struct ApiToolCall {
-    function: ApiToolFunction,
-}
-
-#[derive(Deserialize)]
-struct ApiToolFunction {
-    name: String,
-    arguments: String,
-}
-
-impl ChatClient for DeepSeekClient {
-    fn complete(&self, system_prompt: &str, user_message: &str) -> Result<ScoutModelTurn, String> {
-        let url = format!(
-            "{}/chat/completions",
-            self.profile.base_url.trim_end_matches('/')
-        );
-        let body = ChatRequest {
-            model: &self.profile.model_name,
-            messages: vec![
-                ChatMessage {
-                    role: "system",
-                    content: system_prompt,
-                },
-                ChatMessage {
-                    role: "user",
-                    content: user_message,
-                },
-            ],
-            tools: scout_tool_definitions(),
-            tool_choice: "auto",
-            temperature: self.profile.temperature,
-            max_tokens: self.profile.max_tokens,
-        };
-
-        let agent = ureq::AgentBuilder::new().build();
-        let mut http = agent.post(&url).set("Content-Type", "application/json");
-
-        if let Some(api_key) = &self.profile.api_key {
-            http = http.set("Authorization", &format!("Bearer {api_key}"));
-        }
-
-        let response = http
-            .send_json(body)
-            .map_err(|err| format!("deepseek request failed: {err}"))?;
-
-        let body: ChatResponse = response
-            .into_json()
-            .map_err(|err| format!("deepseek response parse failed: {err}"))?;
-
-        let message = body
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message)
-            .ok_or_else(|| "deepseek returned no choices".to_string())?;
-
-        let tool_calls = message
-            .tool_calls
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| {
-                let arguments = serde_json::from_str(&call.function.arguments)
-                    .map_err(|err| format!("invalid tool arguments JSON: {err}"))?;
-                Ok(ScoutToolCall {
-                    name: call.function.name,
-                    arguments,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        Ok(ScoutModelTurn {
-            content: message.content,
-            tool_calls,
-        })
-    }
-}
-
-pub struct ScoutAgent<C: ChatClient> {
+pub struct ScoutAgent<C: LlmClient> {
     client: C,
 }
 
-impl<C: ChatClient> ScoutAgent<C> {
+impl<C: LlmClient> ScoutAgent<C> {
     pub fn new(client: C) -> Self {
         Self { client }
     }
@@ -261,7 +127,7 @@ impl<C: ChatClient> ScoutAgent<C> {
         }
     }
 
-    fn parse_tool_call(call: &ScoutToolCall) -> Result<ScoutAction, String> {
+    fn parse_tool_call(call: &LlmToolCall) -> Result<ScoutAction, String> {
         match call.name.as_str() {
             "ripgrep" => {
                 let pattern = required_str(&call.arguments, "pattern")?;
@@ -341,7 +207,7 @@ fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
 }
 
 #[async_trait]
-impl<C: ChatClient> AutonomousAgent for ScoutAgent<C> {
+impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     fn name(&self) -> &'static str {
         "scout_agent"
     }
@@ -356,7 +222,11 @@ impl<C: ChatClient> AutonomousAgent for ScoutAgent<C> {
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
         let user_message = Self::build_user_message(context);
-        let model_turn = self.client.complete(SCOUT_SYSTEM_PROMPT, &user_message)?;
+        let model_turn = self.client.complete_with_tools(
+            SCOUT_SYSTEM_PROMPT,
+            &user_message,
+            scout_tool_definitions(),
+        )?;
 
         let tool_call = model_turn
             .tool_calls
@@ -392,6 +262,7 @@ impl<C: ChatClient> AutonomousAgent for ScoutAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::LlmClient;
 
     #[test]
     fn scout_tool_definitions_include_all_tools() {
@@ -421,7 +292,7 @@ mod tests {
 
     #[test]
     fn parse_tool_call_reads_ripgrep() {
-        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&ScoutToolCall {
+        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&LlmToolCall {
             name: "ripgrep".to_string(),
             arguments: json!({ "pattern": "foo bar" }),
         })
@@ -437,7 +308,7 @@ mod tests {
 
     #[test]
     fn parse_tool_call_reads_finalize() {
-        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&ScoutToolCall {
+        let action = ScoutAgent::<ScriptMock>::parse_tool_call(&LlmToolCall {
             name: "finalize".to_string(),
             arguments: json!({ "report": "## Scout\n- done" }),
         })
@@ -453,9 +324,9 @@ mod tests {
 
     struct ScriptMock;
 
-    impl ChatClient for ScriptMock {
-        fn complete(&self, _: &str, _: &str) -> Result<ScoutModelTurn, String> {
-            Ok(ScoutModelTurn {
+    impl LlmClient for ScriptMock {
+        fn complete_with_tools(&self, _: &str, _: &str, _: Value) -> Result<LlmModelTurn, String> {
+            Ok(LlmModelTurn {
                 content: None,
                 tool_calls: vec![],
             })
