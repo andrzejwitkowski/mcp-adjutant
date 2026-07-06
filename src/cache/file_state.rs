@@ -59,7 +59,7 @@ fn file_mtime(metadata: &fs::Metadata) -> Result<i64, String> {
 
     modified
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
+        .map(|duration| duration.as_millis() as i64)
         .map_err(|err| format!("invalid file modification time: {err}"))
 }
 

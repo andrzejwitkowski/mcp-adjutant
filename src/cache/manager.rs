@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Error as RusqliteError};
 
 use super::file_state::{capture_code_node_snapshot, is_code_node_dirty, CodeNodeSnapshot};
 use super::project::{
@@ -24,17 +24,16 @@ impl ProjectCacheManager {
     pub fn try_get_valid_insight(&self, query_text: &str) -> Result<Option<String>, String> {
         let query_id = hash_query_text(query_text);
 
-        let insight_content: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT content FROM insights WHERE id = ?1",
-                params![query_id],
-                |row| row.get(0),
-            )
-            .ok();
-
-        let Some(content) = insight_content else {
-            return Ok(None);
+        let insight_content = match self.conn.query_row(
+            "SELECT content FROM insights WHERE id = ?1",
+            params![query_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(content) => content,
+            Err(RusqliteError::QueryReturnedNoRows) => return Ok(None),
+            Err(err) => {
+                return Err(format!("failed to load cached insight for query: {err}"));
+            }
         };
 
         for node in self.load_insight_dependencies(&query_id)? {
@@ -44,7 +43,7 @@ impl ProjectCacheManager {
             }
         }
 
-        Ok(Some(content))
+        Ok(Some(insight_content))
     }
 
     /// Stores a new insight, snapshots associated files, and links them as dependencies.
