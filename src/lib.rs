@@ -6,6 +6,11 @@ pub mod llm;
 pub mod storage;
 pub mod tools;
 
+pub use tools::{
+    detect_file_language, detect_project_languages, language_from_extension, AstUsageFinder,
+    FileLanguageReport, ProjectLanguageReport, SourceLanguage,
+};
+
 pub use agent::{
     scout_tool_definitions, AgentContext, AgentLoopOrchestrator, AutonomousAgent, ScoutAgent,
     ScoutModelTurn, ScoutToolCall, TextPrunerMock, SCOUT_SYSTEM_PROMPT,

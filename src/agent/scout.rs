@@ -5,17 +5,20 @@ use serde_json::{json, Value};
 
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::llm::{LlmClient, LlmModelTurn, LlmToolCall};
-use crate::tools::{read_file_range, run_ripgrep, AstUsageFinder};
+use crate::tools::{
+    detect_file_language, detect_project_languages, read_file_range, run_ripgrep, AstUsageFinder,
+};
 
 pub const SCOUT_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotem zwiadowczym (PHASE_1_SCOUT). Twoim celem jest zebranie i skondensowanie kontekstu kodu.
 
 Masz do dyspozycji narzędzia (tool calls):
+- detect_language — wykrywa język pliku lub projektu (rozszerzenie, manifesty, heurystyki treści)
 - ripgrep — szeroki zwiad tekstowy po repozytorium
-- ast_calls — precyzyjny skalpel AST: miejsca wywołań metody w pliku
+- ast_calls — precyzyjny skalpel AST: miejsca wywołań metody w pliku (Rust, TS, Python, Java, Kotlin, SQL, C, C++)
 - read_file — wycinek pliku po numerach linii
 - finalize — zakończenie zwiadu ze skondensowanym raportem markdown
 
-Zasada wyboru: Jeśli nie znasz lokalizacji kodu, użyj najpierw ripgrep. Gdy znasz pliki, użyj ast_calls, aby precyzyjnie wyciągnąć miejsca wywołań i odrzucić komentarze. Gdy zbierzesz esencję, wywołaj finalize.
+Zasada wyboru: Gdy nie znasz języka ani struktury repo, użyj detect_language. Jeśli nie znasz lokalizacji kodu, użyj ripgrep. Gdy znasz pliki, użyj ast_calls. Gdy zbierzesz esencję, wywołaj finalize.
 
 Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj dokładnie jedno narzędzie."#;
 
@@ -24,6 +27,28 @@ pub type ScoutModelTurn = LlmModelTurn;
 
 pub fn scout_tool_definitions() -> Value {
     json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "detect_language",
+                "description": "Wykrywa język pliku lub projektu na podstawie rozszerzenia, markerów (Cargo.toml, package.json, ...) i heurystyk treści.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Ścieżka do pliku lub katalogu projektu."
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["file", "project"],
+                            "description": "file = pojedynczy plik, project = skan katalogu repo."
+                        }
+                    },
+                    "required": ["path", "scope"]
+                }
+            }
+        },
         {
             "type": "function",
             "function": {
@@ -51,7 +76,7 @@ pub fn scout_tool_definitions() -> Value {
                     "properties": {
                         "file": {
                             "type": "string",
-                            "description": "Ścieżka do pliku .rs / .ts / .tsx."
+                            "description": "Ścieżka do pliku źródłowego (np. .rs, .py, .java, .kt, .sql, .c, .cpp)."
                         },
                         "method": {
                             "type": "string",
@@ -129,6 +154,11 @@ impl<C: LlmClient> ScoutAgent<C> {
 
     fn parse_tool_call(call: &LlmToolCall) -> Result<ScoutAction, String> {
         match call.name.as_str() {
+            "detect_language" => {
+                let path = required_str(&call.arguments, "path")?;
+                let scope = required_str(&call.arguments, "scope")?;
+                Ok(ScoutAction::DetectLanguage { path, scope })
+            }
             "ripgrep" => {
                 let pattern = required_str(&call.arguments, "pattern")?;
                 Ok(ScoutAction::Ripgrep { pattern })
@@ -154,6 +184,19 @@ impl<C: LlmClient> ScoutAgent<C> {
 
     fn execute_action(action: &ScoutAction) -> Result<String, String> {
         match action {
+            ScoutAction::DetectLanguage { path, scope } => {
+                let report = match scope.as_str() {
+                    "file" => serde_json::to_string(&detect_file_language(Path::new(path))?),
+                    "project" => serde_json::to_string(&detect_project_languages(Path::new(path))?),
+                    other => {
+                        return Err(format!(
+                            "detect_language scope must be file|project, got: {other}"
+                        ))
+                    }
+                }
+                .map_err(|err| format!("failed to serialize language report: {err}"))?;
+                Ok(report)
+            }
             ScoutAction::Ripgrep { pattern } => run_ripgrep(pattern),
             ScoutAction::AstCalls { file, method } => {
                 let lines = AstUsageFinder::find_calls_in_file(Path::new(file), method)?;
@@ -173,6 +216,10 @@ impl<C: LlmClient> ScoutAgent<C> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ScoutAction {
+    DetectLanguage {
+        path: String,
+        scope: String,
+    },
     Ripgrep {
         pattern: String,
     },
@@ -282,6 +329,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "detect_language".to_string(),
                 "ripgrep".to_string(),
                 "ast_calls".to_string(),
                 "read_file".to_string(),

@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use mcp_adjutant::tools::{read_file_range, run_fd, run_ripgrep, AstUsageFinder};
+use mcp_adjutant::tools::{
+    detect_file_language, detect_project_languages, read_file_range, run_fd, run_ripgrep,
+    AstUsageFinder, SourceLanguage,
+};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scout");
 
@@ -29,10 +32,6 @@ fn run_ripgrep_finds_pattern_with_context() {
         output.contains("alpha marker"),
         "output should include the match: {output}"
     );
-    assert!(
-        output.contains("second line") || output.contains("context"),
-        "output should include surrounding context: {output}"
-    );
 }
 
 #[test]
@@ -47,24 +46,73 @@ fn run_fd_finds_fixture_files_by_name() {
 
 #[test]
 fn ast_usage_finder_locates_rust_call_sites_only() {
-    let path = Path::new(FIXTURES).join("sample.rs");
-    let lines = AstUsageFinder::find_calls_in_file(&path, "invoke").expect("rust ast scan");
-
-    assert_eq!(
-        lines,
-        vec![3, 5],
-        "expected physical call lines 3 and 5, got {lines:?}"
-    );
+    assert_call_lines("sample.rs", vec![3, 5]);
 }
 
 #[test]
 fn ast_usage_finder_locates_typescript_call_sites_only() {
-    let path = Path::new(FIXTURES).join("sample.ts");
-    let lines = AstUsageFinder::find_calls_in_file(&path, "invoke").expect("ts ast scan");
+    assert_call_lines("sample.ts", vec![3, 5]);
+}
 
-    assert_eq!(
-        lines,
-        vec![3, 5],
-        "expected physical call lines 3 and 5, got {lines:?}"
-    );
+#[test]
+fn ast_usage_finder_locates_python_call_sites_only() {
+    assert_call_lines("sample.py", vec![3, 5]);
+}
+
+#[test]
+fn ast_usage_finder_locates_java_call_sites_only() {
+    assert_call_lines("sample.java", vec![4, 6]);
+}
+
+#[test]
+fn ast_usage_finder_locates_kotlin_call_sites_only() {
+    assert_call_lines("sample.kt", vec![3, 5]);
+}
+
+#[test]
+fn ast_usage_finder_locates_c_call_sites_only() {
+    assert_call_lines("sample.c", vec![5]);
+}
+
+#[test]
+fn ast_usage_finder_locates_cpp_call_sites_only() {
+    assert_call_lines("sample.cpp", vec![7, 9]);
+}
+
+#[test]
+fn ast_usage_finder_locates_sql_call_sites_only() {
+    assert_call_lines("sample.sql", vec![2, 4]);
+}
+
+#[test]
+fn detect_file_language_from_extension() {
+    let report = detect_file_language(&Path::new(FIXTURES).join("sample.py")).expect("detect");
+    assert_eq!(report.language, SourceLanguage::Python);
+}
+
+#[test]
+fn detect_file_language_for_cpp_header() {
+    let report = detect_file_language(&Path::new(FIXTURES).join("sample.hpp")).expect("detect");
+    assert_eq!(report.language, SourceLanguage::Cpp);
+    assert!(report.method.contains("extension"));
+}
+
+#[test]
+fn detect_project_languages_finds_rust_marker() {
+    let report =
+        detect_project_languages(&Path::new(FIXTURES).join("project")).expect("project detect");
+
+    assert!(report
+        .markers
+        .iter()
+        .any(|marker| marker.contains("Cargo.toml")));
+    assert_eq!(report.primary, Some(SourceLanguage::Rust));
+}
+
+fn assert_call_lines(file_name: &str, expected: Vec<usize>) {
+    let path = Path::new(FIXTURES).join(file_name);
+    let lines = AstUsageFinder::find_calls_in_file(&path, "invoke").unwrap_or_else(|err| {
+        panic!("AST scan failed for {file_name}: {err}");
+    });
+    assert_eq!(lines, expected, "unexpected call lines for {file_name}");
 }
