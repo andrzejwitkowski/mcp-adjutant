@@ -12,10 +12,13 @@ pub use tools::{
 };
 
 pub use agent::{
-    scout_tool_definitions, AgentContext, AgentLoopOrchestrator, AutonomousAgent, ScoutAgent,
+    scout_tool_set, AgentContext, AgentLoopOrchestrator, AutonomousAgent, ScoutAgent,
     ScoutModelTurn, ScoutToolCall, TextPrunerMock, SCOUT_SYSTEM_PROMPT,
 };
 pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, SEMANTIC_SIMILARITY_THRESHOLD};
 pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 pub use error::AdjutantConfigError;
-pub use llm::{DeepSeekClient, LlmClient, LlmModelTurn, LlmToolCall};
+pub use llm::{
+    DeepSeekClient, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet,
+    ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
+};

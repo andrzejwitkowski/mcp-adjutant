@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use mcp_adjutant::agent::{AgentLoopOrchestrator, ScoutAgent, SCOUT_SYSTEM_PROMPT};
-use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmToolCall};
+use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
 
 struct ScriptClient {
     responses: Mutex<VecDeque<LlmModelTurn>>,
@@ -19,15 +19,10 @@ impl ScriptClient {
 struct ReactiveScriptClient;
 
 impl LlmClient for ReactiveScriptClient {
-    fn complete_with_tools(
-        &self,
-        system_prompt: &str,
-        user_message: &str,
-        _tools: serde_json::Value,
-    ) -> Result<LlmModelTurn, String> {
-        assert_eq!(system_prompt, SCOUT_SYSTEM_PROMPT);
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        assert_eq!(request.system_prompt, SCOUT_SYSTEM_PROMPT);
 
-        if user_message.contains("Call sites at lines") {
+        if request.user_message.contains("Call sites at lines") {
             return Ok(LlmModelTurn {
                 content: Some("Raport gotowy.".to_string()),
                 tool_calls: vec![LlmToolCall {
@@ -51,17 +46,12 @@ impl LlmClient for ReactiveScriptClient {
 }
 
 impl LlmClient for ScriptClient {
-    fn complete_with_tools(
-        &self,
-        system_prompt: &str,
-        _user_message: &str,
-        _tools: serde_json::Value,
-    ) -> Result<LlmModelTurn, String> {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
         assert!(
-            system_prompt.contains("PHASE_1_SCOUT"),
+            request.system_prompt.contains("PHASE_1_SCOUT"),
             "system prompt should include scout contract"
         );
-        assert_eq!(system_prompt, SCOUT_SYSTEM_PROMPT);
+        assert_eq!(request.system_prompt, SCOUT_SYSTEM_PROMPT);
 
         let mut queue = self
             .responses
@@ -121,4 +111,18 @@ async fn scout_agent_parses_ast_calls_action() {
     assert!(result.is_finished);
     assert_eq!(result.accumulated_data, "found invoke calls");
     assert_eq!(result.iterations, 2);
+}
+
+#[tokio::test]
+async fn scout_agent_exposes_registered_tool_catalog() {
+    let agent = ScoutAgent::new(ReactiveScriptClient);
+    let names: Vec<_> = agent
+        .tools()
+        .definitions()
+        .into_iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+
+    assert!(names.contains(&"detect_language".to_string()));
+    assert!(names.contains(&"finalize".to_string()));
 }

@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::domain::PhaseProfile;
 
+use super::request::LlmRequest;
 use super::traits::LlmClient;
 use super::types::{LlmModelTurn, LlmToolCall};
 
@@ -60,12 +61,7 @@ struct ApiToolFunction {
 }
 
 impl LlmClient for DeepSeekClient {
-    fn complete_with_tools(
-        &self,
-        system_prompt: &str,
-        user_message: &str,
-        tools: Value,
-    ) -> Result<LlmModelTurn, String> {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
         let url = format!(
             "{}/chat/completions",
             self.profile.base_url.trim_end_matches('/')
@@ -75,14 +71,14 @@ impl LlmClient for DeepSeekClient {
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: system_prompt,
+                    content: request.system_prompt,
                 },
                 ChatMessage {
                     role: "user",
-                    content: user_message,
+                    content: request.user_message,
                 },
             ],
-            tools,
+            tools: request.tools.to_openai_json(),
             tool_choice: "auto",
             temperature: self.profile.temperature,
             max_tokens: self.profile.max_tokens,
