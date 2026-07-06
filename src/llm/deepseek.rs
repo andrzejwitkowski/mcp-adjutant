@@ -79,7 +79,11 @@ impl LlmClient for DeepSeekClient {
                 },
             ],
             tools: request.tools.to_openai_json(),
-            tool_choice: "auto",
+            tool_choice: if request.tools.is_empty() {
+                "auto"
+            } else {
+                "required"
+            },
             temperature: self.profile.temperature,
             max_tokens: self.profile.max_tokens,
         };

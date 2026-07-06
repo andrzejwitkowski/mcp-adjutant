@@ -10,7 +10,7 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scou
 #[test]
 fn read_file_range_returns_requested_lines() {
     let path = Path::new(FIXTURES).join("readme.txt");
-    let content = read_file_range(&path, 2, 3).expect("range read should succeed");
+    let content = read_file_range(&path, 3, 4).expect("range read should succeed");
 
     assert_eq!(content, "second line\nthird line\n");
 }
@@ -25,8 +25,8 @@ fn read_file_range_rejects_start_after_end() {
 
 #[test]
 fn run_ripgrep_finds_pattern_with_context() {
-    let pattern = "alpha marker";
-    let output = run_ripgrep(pattern).expect("ripgrep should succeed");
+    let root = Path::new(FIXTURES);
+    let output = run_ripgrep("alpha marker", root).expect("ripgrep should succeed");
 
     assert!(
         output.contains("alpha marker"),

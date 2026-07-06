@@ -234,7 +234,8 @@ fn marker_language(marker: &str) -> SourceLanguage {
         "kotlin" => SourceLanguage::Kotlin,
         "java" => SourceLanguage::Java,
         "sql" => SourceLanguage::Sql,
-        "cpp" | "c" => SourceLanguage::Cpp,
+        "c" => SourceLanguage::C,
+        "cpp" => SourceLanguage::Cpp,
         _ => SourceLanguage::Unknown,
     }
 }
@@ -331,5 +332,12 @@ mod tests {
             .iter()
             .any(|marker| marker.contains("Cargo.toml")));
         assert_eq!(report.primary, Some(SourceLanguage::Rust));
+    }
+
+    #[test]
+    fn maps_c_project_marker_to_c_language() {
+        let report = detect_project_languages(&fixture("project-c")).expect("c project scan");
+        assert!(report.markers.iter().any(|marker| marker.starts_with("c:")));
+        assert_eq!(report.primary, Some(SourceLanguage::C));
     }
 }

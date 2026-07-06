@@ -75,6 +75,11 @@ impl RipgrepTool {
                 "pattern",
                 "Wzorzec wyszukiwania przekazywany do ripgrep.",
                 true,
+            )
+            .string_param(
+                "root",
+                "Katalog repozytorium do przeszukania (domyślnie bieżący katalog).",
+                false,
             ),
         }
     }
@@ -86,7 +91,9 @@ impl LlmTool for RipgrepTool {
     }
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
-        run_ripgrep(&required_str(arguments, "pattern")?)
+        let pattern = required_str(arguments, "pattern")?;
+        let root = arguments.get("root").and_then(Value::as_str).unwrap_or(".");
+        run_ripgrep(&pattern, Path::new(root))
     }
 }
 

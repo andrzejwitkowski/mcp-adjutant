@@ -75,10 +75,18 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
         let request = LlmRequest::new(SCOUT_SYSTEM_PROMPT, &user_message, &self.tools);
         let model_turn = self.client.complete(request)?;
 
-        let tool_call = model_turn
-            .tool_calls
-            .first()
-            .ok_or_else(|| "model response missing tool call".to_string())?;
+        let tool_call = match model_turn.tool_calls.first() {
+            Some(call) => call,
+            None => {
+                let thought = model_turn.content.unwrap_or_default();
+                if thought.is_empty() {
+                    return Err("model response missing tool call".to_string());
+                }
+                let step = format!("Thought:\n{thought}\nObservation:\n(model nie wywołał narzędzia — kontynuuj)\n");
+                context.accumulated_data.push_str(&step);
+                return Ok(());
+            }
+        };
 
         let invocation = self.tools.invoke(&tool_call.name, &tool_call.arguments)?;
 

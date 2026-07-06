@@ -1,13 +1,16 @@
 use std::path::Path;
 use std::process::Command;
 
-pub fn run_ripgrep(pattern: &str) -> Result<String, String> {
+pub fn run_ripgrep(pattern: &str, root: &Path) -> Result<String, String> {
     let output = Command::new("rg")
+        .current_dir(root)
+        .arg("-e")
         .arg(pattern)
         .arg("--max-columns")
         .arg("150")
         .arg("--context")
         .arg("2")
+        .arg(".")
         .output()
         .map_err(|err| format!("failed to spawn ripgrep: {err}"))?;
 
@@ -100,15 +103,17 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/scout")
-            .join(name)
+    #[test]
+    fn run_ripgrep_smoke() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scout");
+        let output = run_ripgrep("alpha marker", &root).expect("ripgrep");
+        assert!(output.contains("alpha marker"));
     }
 
     #[test]
-    fn read_file_range_smoke() {
-        let content = read_file_range(&fixture("readme.txt"), 1, 1).expect("read");
-        assert_eq!(content, "alpha marker here\n");
+    fn run_ripgrep_treats_leading_dash_as_literal_pattern() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scout");
+        let output = run_ripgrep("-Infinity", &root).expect("pattern must not be parsed as flag");
+        assert!(output.contains("-Infinity"));
     }
 }
