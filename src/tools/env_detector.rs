@@ -35,10 +35,9 @@ pub fn find_nearest_module_boundary(
 
 fn match_triage_override(dir: &Path, config: &AdjutantConfig) -> Option<String> {
     let overrides = config.triage_overrides.as_ref()?;
-    let dir_str = dir.to_string_lossy();
     for (prefix, cmd) in overrides {
         let normalized = prefix.trim_end_matches('/');
-        if dir.ends_with(normalized) || dir_str.ends_with(normalized) {
+        if dir.ends_with(normalized) {
             return Some(cmd.clone());
         }
     }
@@ -118,6 +117,33 @@ mod tests {
             find_nearest_module_boundary(&frontend.join("src/App.tsx"), &config).expect("boundary");
         assert_eq!(dir, frontend);
         assert_eq!(cmd, "npm run build");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn triage_override_does_not_match_substring_of_directory_name() {
+        let root = temp_root("override-substring");
+        let backend = root.join("monorepo/backend");
+        fs::create_dir_all(backend.join("src")).expect("dirs");
+        fs::write(
+            backend.join("Cargo.toml"),
+            "[package]\nname = \"backend\"\n",
+        )
+        .expect("cargo");
+
+        let config = AdjutantConfig {
+            triage_overrides: Some(HashMap::from([(
+                "end/".to_string(),
+                "npm run build".to_string(),
+            )])),
+            ..Default::default()
+        };
+
+        let (dir, cmd) =
+            find_nearest_module_boundary(&backend.join("src/lib.rs"), &config).expect("boundary");
+        assert_eq!(dir, backend);
+        assert_eq!(cmd, CARGO_CHECK);
 
         fs::remove_dir_all(&root).ok();
     }

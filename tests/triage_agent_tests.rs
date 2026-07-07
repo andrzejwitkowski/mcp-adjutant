@@ -155,9 +155,78 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
         result.input_prompt
     );
     assert!(
-        result.iterations >= 2,
-        "expected at least two iterations (fail then fix), got {}",
+        result.iterations >= 1,
+        "expected at least one iteration, got {}",
         result.iterations
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn triage_agent_verifies_fix_within_single_iteration() {
+    let root = temp_root("single-iter");
+    let (backend, _) = setup_monorepo(&root);
+    let source = backend.join("src/lib.rs");
+
+    let edit_action = format!(
+        r#"ACTION: edit_file(path="{path}", line=1, content="pub fn fixed() {{}}")"#,
+        path = source.display()
+    );
+
+    let llm = MockTriageLlm::new(edit_action);
+    let runner = MockBuildRunner::new(
+        "error[E0425]: cannot find value `syntax` in this scope",
+        "    Finished dev",
+    );
+
+    let config = Arc::new(AdjutantConfig::default());
+    let agent =
+        TriageAgent::with_build_runner(llm, vec![source.clone()], Arc::clone(&config), runner);
+
+    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 1)
+        .await
+        .expect("triage loop should complete");
+
+    assert!(
+        result.is_finished,
+        "fix should be verified on the same iteration"
+    );
+    assert!(result
+        .input_prompt
+        .contains("Wszystkie testy/kompilacje zakończone sukcesem."));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn triage_agent_rejects_edit_outside_module_roots() {
+    let root = temp_root("reject-edit");
+    let (backend, _) = setup_monorepo(&root);
+    let source = backend.join("src/lib.rs");
+
+    let edit_action =
+        r#"ACTION: edit_file(path="/etc/passwd", line=1, content="pwned")"#.to_string();
+
+    let llm = MockTriageLlm::new(edit_action);
+    let runner = MockBuildRunner::new("error[E0425]: broken", "ok");
+
+    let config = Arc::new(AdjutantConfig::default());
+    let agent =
+        TriageAgent::with_build_runner(llm, vec![source.clone()], Arc::clone(&config), runner);
+
+    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 1).await;
+
+    let err = result.expect_err("edit outside module roots should be rejected");
+    assert!(
+        err.contains("edit path must be inside a triage module root"),
+        "unexpected error: {err}"
+    );
+
+    let contents = std::fs::read_to_string(&source).expect("read source");
+    assert!(
+        contents.contains("broken syntax"),
+        "file must remain unchanged"
     );
 
     std::fs::remove_dir_all(&root).ok();

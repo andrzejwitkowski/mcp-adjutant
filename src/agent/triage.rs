@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -116,6 +116,47 @@ impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B> {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    fn module_roots(targets: &[(PathBuf, String)]) -> Vec<PathBuf> {
+        targets.iter().map(|(dir, _)| dir.clone()).collect()
+    }
+
+    fn run_build_targets(
+        &self,
+        targets: &[(PathBuf, String)],
+        context: &mut AgentContext,
+    ) -> Result<bool, String> {
+        let mut combined_errors = Vec::new();
+        let mut all_ok = true;
+
+        for (dir, command) in targets {
+            match self.build_runner.run_build_command(dir, command) {
+                Ok(output) => {
+                    let step = format!("Build OK in {} (`{command}`):\n{output}\n", dir.display());
+                    context.accumulated_data.push_str(&step);
+                }
+                Err(output) => {
+                    all_ok = false;
+                    let condensed = Self::condense_build_errors(&output);
+                    combined_errors.push(format!(
+                        "Build FAILED in {} (`{command}`):\n{condensed}\n",
+                        dir.display()
+                    ));
+                }
+            }
+        }
+
+        if all_ok {
+            context.is_finished = true;
+            context.input_prompt = "Wszystkie testy/kompilacje zakończone sukcesem.".to_string();
+        } else if !combined_errors.is_empty() {
+            context
+                .accumulated_data
+                .push_str(&combined_errors.join("\n---\n"));
+        }
+
+        Ok(all_ok)
+    }
 }
 
 #[async_trait]
@@ -168,35 +209,13 @@ impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> 
             return Ok(());
         }
 
-        let mut combined_errors = Vec::new();
-        let mut all_ok = true;
-
-        for (dir, command) in &targets {
-            match self.build_runner.run_build_command(dir, command) {
-                Ok(output) => {
-                    let step = format!("Build OK in {} (`{command}`):\n{output}\n", dir.display());
-                    context.accumulated_data.push_str(&step);
-                }
-                Err(output) => {
-                    all_ok = false;
-                    let condensed = Self::condense_build_errors(&output);
-                    combined_errors.push(format!(
-                        "Build FAILED in {} (`{command}`):\n{condensed}\n",
-                        dir.display()
-                    ));
-                }
-            }
-        }
-
-        if all_ok {
-            context.is_finished = true;
-            context.input_prompt = "Wszystkie testy/kompilacje zakończone sukcesem.".to_string();
+        if self.run_build_targets(&targets, context)? {
             return Ok(());
         }
 
-        let error_report = combined_errors.join("\n---\n");
         let user_message = format!(
-            "Logi kompilacji do naprawy:\n\n{error_report}\n\nWybierz jedną dozwoloną akcję ACTION."
+            "Logi kompilacji do naprawy:\n\n{}\n\nWybierz jedną dozwoloną akcję ACTION.",
+            context.accumulated_data
         );
         let tools = LlmToolSet::new();
         let request = LlmRequest::new(TRIAGE_SYSTEM_PROMPT, &user_message, &tools);
@@ -215,10 +234,14 @@ impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> 
                 line,
                 content,
             }) => {
-                edit_file_line(&path, line, &content)?;
-                context
-                    .accumulated_data
-                    .push_str(&format!("Applied edit_file({path:?}, line={line})\n"));
+                let module_roots = Self::module_roots(&targets);
+                let resolved = resolve_edit_path(&path, &module_roots)?;
+                edit_file_line(&resolved, line, &content)?;
+                context.accumulated_data.push_str(&format!(
+                    "Applied edit_file({}, line={line})\n",
+                    resolved.display()
+                ));
+                self.run_build_targets(&targets, context)?;
             }
             Some(TriageAction::ReportArchitecturalError { msg }) => {
                 context.accumulated_data = msg;
@@ -240,6 +263,31 @@ impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> 
             .push_str("\nPonów kompilację po ostatniej próbie naprawy.");
         Ok(())
     }
+}
+
+fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!("edit path must not contain ..: {}", path.display()));
+    }
+
+    for root in module_roots {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        };
+        if candidate.starts_with(root) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "edit path must be inside a triage module root: {}",
+        path.display()
+    ))
 }
 
 fn parse_triage_action(text: &str) -> Option<TriageAction> {
@@ -341,6 +389,18 @@ ACTION: edit_file(path="src/main.rs", line=42, content="pub struct NewName;")"#,
             }
             other => panic!("unexpected action: {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolve_edit_path_rejects_traversal_and_outside_roots() {
+        let root = PathBuf::from("/repo/backend");
+        let allowed = vec![root.clone()];
+
+        let resolved = resolve_edit_path(Path::new("src/main.rs"), &allowed).expect("relative");
+        assert_eq!(resolved, PathBuf::from("/repo/backend/src/main.rs"));
+
+        assert!(resolve_edit_path(Path::new("../etc/passwd"), &allowed).is_err());
+        assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
     }
 
     #[test]
