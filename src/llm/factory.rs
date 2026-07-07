@@ -43,6 +43,10 @@ pub fn create_scout_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmC
     create_llm_client_for_phase(config, AgentPhase::Scout)
 }
 
+pub fn create_builder_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Builder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +85,31 @@ mod tests {
         match create_triage_llm_client(&config) {
             Err(err) => assert!(err.contains("missing profile for phase Triage")),
             Ok(_) => panic!("expected missing triage profile error"),
+        }
+    }
+
+    #[test]
+    fn create_builder_llm_client_uses_builder_phase_profile() {
+        let config = AdjutantConfig::default();
+        let profile = config.get_profile(&AgentPhase::Builder);
+
+        let client = create_builder_llm_client(&config).expect("builder client");
+        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+        assert_eq!(profile.provider, Provider::DeepSeek);
+        assert_eq!(profile.model_name, "deepseek-coder");
+        assert_eq!(profile.max_tokens, 8_192);
+    }
+
+    #[test]
+    fn create_builder_llm_client_missing_phase_returns_error() {
+        let config = AdjutantConfig {
+            phases: HashMap::new(),
+            ..Default::default()
+        };
+
+        match create_builder_llm_client(&config) {
+            Err(err) => assert!(err.contains("missing profile for phase Builder")),
+            Ok(_) => panic!("expected missing builder profile error"),
         }
     }
 }

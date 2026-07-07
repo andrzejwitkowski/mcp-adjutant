@@ -96,7 +96,26 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         }
     }
 
+    pub fn retarget(&self, paths: Vec<PathBuf>) -> Result<(), String> {
+        let mut workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        workspace.input_paths = paths;
+        workspace.build_targets.clear();
+        Ok(())
+    }
+
     fn resolve_target_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        if !workspace.input_paths.is_empty() {
+            return Ok(workspace.input_paths.clone());
+        }
+        drop(workspace);
+
         if self.target_paths.is_empty() {
             get_dirty_files_from_git()
         } else {
@@ -188,6 +207,93 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         Ok(all_ok)
     }
+
+    fn try_finish_tdd_red(
+        &self,
+        targets: &[(PathBuf, String)],
+        context: &mut AgentContext,
+    ) -> Result<bool, String> {
+        let mut check_failures = Vec::new();
+
+        for (dir, command) in targets {
+            let (check_cmd, _) = split_check_and_test_commands(command);
+            match self.build_runner.run_build_command(dir, &check_cmd) {
+                Ok(output) => {
+                    context.accumulated_data.push_str(&format!(
+                        "TDD RED check OK in {} (`{check_cmd}`):\n{output}\n",
+                        dir.display()
+                    ));
+                }
+                Err(output) => {
+                    let (body, truncated) = truncate_build_log(
+                        &output,
+                        Self::BUILD_LOG_MAX_LINES,
+                        Self::BUILD_LOG_MAX_BYTES,
+                    );
+                    let log = if truncated {
+                        format!("(log truncated — showing tail)\n{body}")
+                    } else {
+                        body
+                    };
+                    check_failures.push(format!(
+                        "TDD RED check FAILED in {} (`{check_cmd}`):\n{log}\n",
+                        dir.display()
+                    ));
+                }
+            }
+        }
+
+        if !check_failures.is_empty() {
+            context
+                .accumulated_data
+                .push_str(&check_failures.join("\n---\n"));
+            return Ok(false);
+        }
+
+        let mut assertion_failures = 0usize;
+        let mut unexpected = Vec::new();
+
+        for (dir, command) in targets {
+            let (_, test_cmd) = split_check_and_test_commands(command);
+            match self.build_runner.run_build_command(dir, &test_cmd) {
+                Ok(output) => {
+                    unexpected.push(format!(
+                        "TDD RED unexpected pass in {} (`{test_cmd}`):\n{output}\n",
+                        dir.display()
+                    ));
+                }
+                Err(output) => {
+                    if is_assertion_test_failure(&output) {
+                        assertion_failures += 1;
+                        context.accumulated_data.push_str(&format!(
+                            "TDD RED assertion failure (expected) in {} (`{test_cmd}`):\n{output}\n",
+                            dir.display()
+                        ));
+                    } else {
+                        unexpected.push(format!(
+                            "TDD RED non-assertion failure in {} (`{test_cmd}`):\n{output}\n",
+                            dir.display()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !unexpected.is_empty() {
+            context
+                .accumulated_data
+                .push_str(&unexpected.join("\n---\n"));
+            return Ok(false);
+        }
+
+        if assertion_failures > 0 {
+            context.is_finished = true;
+            context.input_prompt = "kompilacja udana, testy oblane".to_string();
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -250,14 +356,25 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             return Ok(());
         }
 
-        if self.run_build_targets(&targets, context)? {
+        if context.input_prompt.contains("TDD RED PHASE") {
+            if self.try_finish_tdd_red(&targets, context)? {
+                return Ok(());
+            }
+        } else if self.run_build_targets(&targets, context)? {
             return Ok(());
         }
 
-        let user_message = format!(
-            "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
-            context.accumulated_data
-        );
+        let user_message = if context.input_prompt.contains("TDD RED PHASE") {
+            format!(
+                "Logi kompilacji do naprawy (TDD RED — napraw WYŁĄCZNIE błędy kompilacji, NIE zmieniaj asercji):\n\n{}\n\nWywołaj jedno narzędzie.",
+                context.accumulated_data
+            )
+        } else {
+            format!(
+                "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
+                context.accumulated_data
+            )
+        };
         let request = LlmRequest::new(TRIAGE_SYSTEM_PROMPT, &user_message, &self.tools);
         let model_turn: LlmModelTurn = self.llm_client.complete(request)?;
 
@@ -282,6 +399,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         match tool_call.name.as_str() {
             "edit_file" => {
                 let (path, line, content) = parse_edit_file_arguments(&tool_call.arguments)?;
+                if context.input_prompt.contains("TDD RED PHASE")
+                    && (content.contains("assert") || content.contains("panic!"))
+                {
+                    return Err(
+                        "TDD RED PHASE: zabroniona modyfikacja asercji lub panic!".to_string()
+                    );
+                }
                 let module_roots = Self::module_roots(&targets);
                 let resolved = resolve_edit_path(&path, &module_roots)?;
                 edit_file_line(&resolved, line, &content)?;
@@ -289,7 +413,11 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                     "Applied edit_file({}, line={line})\n",
                     resolved.display()
                 ));
-                self.run_build_targets(&targets, context)?;
+                if context.input_prompt.contains("TDD RED PHASE") {
+                    self.try_finish_tdd_red(&targets, context)?;
+                } else {
+                    self.run_build_targets(&targets, context)?;
+                }
             }
             "report_architectural_error" => {
                 let msg = parse_report_error_arguments(&tool_call.arguments)?;
@@ -310,6 +438,24 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             .push_str("\nPonów kompilację po ostatniej próbie naprawy.");
         Ok(())
     }
+}
+
+fn split_check_and_test_commands(command: &str) -> (String, String) {
+    if command.starts_with("cargo check") {
+        ("cargo check".to_string(), "cargo test".to_string())
+    } else if command.contains("typecheck") {
+        (command.to_string(), command.replace("typecheck", "test"))
+    } else {
+        (command.to_string(), command.to_string())
+    }
+}
+
+fn is_assertion_test_failure(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("assertion")
+        || lower.contains("panicked at")
+        || lower.contains("assert_eq!")
+        || (lower.contains("test result: failed") && !lower.contains("error[e"))
 }
 
 fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
@@ -363,5 +509,219 @@ mod tests {
     fn resolve_edit_path_rejects_escape_via_empty_module_root() {
         let allowed = vec![PathBuf::from("")];
         assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
+    }
+
+    #[test]
+    fn split_check_and_test_commands_splits_cargo_check() {
+        let (check, test) = split_check_and_test_commands("cargo check --message-format=json");
+        assert_eq!(check, "cargo check");
+        assert_eq!(test, "cargo test");
+    }
+
+    #[test]
+    fn split_check_and_test_commands_swaps_typecheck_for_test() {
+        let (check, test) = split_check_and_test_commands("npm run typecheck");
+        assert_eq!(check, "npm run typecheck");
+        assert_eq!(test, "npm run test");
+    }
+
+    #[test]
+    fn split_check_and_test_commands_falls_back_to_identical_command() {
+        let (check, test) = split_check_and_test_commands("make build");
+        assert_eq!(check, "make build");
+        assert_eq!(test, "make build");
+    }
+
+    #[test]
+    fn is_assertion_test_failure_detects_assertion_and_panic_output() {
+        assert!(is_assertion_test_failure(
+            "assertion `left == right` failed\n  left: 1\n right: 2"
+        ));
+        assert!(is_assertion_test_failure("thread 'main' panicked at 'boom'"));
+        assert!(is_assertion_test_failure(
+            "test result: FAILED. 0 passed; 1 failed"
+        ));
+    }
+
+    #[test]
+    fn is_assertion_test_failure_rejects_compiler_errors() {
+        assert!(!is_assertion_test_failure(
+            "error[E0425]: cannot find value `x` in this scope"
+        ));
+        assert!(!is_assertion_test_failure(
+            "test result: FAILED. 0 passed; 1 failed\nerror[E0425]: mismatched types"
+        ));
+    }
+
+    struct NeverCalledLlm;
+
+    impl LlmClient for NeverCalledLlm {
+        fn complete(&self, _request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+            panic!("llm should not be called in this test");
+        }
+    }
+
+    struct ScriptedRunner {
+        check_result: Result<String, String>,
+        test_result: Result<String, String>,
+    }
+
+    impl BuildCommandRunner for ScriptedRunner {
+        fn run_build_command(&self, _dir: &Path, command: &str) -> Result<String, String> {
+            if command.contains("check") {
+                self.check_result.clone()
+            } else {
+                self.test_result.clone()
+            }
+        }
+    }
+
+    fn empty_context() -> AgentContext {
+        AgentContext {
+            input_prompt: String::new(),
+            accumulated_data: String::new(),
+            iterations: 0,
+            max_iterations: 1,
+            is_finished: false,
+        }
+    }
+
+    #[test]
+    fn try_finish_tdd_red_returns_false_when_check_fails() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Err("error[E0425]: cannot find value `x`".to_string()),
+            test_result: Ok("unused".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(NeverCalledLlm, vec![], config, runner);
+        let mut context = empty_context();
+
+        let targets = vec![(PathBuf::from("/repo"), "cargo check".to_string())];
+        let finished = agent
+            .try_finish_tdd_red(&targets, &mut context)
+            .expect("should not error");
+
+        assert!(!finished);
+        assert!(context.accumulated_data.contains("TDD RED check FAILED"));
+    }
+
+    #[test]
+    fn try_finish_tdd_red_returns_false_on_unexpected_pass() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Ok("Finished dev".to_string()),
+            test_result: Ok("test result: ok. 1 passed".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(NeverCalledLlm, vec![], config, runner);
+        let mut context = empty_context();
+
+        let targets = vec![(PathBuf::from("/repo"), "cargo check".to_string())];
+        let finished = agent
+            .try_finish_tdd_red(&targets, &mut context)
+            .expect("should not error");
+
+        assert!(!finished);
+        assert!(context
+            .accumulated_data
+            .contains("TDD RED unexpected pass"));
+    }
+
+    #[test]
+    fn try_finish_tdd_red_returns_false_on_non_assertion_failure() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Ok("Finished dev".to_string()),
+            test_result: Err("error[E0425]: cannot find value `y` in this scope".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(NeverCalledLlm, vec![], config, runner);
+        let mut context = empty_context();
+
+        let targets = vec![(PathBuf::from("/repo"), "cargo check".to_string())];
+        let finished = agent
+            .try_finish_tdd_red(&targets, &mut context)
+            .expect("should not error");
+
+        assert!(!finished);
+        assert!(context
+            .accumulated_data
+            .contains("TDD RED non-assertion failure"));
+    }
+
+    #[test]
+    fn try_finish_tdd_red_finishes_on_expected_assertion_failure() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Ok("Finished dev".to_string()),
+            test_result: Err("assertion `left == right` failed".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(NeverCalledLlm, vec![], config, runner);
+        let mut context = empty_context();
+
+        let targets = vec![(PathBuf::from("/repo"), "cargo check".to_string())];
+        let finished = agent
+            .try_finish_tdd_red(&targets, &mut context)
+            .expect("should not error");
+
+        assert!(finished);
+        assert!(context.is_finished);
+        assert_eq!(context.input_prompt, "kompilacja udana, testy oblane");
+        assert!(context
+            .accumulated_data
+            .contains("TDD RED assertion failure (expected)"));
+    }
+
+    #[test]
+    fn retarget_overrides_input_paths_and_clears_cached_targets() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Ok("unused".to_string()),
+            test_result: Ok("unused".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(
+            NeverCalledLlm,
+            vec![PathBuf::from("/repo/original.rs")],
+            config,
+            runner,
+        );
+
+        {
+            let mut workspace = agent.workspace.lock().expect("lock workspace");
+            workspace.build_targets =
+                vec![(PathBuf::from("/repo"), "cargo check".to_string())];
+            workspace.input_paths = vec![PathBuf::from("/repo/original.rs")];
+        }
+
+        agent
+            .retarget(vec![PathBuf::from("/repo/new.rs")])
+            .expect("retarget should succeed");
+
+        let workspace = agent.workspace.lock().expect("lock workspace");
+        assert_eq!(workspace.input_paths, vec![PathBuf::from("/repo/new.rs")]);
+        assert!(workspace.build_targets.is_empty());
+    }
+
+    #[test]
+    fn resolve_target_paths_prefers_retargeted_paths_over_constructor_paths() {
+        let config = Arc::new(AdjutantConfig::default());
+        let runner = ScriptedRunner {
+            check_result: Ok("unused".to_string()),
+            test_result: Ok("unused".to_string()),
+        };
+        let agent = TriageAgent::with_build_runner(
+            NeverCalledLlm,
+            vec![PathBuf::from("/repo/original.rs")],
+            config,
+            runner,
+        );
+
+        let before = agent.resolve_target_paths().expect("resolve before");
+        assert_eq!(before, vec![PathBuf::from("/repo/original.rs")]);
+
+        agent
+            .retarget(vec![PathBuf::from("/repo/retargeted.rs")])
+            .expect("retarget");
+
+        let after = agent.resolve_target_paths().expect("resolve after");
+        assert_eq!(after, vec![PathBuf::from("/repo/retargeted.rs")]);
     }
 }

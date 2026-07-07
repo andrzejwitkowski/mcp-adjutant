@@ -5,6 +5,7 @@ pub enum ParamType {
     String,
     Integer,
     StringEnum(Vec<String>),
+    StringArray,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +80,21 @@ impl ToolDefinition {
         self
     }
 
+    pub fn string_array_param(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        required: bool,
+    ) -> Self {
+        self.parameters.push(ToolParam {
+            name: name.into(),
+            description: description.into(),
+            param_type: ParamType::StringArray,
+            required,
+        });
+        self
+    }
+
     pub fn to_openai_json(&self) -> Value {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
@@ -96,6 +112,11 @@ impl ToolDefinition {
                 ParamType::StringEnum(options) => json!({
                     "type": "string",
                     "enum": options,
+                    "description": param.description,
+                }),
+                ParamType::StringArray => json!({
+                    "type": "array",
+                    "items": { "type": "string" },
                     "description": param.description,
                 }),
             };
@@ -248,5 +269,49 @@ mod tests {
         assert_eq!(result.output, "hello");
         assert!(!result.is_terminal);
         assert_eq!(tools.len(), 1);
+    }
+
+    #[test]
+    fn tool_invoke_returns_error_for_unknown_tool() {
+        let tools = LlmToolSet::new().register(EchoTool::new());
+        let err = tools
+            .invoke("missing_tool", &json!({}))
+            .expect_err("unknown tool should error");
+        assert_eq!(err, "unsupported tool: missing_tool");
+    }
+
+    #[test]
+    fn string_array_param_serializes_to_json_array_schema() {
+        let tool = ToolDefinition::new("gather_context", "Gathers context").string_array_param(
+            "components",
+            "List of component names",
+            true,
+        );
+
+        let json = tool.to_openai_json();
+        let components_schema = &json["function"]["parameters"]["properties"]["components"];
+
+        assert_eq!(components_schema["type"], "array");
+        assert_eq!(components_schema["items"]["type"], "string");
+        assert_eq!(components_schema["description"], "List of component names");
+        assert_eq!(
+            json["function"]["parameters"]["required"],
+            json!(["components"])
+        );
+    }
+
+    #[test]
+    fn string_array_param_can_be_optional() {
+        let tool = ToolDefinition::new("optional_tool", "desc").string_array_param(
+            "tags",
+            "Optional tags",
+            false,
+        );
+
+        let json = tool.to_openai_json();
+        assert_eq!(
+            json["function"]["parameters"]["required"],
+            serde_json::Value::Array(vec![])
+        );
     }
 }
