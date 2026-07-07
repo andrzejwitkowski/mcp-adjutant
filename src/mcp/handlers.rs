@@ -195,10 +195,12 @@ pub async fn handle_generate_tests_and_scaffolding(
     let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 
     let builder_client = create_builder_llm_client(&config)?;
+    let scout_client = create_scout_llm_client(&config)?;
     let triage_client = create_triage_llm_client(&config)?;
     let agent = default_builder_agent(
         builder_client,
         cache_manager,
+        scout_client,
         triage_client,
         Arc::clone(&config),
         vec![source_path.clone()],

@@ -6,26 +6,29 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use super::traits::{AgentContext, AutonomousAgent};
-use super::{AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, TriageAgent};
+use super::{
+    AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, ScoutAgent, TriageAgent,
+};
 use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
 pub use tools::{
-    builder_tool_set, gather_integration_context, generate_test_factory, parse_components,
+    build_scout_integration_query, builder_tool_set, generate_test_factory, parse_components,
     parse_factory_arguments, parse_write_test_suite_arguments,
 };
 
 pub const BUILDER_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotnikiem TDD (PHASE_4_BUILDER). Generujesz testy jednostkowe, integracyjne oraz fabryki danych.
 
 Masz do dyspozycji narzędzia (tool calls):
-- gather_integration_context — sygnatury z cache semantycznego i AST (przed testami integracyjnymi)
+- gather_integration_context — uruchamia pod-agenta Scout (ripgrep, AST, read_file) przed testami integracyjnymi
 - generate_test_factory — szkielet Fluent Buildera dla struktury
 - write_test_suite — zapis pliku testowego z fazą TDD (red|green|refactor)
 
 Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj narzędzia."#;
 
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
+const BUILDER_SCOUT_MAX_ITERATIONS: u32 = 8;
 
 fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> PathBuf {
     let candidate = PathBuf::from(path);
@@ -36,24 +39,46 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> PathB
     }
 }
 
-pub struct BuilderAgent<C, TC, B, D> {
+fn format_scout_observation(scout_ctx: &AgentContext) -> String {
+    if scout_ctx.is_finished {
+        scout_ctx.accumulated_data.clone()
+    } else {
+        format!(
+            "Scout report (partial, finished={}, iterations={}):\n{}",
+            scout_ctx.is_finished, scout_ctx.iterations, scout_ctx.accumulated_data
+        )
+    }
+}
+
+pub struct BuilderAgent<C, SC, TC, B, D>
+where
+    SC: LlmClient,
+{
     llm_client: C,
     cache_manager: Arc<Mutex<ProjectCacheManager>>,
+    scout_agent: ScoutAgent<SC>,
     triage_agent: TriageAgent<TC, B, D>,
     tools: LlmToolSet,
 }
 
-impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
-    BuilderAgent<C, TC, B, D>
+impl<
+        C: LlmClient,
+        SC: LlmClient,
+        TC: LlmClient,
+        B: BuildCommandRunner,
+        D: BuildCommandDiscoverer,
+    > BuilderAgent<C, SC, TC, B, D>
 {
     pub fn new(
         llm_client: C,
         cache_manager: Arc<Mutex<ProjectCacheManager>>,
+        scout_agent: ScoutAgent<SC>,
         triage_agent: TriageAgent<TC, B, D>,
     ) -> Self {
         Self {
             llm_client,
             cache_manager,
+            scout_agent,
             triage_agent,
             tools: builder_tool_set(),
         }
@@ -62,12 +87,14 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
     pub fn with_tools(
         llm_client: C,
         cache_manager: Arc<Mutex<ProjectCacheManager>>,
+        scout_agent: ScoutAgent<SC>,
         triage_agent: TriageAgent<TC, B, D>,
         tools: LlmToolSet,
     ) -> Self {
         Self {
             llm_client,
             cache_manager,
+            scout_agent,
             triage_agent,
             tools,
         }
@@ -107,8 +134,13 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
 }
 
 #[async_trait]
-impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousAgent
-    for BuilderAgent<C, TC, B, D>
+impl<
+        C: LlmClient,
+        SC: LlmClient,
+        TC: LlmClient,
+        B: BuildCommandRunner,
+        D: BuildCommandDiscoverer,
+    > AutonomousAgent for BuilderAgent<C, SC, TC, B, D>
 {
     fn name(&self) -> &'static str {
         "PHASE_4_BUILDER"
@@ -154,11 +186,19 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
             match tool_call.name.as_str() {
                 "gather_integration_context" => {
                     let components = parse_components(&tool_call.arguments)?;
-                    let cache = self
-                        .cache_manager
-                        .lock()
-                        .map_err(|_| "cache manager lock poisoned".to_string())?;
-                    let output = gather_integration_context(&cache, &components)?;
+                    let scout_query = build_scout_integration_query(&components);
+                    context
+                        .accumulated_data
+                        .push_str("\n[SYSTEM]: Launching Scout for integration context\n");
+
+                    let scout_ctx = AgentLoopOrchestrator::run(
+                        &self.scout_agent,
+                        scout_query,
+                        BUILDER_SCOUT_MAX_ITERATIONS,
+                    )
+                    .await?;
+
+                    let output = format_scout_observation(&scout_ctx);
                     context
                         .accumulated_data
                         .push_str(&format!("Observation:\n{output}\n"));
@@ -234,18 +274,20 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
     }
 }
 
-pub type DefaultBuilderAgent<C, TC> =
-    BuilderAgent<C, TC, super::SystemBuildRunner, super::NoopBuildDiscoverer>;
+pub type DefaultBuilderAgent<C, SC, TC> =
+    BuilderAgent<C, SC, TC, super::SystemBuildRunner, super::NoopBuildDiscoverer>;
 
-pub fn default_builder_agent<C: LlmClient, TC: LlmClient>(
+pub fn default_builder_agent<C: LlmClient, SC: LlmClient, TC: LlmClient>(
     llm_client: C,
     cache_manager: Arc<Mutex<ProjectCacheManager>>,
+    scout_llm_client: SC,
     triage_llm_client: TC,
     config: Arc<AdjutantConfig>,
     target_paths: Vec<PathBuf>,
-) -> DefaultBuilderAgent<C, TC> {
+) -> DefaultBuilderAgent<C, SC, TC> {
+    let scout_agent = ScoutAgent::new(scout_llm_client);
     let triage_agent = TriageAgent::new(triage_llm_client, target_paths, config);
-    BuilderAgent::new(llm_client, cache_manager, triage_agent)
+    BuilderAgent::new(llm_client, cache_manager, scout_agent, triage_agent)
 }
 
 #[cfg(test)]

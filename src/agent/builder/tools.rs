@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use crate::cache::ProjectCacheManager;
 use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
-use crate::tools::AstUsageFinder;
 
 pub fn builder_tool_set() -> LlmToolSet {
     LlmToolSet::new()
@@ -20,7 +18,7 @@ impl GatherIntegrationContextTool {
         Self {
             definition: ToolDefinition::new(
                 "gather_integration_context",
-                "Odpytuje bazę semantyczną i parser AST o sygnatury metod z zewnętrznych plików. Wywołaj to ZAWSZE przed napisaniem testu integracyjnego.",
+                "Uruchamia pod-agenta Scout (ripgrep, AST, read_file) w celu zebrania sygnatur i plików potrzebnych do testu integracyjnego. Wywołaj ZAWSZE przed napisaniem testu integracyjnego.",
             )
             .string_array_param(
                 "components",
@@ -132,43 +130,13 @@ pub fn parse_write_test_suite_arguments(
     Ok((path, content, tdd_phase))
 }
 
-pub fn gather_integration_context(
-    cache: &ProjectCacheManager,
-    components: &[String],
-) -> Result<String, String> {
-    let project_root = cache.project_root();
-    let mut sections = Vec::new();
-
-    for component in components {
-        let query = format!("integration signatures for {component}");
-        let mut section = format!("### {component}\n");
-
-        if let Some(insight) = cache.try_get_valid_insight(&query)? {
-            section.push_str(&insight);
-            section.push('\n');
-        } else {
-            section.push_str("(no semantic cache hit)\n");
-            if let Some((module, symbol)) = component.split_once("::") {
-                let candidate = project_root.join(format!("src/{module}.rs"));
-                if candidate.is_file() {
-                    match AstUsageFinder::find_calls_in_file(&candidate, symbol) {
-                        Ok(lines) if !lines.is_empty() => {
-                            section.push_str(&format!(
-                                "AST call sites for `{symbol}` in {}: {lines:?}\n",
-                                candidate.display()
-                            ));
-                        }
-                        Ok(_) => section.push_str("AST: no call sites found.\n"),
-                        Err(err) => section.push_str(&format!("AST scan failed: {err}\n")),
-                    }
-                }
-            }
-        }
-
-        sections.push(section);
-    }
-
-    Ok(sections.join("\n"))
+pub fn build_scout_integration_query(components: &[String]) -> String {
+    format!(
+        "PHASE_1_SCOUT\n\nZbadaj repozytorium pod kątem testów integracyjnych dla komponentów:\n{}\n\n\
+         Użyj ripgrep, ast_calls i read_file, aby zebrać sygnatury metod, ścieżki plików, zależności \
+         i przykłady wywołań. Zakończ raportem finalize.",
+        components.join(", ")
+    )
 }
 
 pub fn generate_test_factory(target_struct: &str, target_file: &str) -> String {
@@ -223,6 +191,18 @@ mod tests {
                 "write_test_suite".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn build_scout_integration_query_lists_components() {
+        let query = build_scout_integration_query(&[
+            "auth::middleware".to_string(),
+            "db::UserRepository".to_string(),
+        ]);
+        assert!(query.contains("PHASE_1_SCOUT"));
+        assert!(query.contains("auth::middleware"));
+        assert!(query.contains("db::UserRepository"));
+        assert!(query.contains("finalize"));
     }
 
     #[test]

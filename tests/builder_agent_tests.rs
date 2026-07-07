@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
 use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, BuildCommandRunner, BuilderAgent, TriageAgent, BUILDER_SYSTEM_PROMPT,
-    TRIAGE_SYSTEM_PROMPT,
+    AgentLoopOrchestrator, BuildCommandRunner, BuilderAgent, ScoutAgent, TriageAgent,
+    BUILDER_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
@@ -42,6 +42,14 @@ impl LlmClient for MockBuilderLlm {
             "builder request should register tool definitions"
         );
         Ok(self.turn.clone())
+    }
+}
+
+struct PanicScoutLlm;
+
+impl LlmClient for PanicScoutLlm {
+    fn complete(&self, _request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        Err("Scout LLM should not run unless gather_integration_context is invoked".to_string())
     }
 }
 
@@ -99,7 +107,7 @@ fn red_phase_case() {
         Arc::clone(&config),
         TddRedBuildRunner,
     );
-    let agent = BuilderAgent::new(llm, cache, triage_agent);
+    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
 
     let result = AgentLoopOrchestrator::run(
         &agent,
@@ -220,7 +228,7 @@ async fn builder_agent_red_phase_runs_full_triage_loop_for_compile_fixes() {
         Arc::clone(&config),
         CountingRedBuildRunner::new(),
     );
-    let agent = BuilderAgent::new(llm, cache, triage_agent);
+    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
 
     let result =
         AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 3)
@@ -274,7 +282,7 @@ fn relative_red_case() {
         Arc::clone(&config),
         TddRedBuildRunner,
     );
-    let agent = BuilderAgent::new(llm, cache, triage_agent);
+    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
 
     let result =
         AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 3)
@@ -289,6 +297,95 @@ fn relative_red_case() {
     assert!(
         result.is_finished,
         "expected triage success for relative path"
+    );
+
+    std::fs::remove_dir_all(&project_root).ok();
+}
+
+impl MockBuilderLlm {
+    fn gather_integration(components: &[&str]) -> Self {
+        Self {
+            turn: LlmModelTurn {
+                content: Some("Thought: scout integration context".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "gather_integration_context".to_string(),
+                    arguments: serde_json::json!({ "components": components }),
+                }],
+            },
+        }
+    }
+}
+
+struct MockScoutLlmFinalize {
+    report: String,
+}
+
+impl MockScoutLlmFinalize {
+    fn new(report: impl Into<String>) -> Self {
+        Self {
+            report: report.into(),
+        }
+    }
+}
+
+impl LlmClient for MockScoutLlmFinalize {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        assert_eq!(request.system_prompt, SCOUT_SYSTEM_PROMPT);
+        assert!(
+            request.user_message.contains("auth::middleware"),
+            "scout should receive integration component query"
+        );
+        Ok(LlmModelTurn {
+            content: Some("Scout report ready.".to_string()),
+            tool_calls: vec![LlmToolCall {
+                name: "finalize".to_string(),
+                arguments: serde_json::json!({ "report": self.report }),
+            }],
+        })
+    }
+}
+
+#[tokio::test]
+async fn builder_agent_gather_integration_context_delegates_to_scout() {
+    let project_root = unique_temp_project("builder-scout");
+    setup_cargo_project(&project_root);
+
+    let llm = MockBuilderLlm::gather_integration(&["auth::middleware", "db::UserRepository"]);
+    let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
+    let scout_report = "## Scout\n- auth middleware signatures\n- repository call sites";
+
+    let config = Arc::new(AdjutantConfig::default());
+    let triage_agent = TriageAgent::with_build_runner(
+        PanicTriageLlm,
+        vec![],
+        Arc::clone(&config),
+        TddRedBuildRunner,
+    );
+    let agent = BuilderAgent::new(
+        llm,
+        cache,
+        ScoutAgent::new(MockScoutLlmFinalize::new(scout_report)),
+        triage_agent,
+    );
+
+    let result = AgentLoopOrchestrator::run(
+        &agent,
+        "PHASE_4_BUILDER\nPrepare integration test scaffolding".to_string(),
+        2,
+    )
+    .await
+    .expect("builder loop should complete");
+
+    assert!(
+        result
+            .accumulated_data
+            .contains("Launching Scout for integration context"),
+        "expected scout chaining log"
+    );
+    assert!(
+        result.accumulated_data.contains(scout_report),
+        "builder should surface scout finalize report, got: {}",
+        result.accumulated_data
     );
 
     std::fs::remove_dir_all(&project_root).ok();
