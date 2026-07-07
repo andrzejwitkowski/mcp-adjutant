@@ -6,26 +6,46 @@ generation, and compiler triage to cost-effective models.
 
 ## Cursor Cloud specific instructions
 
-### Current repository state
+### Repository layout
 
-- This repository is currently a **stub**: it contains only `README.md`, `LICENSE`,
-  and `.gitignore`. There is no `Cargo.toml`, no `src/`, and no application code yet.
-- Because there is no crate manifest, there is nothing to build, test, or run today.
-  Any "run the app" request cannot be satisfied until Rust source and a `Cargo.toml`
-  are added to the repo.
+- **Rust backend** — `src/`, `Cargo.toml`, MCP tools and agents
+- **React config UI** — `frontend/` (Vite + React + TypeScript)
+  - Config module: `frontend/src/modules/config-ui/`
+  - Build output: `frontend/dist/` (served by the MCP binary)
+- **MCP binary** — `cargo run --bin mcp-adjutant` starts stdio MCP + HTTP config UI
 
 ### Toolchain (preinstalled)
 
-- The Rust toolchain is preinstalled and on `PATH`: `cargo`, `rustc` (1.83.0), plus the
-  `clippy` and `rustfmt` components. No installation step is needed for these.
-- `CARGO_HOME` is `/usr/local/cargo`.
+- Rust: `cargo`, `rustc` (1.83.0), `clippy`, `rustfmt`
+- Node.js 20+ for the frontend (install deps with `npm ci` in `frontend/`)
 
-### Standard commands (valid once a `Cargo.toml` exists)
+### Standard commands
 
-- Build (dev): `cargo build`
-- Run (dev): `cargo run`
-- Test: `cargo test`
-- Lint: `cargo clippy --all-targets` (and `cargo fmt --check` for formatting)
+**Backend**
 
-Until a `Cargo.toml` is added, these commands will report that no manifest was found —
-that is expected, not an environment problem.
+- Build (dev): `cargo build --bin mcp-adjutant`
+- Run MCP + config UI: `cargo run --bin mcp-adjutant`
+- Test: `cargo test --all-targets`
+- Lint: `cargo clippy --all-targets` and `cargo fmt --check`
+
+**Frontend**
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run build
+npm run test
+```
+
+**Full local check (matches CI)**
+
+```bash
+bash scripts/download-embedding-fixtures.sh
+cd frontend && npm ci && npm run lint && npm run build && cd ..
+CXX=g++ cargo fmt -- --check
+CXX=g++ cargo clippy --all-targets -- -D warnings
+CXX=g++ cargo test --all-targets
+```
+
+Native build tools (`build-essential`, `g++`, `fd-find`, `ripgrep`) are required for tests that invoke `fd`/`rg` or link C++ (tree-sitter, tokenizers).

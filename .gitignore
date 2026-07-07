@@ -3,6 +3,10 @@
 debug
 target
 
+# Frontend
+frontend/node_modules
+frontend/dist
+
 # Large ONNX fixtures are downloaded by scripts/download-embedding-fixtures.sh
 tests/fixtures/embedding/model.onnx
 
