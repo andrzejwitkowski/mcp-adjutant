@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use super::traits::{AgentContext, AutonomousAgent};
-use super::{BuildCommandDiscoverer, BuildCommandRunner, TriageAgent};
+use super::{AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, TriageAgent};
 use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
@@ -24,6 +24,17 @@ Masz do dyspozycji narzędzia (tool calls):
 - write_test_suite — zapis pliku testowego z fazą TDD (red|green|refactor)
 
 Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj narzędzia."#;
+
+const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
+
+fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        project_root.join(candidate)
+    }
+}
 
 pub struct BuilderAgent<C, TC, B, D> {
     llm_client: C,
@@ -163,7 +174,15 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
                 "write_test_suite" => {
                     let (path, content, tdd_phase) =
                         parse_write_test_suite_arguments(&tool_call.arguments)?;
-                    let path_buf = PathBuf::from(&path);
+
+                    let project_root = {
+                        let cache = self
+                            .cache_manager
+                            .lock()
+                            .map_err(|_| "cache manager lock poisoned".to_string())?;
+                        cache.project_root().to_path_buf()
+                    };
+                    let path_buf = resolve_test_output_path(&project_root, &path);
 
                     if let Some(parent) = path_buf.parent() {
                         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -172,23 +191,18 @@ impl<C: LlmClient, TC: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscover
 
                     let triage_directive = Self::triage_directive(&tdd_phase);
                     context.accumulated_data.push_str(&format!(
-                        "\n[SYSTEM]: Launching Triage ({tdd_phase}) for {path}\n"
+                        "\n[SYSTEM]: Launching Triage ({tdd_phase}) for {}\n",
+                        path_buf.display()
                     ));
 
                     self.triage_agent.retarget(vec![path_buf.clone()])?;
 
-                    let mut triage_ctx = AgentContext {
-                        input_prompt: format!("Verify {path}:\n{triage_directive}"),
-                        accumulated_data: String::new(),
-                        iterations: 0,
-                        max_iterations: 3,
-                        is_finished: false,
-                    };
-
-                    self.triage_agent.enrich_context(&mut triage_ctx).await?;
-                    self.triage_agent
-                        .process_and_evaluate(&mut triage_ctx)
-                        .await?;
+                    let triage_ctx = AgentLoopOrchestrator::run(
+                        &self.triage_agent,
+                        format!("Verify {}:\n{triage_directive}", path_buf.display()),
+                        BUILDER_TRIAGE_MAX_ITERATIONS,
+                    )
+                    .await?;
 
                     context.accumulated_data.push_str(&format!(
                         "\n[TRIAGE RESULT]: {}\n",
@@ -232,4 +246,23 @@ pub fn default_builder_agent<C: LlmClient, TC: LlmClient>(
 ) -> DefaultBuilderAgent<C, TC> {
     let triage_agent = TriageAgent::new(triage_llm_client, target_paths, config);
     BuilderAgent::new(llm_client, cache_manager, triage_agent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_test_output_path_joins_relative_paths_to_project_root() {
+        let root = PathBuf::from("/repo/demo");
+        let resolved = resolve_test_output_path(&root, "tests/unit.rs");
+        assert_eq!(resolved, PathBuf::from("/repo/demo/tests/unit.rs"));
+    }
+
+    #[test]
+    fn resolve_test_output_path_preserves_absolute_paths() {
+        let root = PathBuf::from("/repo/demo");
+        let resolved = resolve_test_output_path(&root, "/tmp/abs_test.rs");
+        assert_eq!(resolved, PathBuf::from("/tmp/abs_test.rs"));
+    }
 }

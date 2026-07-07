@@ -356,13 +356,11 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             return Ok(());
         }
 
-        if context.input_prompt.contains("TDD RED PHASE")
-            && self.try_finish_tdd_red(&targets, context)?
-        {
-            return Ok(());
-        }
-
-        if self.run_build_targets(&targets, context)? {
+        if context.input_prompt.contains("TDD RED PHASE") {
+            if self.try_finish_tdd_red(&targets, context)? {
+                return Ok(());
+            }
+        } else if self.run_build_targets(&targets, context)? {
             return Ok(());
         }
 
@@ -415,7 +413,11 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                     "Applied edit_file({}, line={line})\n",
                     resolved.display()
                 ));
-                self.run_build_targets(&targets, context)?;
+                if context.input_prompt.contains("TDD RED PHASE") {
+                    self.try_finish_tdd_red(&targets, context)?;
+                } else {
+                    self.run_build_targets(&targets, context)?;
+                }
             }
             "report_architectural_error" => {
                 let msg = parse_report_error_arguments(&tool_call.arguments)?;
