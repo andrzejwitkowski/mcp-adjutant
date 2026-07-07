@@ -39,8 +39,19 @@ function emptyConfig(): AdjutantConfig {
   }
 }
 
+function withDisplayedPhases(loaded: AdjutantConfig): AdjutantConfig {
+  const phases = { ...loaded.phases }
+  for (const { phase } of AGENT_PHASES) {
+    if (!phases[phase]) {
+      phases[phase] = { ...DEFAULT_PROFILE }
+    }
+  }
+  return { ...loaded, phases }
+}
+
 export function ConfigApp() {
   const [config, setConfig] = useState<AdjutantConfig>(emptyConfig)
+  const [loaded, setLoaded] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'error'>(
     'loading',
   )
@@ -52,11 +63,13 @@ export function ConfigApp() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<AdjutantConfig>
       })
-      .then((loaded) => {
-        setConfig(loaded)
+      .then((loadedConfig) => {
+        setConfig(withDisplayedPhases(loadedConfig))
+        setLoaded(true)
         setStatus('ready')
       })
       .catch((error: Error) => {
+        setLoaded(false)
         setStatus('error')
         setMessage(error.message)
       })
@@ -74,6 +87,8 @@ export function ConfigApp() {
   }
 
   async function saveConfig() {
+    if (!loaded) return
+
     setStatus('saving')
     setMessage('')
     try {
@@ -95,6 +110,16 @@ export function ConfigApp() {
 
   if (status === 'loading') {
     return <main className="config-app">Loading configuration…</main>
+  }
+
+  if (!loaded) {
+    return (
+      <main className="config-app">
+        <p className="config-app__message is-error">
+          Failed to load configuration: {message || 'unknown error'}
+        </p>
+      </main>
+    )
   }
 
   return (

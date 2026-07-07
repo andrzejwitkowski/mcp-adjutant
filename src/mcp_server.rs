@@ -52,8 +52,18 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
             break;
         };
 
-        let request: JsonRpcRequest = serde_json::from_str(&message)
-            .map_err(|err| format!("invalid JSON-RPC request: {err}"))?;
+        let request: JsonRpcRequest = match serde_json::from_str(&message) {
+            Ok(request) => request,
+            Err(parse_err) => {
+                let response = err(
+                    &Value::Null,
+                    -32700,
+                    format!("Parse error: {parse_err}"),
+                );
+                write_message(&mut stdout, &response)?;
+                continue;
+            }
+        };
 
         if request.id.is_none() {
             continue;
@@ -224,5 +234,13 @@ mod tests {
         let first = &result["tools"][0];
         assert!(first.get("inputSchema").is_some());
         assert!(first.get("input_schema").is_none());
+    }
+
+    #[test]
+    fn parse_error_response_uses_null_id() {
+        let payload = err(&Value::Null, -32700, "Parse error".to_string());
+        let value: Value = serde_json::from_str(&payload).expect("json");
+        assert_eq!(value["id"], Value::Null);
+        assert_eq!(value["error"]["code"], -32700);
     }
 }
