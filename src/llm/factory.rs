@@ -43,6 +43,10 @@ pub fn create_scout_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmC
     create_llm_client_for_phase(config, AgentPhase::Scout)
 }
 
+pub fn create_builder_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Builder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -96,7 +96,26 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         }
     }
 
+    pub fn retarget(&self, paths: Vec<PathBuf>) -> Result<(), String> {
+        let mut workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        workspace.input_paths = paths;
+        workspace.build_targets.clear();
+        Ok(())
+    }
+
     fn resolve_target_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        if !workspace.input_paths.is_empty() {
+            return Ok(workspace.input_paths.clone());
+        }
+        drop(workspace);
+
         if self.target_paths.is_empty() {
             get_dirty_files_from_git()
         } else {
@@ -188,6 +207,93 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         Ok(all_ok)
     }
+
+    fn try_finish_tdd_red(
+        &self,
+        targets: &[(PathBuf, String)],
+        context: &mut AgentContext,
+    ) -> Result<bool, String> {
+        let mut check_failures = Vec::new();
+
+        for (dir, command) in targets {
+            let (check_cmd, _) = split_check_and_test_commands(command);
+            match self.build_runner.run_build_command(dir, &check_cmd) {
+                Ok(output) => {
+                    context.accumulated_data.push_str(&format!(
+                        "TDD RED check OK in {} (`{check_cmd}`):\n{output}\n",
+                        dir.display()
+                    ));
+                }
+                Err(output) => {
+                    let (body, truncated) = truncate_build_log(
+                        &output,
+                        Self::BUILD_LOG_MAX_LINES,
+                        Self::BUILD_LOG_MAX_BYTES,
+                    );
+                    let log = if truncated {
+                        format!("(log truncated — showing tail)\n{body}")
+                    } else {
+                        body
+                    };
+                    check_failures.push(format!(
+                        "TDD RED check FAILED in {} (`{check_cmd}`):\n{log}\n",
+                        dir.display()
+                    ));
+                }
+            }
+        }
+
+        if !check_failures.is_empty() {
+            context
+                .accumulated_data
+                .push_str(&check_failures.join("\n---\n"));
+            return Ok(false);
+        }
+
+        let mut assertion_failures = 0usize;
+        let mut unexpected = Vec::new();
+
+        for (dir, command) in targets {
+            let (_, test_cmd) = split_check_and_test_commands(command);
+            match self.build_runner.run_build_command(dir, &test_cmd) {
+                Ok(output) => {
+                    unexpected.push(format!(
+                        "TDD RED unexpected pass in {} (`{test_cmd}`):\n{output}\n",
+                        dir.display()
+                    ));
+                }
+                Err(output) => {
+                    if is_assertion_test_failure(&output) {
+                        assertion_failures += 1;
+                        context.accumulated_data.push_str(&format!(
+                            "TDD RED assertion failure (expected) in {} (`{test_cmd}`):\n{output}\n",
+                            dir.display()
+                        ));
+                    } else {
+                        unexpected.push(format!(
+                            "TDD RED non-assertion failure in {} (`{test_cmd}`):\n{output}\n",
+                            dir.display()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !unexpected.is_empty() {
+            context
+                .accumulated_data
+                .push_str(&unexpected.join("\n---\n"));
+            return Ok(false);
+        }
+
+        if assertion_failures > 0 {
+            context.is_finished = true;
+            context.input_prompt = "kompilacja udana, testy oblane".to_string();
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -250,14 +356,27 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             return Ok(());
         }
 
+        if context.input_prompt.contains("TDD RED PHASE")
+            && self.try_finish_tdd_red(&targets, context)?
+        {
+            return Ok(());
+        }
+
         if self.run_build_targets(&targets, context)? {
             return Ok(());
         }
 
-        let user_message = format!(
-            "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
-            context.accumulated_data
-        );
+        let user_message = if context.input_prompt.contains("TDD RED PHASE") {
+            format!(
+                "Logi kompilacji do naprawy (TDD RED — napraw WYŁĄCZNIE błędy kompilacji, NIE zmieniaj asercji):\n\n{}\n\nWywołaj jedno narzędzie.",
+                context.accumulated_data
+            )
+        } else {
+            format!(
+                "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
+                context.accumulated_data
+            )
+        };
         let request = LlmRequest::new(TRIAGE_SYSTEM_PROMPT, &user_message, &self.tools);
         let model_turn: LlmModelTurn = self.llm_client.complete(request)?;
 
@@ -282,6 +401,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         match tool_call.name.as_str() {
             "edit_file" => {
                 let (path, line, content) = parse_edit_file_arguments(&tool_call.arguments)?;
+                if context.input_prompt.contains("TDD RED PHASE")
+                    && (content.contains("assert") || content.contains("panic!"))
+                {
+                    return Err(
+                        "TDD RED PHASE: zabroniona modyfikacja asercji lub panic!".to_string()
+                    );
+                }
                 let module_roots = Self::module_roots(&targets);
                 let resolved = resolve_edit_path(&path, &module_roots)?;
                 edit_file_line(&resolved, line, &content)?;
@@ -310,6 +436,24 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             .push_str("\nPonów kompilację po ostatniej próbie naprawy.");
         Ok(())
     }
+}
+
+fn split_check_and_test_commands(command: &str) -> (String, String) {
+    if command.starts_with("cargo check") {
+        ("cargo check".to_string(), "cargo test".to_string())
+    } else if command.contains("typecheck") {
+        (command.to_string(), command.replace("typecheck", "test"))
+    } else {
+        (command.to_string(), command.to_string())
+    }
+}
+
+fn is_assertion_test_failure(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("assertion")
+        || lower.contains("panicked at")
+        || lower.contains("assert_eq!")
+        || (lower.contains("test result: failed") && !lower.contains("error[e"))
 }
 
 fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
