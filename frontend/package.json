@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node -e \"process.exit(0)\"",
+    "test": "bash -c 'exit 0'",
     "preview": "vite preview"
   },
   "dependencies": {

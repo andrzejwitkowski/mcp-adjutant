@@ -22,8 +22,7 @@ pub struct ConfigServerState {
 
 pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
     let index_file = state.static_root.join("index.html");
-    let serve_dir = ServeDir::new(&state.static_root)
-        .not_found_service(ServeFile::new(index_file));
+    let serve_dir = ServeDir::new(&state.static_root).not_found_service(ServeFile::new(index_file));
 
     let app = Router::new()
         .route("/api/config", get(get_config).put(put_config))
@@ -86,10 +85,7 @@ impl IntoResponse for AppError {
 pub fn static_root() -> PathBuf {
     std::env::var("MCP_ADJUTANT_STATIC_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("frontend/dist")
-        })
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("frontend/dist"))
 }
 
 pub fn resolve_config_path(config: &AdjutantConfig) -> PathBuf {

@@ -55,11 +55,7 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
         let request: JsonRpcRequest = match serde_json::from_str(&message) {
             Ok(request) => request,
             Err(parse_err) => {
-                let response = err(
-                    &Value::Null,
-                    -32700,
-                    format!("Parse error: {parse_err}"),
-                );
+                let response = err(&Value::Null, -32700, format!("Parse error: {parse_err}"));
                 write_message(&mut stdout, &response)?;
                 continue;
             }
@@ -212,7 +208,8 @@ fn read_message(stdin: &io::Stdin) -> Result<Option<String>, String> {
         .read_exact(&mut body)
         .map_err(|err| format!("failed to read MCP body: {err}"))?;
 
-    String::from_utf8(body).map_err(|err| format!("invalid UTF-8 in MCP body: {err}"))
+    String::from_utf8(body)
+        .map_err(|err| format!("invalid UTF-8 in MCP body: {err}"))
         .map(Some)
 }
 
