@@ -481,9 +481,27 @@ fn scope_test_command_for_paths(test_cmd: &str, test_paths: &[PathBuf]) -> Strin
     };
 
     if in_tests_dir && path.extension().is_some_and(|ext| ext == "rs") {
-        format!("cargo test --test {stem}")
+        insert_cargo_test_filter(test_cmd, stem)
     } else {
         test_cmd.to_string()
+    }
+}
+
+fn insert_cargo_test_filter(test_cmd: &str, stem: &str) -> String {
+    let (head, tail) = match test_cmd.split_once(" -- ") {
+        Some(parts) => parts,
+        None => (test_cmd, ""),
+    };
+
+    if head.contains("--test ") {
+        return test_cmd.to_string();
+    }
+
+    let scoped_head = format!("{head} --test {stem}");
+    if tail.is_empty() {
+        scoped_head
+    } else {
+        format!("{scoped_head} -- {tail}")
     }
 }
 
@@ -566,6 +584,27 @@ mod tests {
         let scoped =
             scope_test_command_for_paths("cargo test", &[PathBuf::from("tests/red_phase.rs")]);
         assert_eq!(scoped, "cargo test --test red_phase");
+    }
+
+    #[test]
+    fn scope_test_command_for_paths_preserves_existing_cargo_flags() {
+        let scoped = scope_test_command_for_paths(
+            "cargo test -p demo --features json",
+            &[PathBuf::from("tests/red_phase.rs")],
+        );
+        assert_eq!(
+            scoped,
+            "cargo test -p demo --features json --test red_phase"
+        );
+    }
+
+    #[test]
+    fn scope_test_command_for_paths_preserves_double_dash_separator() {
+        let scoped = scope_test_command_for_paths(
+            "cargo test -p demo -- --nocapture",
+            &[PathBuf::from("tests/red_phase.rs")],
+        );
+        assert_eq!(scoped, "cargo test -p demo --test red_phase -- --nocapture");
     }
 
     #[test]
