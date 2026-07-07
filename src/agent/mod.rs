@@ -9,6 +9,6 @@ pub use scout::{scout_tool_set, ScoutAgent, ScoutModelTurn, ScoutToolCall, SCOUT
 pub use text_pruner_mock::TextPrunerMock;
 pub use traits::{AgentContext, AutonomousAgent};
 pub use triage::{
-    BuildCommandRunner, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    triage_tool_set, BuildCommandRunner, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};

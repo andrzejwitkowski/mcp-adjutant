@@ -8,7 +8,7 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::find_nearest_module_boundary;
-use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest};
+use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
 
 struct MockBuildRunner {
     calls: AtomicUsize,
@@ -38,13 +38,23 @@ impl BuildCommandRunner for MockBuildRunner {
 }
 
 struct MockTriageLlm {
-    response: Mutex<String>,
+    turn: Mutex<LlmModelTurn>,
 }
 
 impl MockTriageLlm {
-    fn new(response: impl Into<String>) -> Self {
+    fn edit_file(path: &Path, line: usize, content: &str) -> Self {
         Self {
-            response: Mutex::new(response.into()),
+            turn: Mutex::new(LlmModelTurn {
+                content: Some("Thought: fix compile error".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "edit_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": path.display().to_string(),
+                        "line": line,
+                        "content": content,
+                    }),
+                }],
+            }),
         }
     }
 }
@@ -56,17 +66,15 @@ impl LlmClient for MockTriageLlm {
             request.user_message.contains("Logi kompilacji"),
             "expected compiler logs in user message"
         );
+        assert!(
+            !request.tools.is_empty(),
+            "triage request should register tool definitions"
+        );
 
-        let response = self
-            .response
+        self.turn
             .lock()
-            .map_err(|_| "mock llm lock poisoned".to_string())?
-            .clone();
-
-        Ok(LlmModelTurn {
-            content: Some(response),
-            tool_calls: vec![],
-        })
+            .map_err(|_| "mock llm lock poisoned".to_string())
+            .map(|turn| turn.clone())
     }
 }
 
@@ -122,12 +130,7 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
     let source = backend.join("src/lib.rs");
     let broken = std::fs::read_to_string(&source).expect("read source");
 
-    let edit_action = format!(
-        r#"ACTION: edit_file(path="{path}", line=1, content="pub fn fixed() {{}}")"#,
-        path = source.display()
-    );
-
-    let llm = MockTriageLlm::new(edit_action);
+    let llm = MockTriageLlm::edit_file(&source, 1, "pub fn fixed() {}");
     let runner = MockBuildRunner::new(
         "error[E0425]: cannot find value `syntax` in this scope",
         "    Finished dev",
@@ -170,12 +173,7 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
     let (backend, _) = setup_monorepo(&root);
     let source = backend.join("src/lib.rs");
 
-    let edit_action = format!(
-        r#"ACTION: edit_file(path="{path}", line=1, content="pub fn fixed() {{}}")"#,
-        path = source.display()
-    );
-
-    let llm = MockTriageLlm::new(edit_action);
+    let llm = MockTriageLlm::edit_file(&source, 1, "pub fn fixed() {}");
     let runner = MockBuildRunner::new(
         "error[E0425]: cannot find value `syntax` in this scope",
         "    Finished dev",
@@ -206,10 +204,7 @@ async fn triage_agent_rejects_edit_outside_module_roots() {
     let (backend, _) = setup_monorepo(&root);
     let source = backend.join("src/lib.rs");
 
-    let edit_action =
-        r#"ACTION: edit_file(path="/etc/passwd", line=1, content="pwned")"#.to_string();
-
-    let llm = MockTriageLlm::new(edit_action);
+    let llm = MockTriageLlm::edit_file(Path::new("/etc/passwd"), 1, "pwned");
     let runner = MockBuildRunner::new("error[E0425]: broken", "ok");
 
     let config = Arc::new(AdjutantConfig::default());
@@ -259,12 +254,8 @@ async fn triage_agent_discovers_build_command_for_unknown_stack() {
     std::fs::write(cuda.join("kernel.cu"), "__global__ void k() {}").expect("cu");
 
     let source = cuda.join("kernel.cu");
-    let edit_action = format!(
-        r#"ACTION: edit_file(path="{path}", line=1, content="__global__ void k() {{}}")"#,
-        path = source.display()
-    );
 
-    let llm = MockTriageLlm::new(edit_action);
+    let llm = MockTriageLlm::edit_file(&source, 1, "__global__ void k() {}");
     let runner = MockBuildRunner::new("error: expected ';'", "nvcc ok");
     let discoverer = MockDiscoverer {
         command: "nvcc -std=c++17 -c kernel.cu".to_string(),

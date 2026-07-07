@@ -1,3 +1,5 @@
+mod tools;
+
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -12,11 +14,16 @@ use crate::tools::{
     run_build_command, snapshot_build_context, BuildCommandDiscoverer, NoopBuildDiscoverer,
 };
 
+pub use tools::{parse_edit_file_arguments, parse_report_error_arguments, triage_tool_set};
+
 pub const TRIAGE_SYSTEM_PROMPT: &str = r#"Jesteś agentem naprawczym kompilatora (PHASE_5_TRIAGE). Dostaniesz logi z błędami.
 Oceń, czy potrafisz naprawić kod (np. brakujący import, literówka).
-Dozwolone akcje:
-- ACTION: edit_file(path="src/main.rs", line=42, content="pub struct NewName;")
-- ACTION: report_architectural_error(msg="Złożony błąd lifetime'ów, wymagam pomocy architekta.")"#;
+
+Masz do dyspozycji narzędzia (tool calls):
+- edit_file — zamienia jedną linię pliku (path, line, content)
+- report_architectural_error — eskalacja, gdy naprawa wymaga architekta (msg)
+
+Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj dokładnie jedno narzędzie."#;
 
 pub trait BuildCommandRunner: Send + Sync {
     fn run_build_command(&self, dir: &Path, command: &str) -> Result<String, String>;
@@ -28,18 +35,6 @@ impl BuildCommandRunner for SystemBuildRunner {
     fn run_build_command(&self, dir: &Path, command: &str) -> Result<String, String> {
         run_build_command(dir, command)
     }
-}
-
-#[derive(Debug, Clone)]
-enum TriageAction {
-    EditFile {
-        path: PathBuf,
-        line: usize,
-        content: String,
-    },
-    ReportArchitecturalError {
-        msg: String,
-    },
 }
 
 #[derive(Default)]
@@ -54,6 +49,7 @@ pub struct TriageAgent<C, B = SystemBuildRunner, D = NoopBuildDiscoverer> {
     config: Arc<AdjutantConfig>,
     build_runner: B,
     discoverer: D,
+    tools: LlmToolSet,
     workspace: Mutex<TriageWorkspace>,
 }
 
@@ -96,6 +92,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
             config,
             build_runner,
             discoverer,
+            tools: triage_tool_set(),
             workspace: Mutex::new(TriageWorkspace::default()),
         }
     }
@@ -265,26 +262,35 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         }
 
         let user_message = format!(
-            "Logi kompilacji do naprawy:\n\n{}\n\nWybierz jedną dozwoloną akcję ACTION.",
+            "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
             context.accumulated_data
         );
-        let tools = LlmToolSet::new();
-        let request = LlmRequest::new(TRIAGE_SYSTEM_PROMPT, &user_message, &tools);
+        let request = LlmRequest::new(TRIAGE_SYSTEM_PROMPT, &user_message, &self.tools);
         let model_turn: LlmModelTurn = self.llm_client.complete(request)?;
 
-        let response = model_turn.content.unwrap_or_default();
+        let tool_call = match model_turn.tool_calls.first() {
+            Some(call) => call,
+            None => {
+                let thought = model_turn.content.unwrap_or_default();
+                context.accumulated_data.push_str(&format!(
+                    "LLM triage response (iter {}):\n{thought}\n(model nie wywołał narzędzia — ponawiam)\n",
+                    context.iterations
+                ));
+                return Ok(());
+            }
+        };
 
+        let thought = model_turn.content.unwrap_or_default();
         context.accumulated_data.push_str(&format!(
-            "LLM triage response (iter {}):\n{response}\n",
-            context.iterations
+            "LLM triage response (iter {}):\nThought: {thought}\nTool: {}({})\n",
+            context.iterations,
+            tool_call.name,
+            tool_call.arguments
         ));
 
-        match parse_triage_action(&response) {
-            Some(TriageAction::EditFile {
-                path,
-                line,
-                content,
-            }) => {
+        match tool_call.name.as_str() {
+            "edit_file" => {
+                let (path, line, content) = parse_edit_file_arguments(&tool_call.arguments)?;
                 let module_roots = Self::module_roots(&targets);
                 let resolved = resolve_edit_path(&path, &module_roots)?;
                 edit_file_line(&resolved, line, &content)?;
@@ -294,14 +300,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                 ));
                 self.run_build_targets(&targets, context)?;
             }
-            Some(TriageAction::ReportArchitecturalError { msg }) => {
+            "report_architectural_error" => {
+                let msg = parse_report_error_arguments(&tool_call.arguments)?;
                 context.accumulated_data = msg;
                 context.is_finished = true;
             }
-            None => {
-                context.accumulated_data.push_str(
-                    "LLM response missing recognizable ACTION — retrying next iteration.\n",
-                );
+            other => {
+                return Err(format!("unsupported triage tool: {other}"));
             }
         }
 
@@ -341,106 +346,9 @@ fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, S
     ))
 }
 
-fn parse_triage_action(text: &str) -> Option<TriageAction> {
-    let action_line = text
-        .lines()
-        .find(|line| line.trim().starts_with("ACTION:"))?;
-    let action_line = action_line.trim();
-
-    if let Some(args) = action_line
-        .strip_prefix("ACTION: edit_file(")
-        .and_then(|s| s.strip_suffix(')'))
-    {
-        let path = parse_action_value(args, "path")?;
-        let line = parse_action_value(args, "line")?.parse().ok()?;
-        let content = parse_action_value(args, "content")?;
-        return Some(TriageAction::EditFile {
-            path: PathBuf::from(path),
-            line,
-            content,
-        });
-    }
-
-    if let Some(msg) = action_line
-        .strip_prefix("ACTION: report_architectural_error(msg=")
-        .and_then(|s| s.strip_suffix(')'))
-    {
-        return Some(TriageAction::ReportArchitecturalError {
-            msg: unquote_action_value(msg.trim()),
-        });
-    }
-
-    None
-}
-
-fn parse_action_value(args: &str, key: &str) -> Option<String> {
-    let pattern = format!("{key}=");
-    let start = args.find(&pattern)? + pattern.len();
-    let rest = &args[start..];
-    Some(unquote_action_value(
-        rest.split_at(unquote_end(rest))
-            .0
-            .trim_end_matches(',')
-            .trim(),
-    ))
-}
-
-fn unquote_end(input: &str) -> usize {
-    if input.starts_with('"') {
-        let mut escaped = false;
-        for (idx, ch) in input.char_indices().skip(1) {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == '"' {
-                return idx + 1;
-            }
-        }
-        input.len()
-    } else {
-        input.find(',').unwrap_or(input.len())
-    }
-}
-
-fn unquote_action_value(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
-        trimmed[1..trimmed.len() - 1].replace("\\\"", "\"")
-    } else {
-        trimmed.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_edit_file_action() {
-        let action = parse_triage_action(
-            r#"Thought: fix typo
-ACTION: edit_file(path="src/main.rs", line=42, content="pub struct NewName;")"#,
-        )
-        .expect("action");
-
-        match action {
-            TriageAction::EditFile {
-                path,
-                line,
-                content,
-            } => {
-                assert_eq!(path, PathBuf::from("src/main.rs"));
-                assert_eq!(line, 42);
-                assert_eq!(content, "pub struct NewName;");
-            }
-            other => panic!("unexpected action: {other:?}"),
-        }
-    }
 
     #[test]
     fn resolve_edit_path_rejects_traversal_and_outside_roots() {
@@ -452,20 +360,5 @@ ACTION: edit_file(path="src/main.rs", line=42, content="pub struct NewName;")"#,
 
         assert!(resolve_edit_path(Path::new("../etc/passwd"), &allowed).is_err());
         assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
-    }
-
-    #[test]
-    fn parse_architectural_error_action() {
-        let action = parse_triage_action(
-            r#"ACTION: report_architectural_error(msg="Złożony błąd lifetime'ów, wymagam pomocy architekta.")"#,
-        )
-        .expect("action");
-
-        match action {
-            TriageAction::ReportArchitecturalError { msg } => {
-                assert!(msg.contains("lifetime"));
-            }
-            other => panic!("unexpected action: {other:?}"),
-        }
     }
 }
