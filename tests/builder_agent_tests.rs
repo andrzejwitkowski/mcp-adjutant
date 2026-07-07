@@ -314,13 +314,28 @@ impl MockBuilderLlm {
             },
         }
     }
+
+    fn generate_factory(target_struct: &str, target_file: &str) -> Self {
+        Self {
+            turn: LlmModelTurn {
+                content: Some("Thought: scout test factory".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "generate_test_factory".to_string(),
+                    arguments: serde_json::json!({
+                        "target_struct": target_struct,
+                        "target_file": target_file,
+                    }),
+                }],
+            },
+        }
+    }
 }
 
-struct MockScoutLlmFinalize {
+struct MockScoutLlmIntegration {
     report: String,
 }
 
-impl MockScoutLlmFinalize {
+impl MockScoutLlmIntegration {
     fn new(report: impl Into<String>) -> Self {
         Self {
             report: report.into(),
@@ -328,7 +343,7 @@ impl MockScoutLlmFinalize {
     }
 }
 
-impl LlmClient for MockScoutLlmFinalize {
+impl LlmClient for MockScoutLlmIntegration {
     fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
         assert_eq!(request.system_prompt, SCOUT_SYSTEM_PROMPT);
         assert!(
@@ -337,6 +352,43 @@ impl LlmClient for MockScoutLlmFinalize {
         );
         Ok(LlmModelTurn {
             content: Some("Scout report ready.".to_string()),
+            tool_calls: vec![LlmToolCall {
+                name: "finalize".to_string(),
+                arguments: serde_json::json!({ "report": self.report }),
+            }],
+        })
+    }
+}
+
+struct MockScoutLlmFactory {
+    report: String,
+}
+
+impl MockScoutLlmFactory {
+    fn new(report: impl Into<String>) -> Self {
+        Self {
+            report: report.into(),
+        }
+    }
+}
+
+impl LlmClient for MockScoutLlmFactory {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        assert_eq!(request.system_prompt, SCOUT_SYSTEM_PROMPT);
+        assert!(
+            request.user_message.contains("User"),
+            "scout should receive target struct name"
+        );
+        assert!(
+            request.user_message.contains("src/models/User.java"),
+            "scout should receive target file path"
+        );
+        assert!(
+            request.user_message.contains("detect_language"),
+            "factory query should be language-agnostic"
+        );
+        Ok(LlmModelTurn {
+            content: Some("Scout factory ready.".to_string()),
             tool_calls: vec![LlmToolCall {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": self.report }),
@@ -364,7 +416,7 @@ async fn builder_agent_gather_integration_context_delegates_to_scout() {
     let agent = BuilderAgent::new(
         llm,
         cache,
-        ScoutAgent::new(MockScoutLlmFinalize::new(scout_report)),
+        ScoutAgent::new(MockScoutLlmIntegration::new(scout_report)),
         triage_agent,
     );
 
@@ -385,6 +437,52 @@ async fn builder_agent_gather_integration_context_delegates_to_scout() {
     assert!(
         result.accumulated_data.contains(scout_report),
         "builder should surface scout finalize report, got: {}",
+        result.accumulated_data
+    );
+
+    std::fs::remove_dir_all(&project_root).ok();
+}
+
+#[tokio::test]
+async fn builder_agent_generate_test_factory_delegates_to_scout() {
+    let project_root = unique_temp_project("builder-factory");
+    setup_cargo_project(&project_root);
+
+    let llm = MockBuilderLlm::generate_factory("User", "src/models/User.java");
+    let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
+    let scout_report = "## Factory\n```java\nclass UserMother { static User valid() { ... } }\n```";
+
+    let config = Arc::new(AdjutantConfig::default());
+    let triage_agent = TriageAgent::with_build_runner(
+        PanicTriageLlm,
+        vec![],
+        Arc::clone(&config),
+        TddRedBuildRunner,
+    );
+    let agent = BuilderAgent::new(
+        llm,
+        cache,
+        ScoutAgent::new(MockScoutLlmFactory::new(scout_report)),
+        triage_agent,
+    );
+
+    let result = AgentLoopOrchestrator::run(
+        &agent,
+        "PHASE_4_BUILDER\nGenerate object mother for User entity".to_string(),
+        2,
+    )
+    .await
+    .expect("builder loop should complete");
+
+    assert!(
+        result
+            .accumulated_data
+            .contains("Launching Scout for test factory"),
+        "expected scout chaining log"
+    );
+    assert!(
+        result.accumulated_data.contains(scout_report),
+        "builder should surface scout factory report, got: {}",
         result.accumulated_data
     );
 

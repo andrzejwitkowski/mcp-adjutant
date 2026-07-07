@@ -48,7 +48,7 @@ impl GenerateTestFactoryTool {
         Self {
             definition: ToolDefinition::new(
                 "generate_test_factory",
-                "Generuje wzorzec Fluent Buildera dla danej struktury danych (na potrzeby mockowania).",
+                "Uruchamia pod-agenta Scout, aby na podstawie pliku źródłowego wygenerować idiomatyczny wzorzec factory/fixture dla danego typu (język agnostic).",
             )
             .string_param("target_struct", "Nazwa struktury docelowej.", true)
             .string_param("target_file", "Ścieżka pliku źródłowego.", true),
@@ -139,25 +139,14 @@ pub fn build_scout_integration_query(components: &[String]) -> String {
     )
 }
 
-pub fn generate_test_factory(target_struct: &str, target_file: &str) -> String {
+pub fn build_scout_factory_query(target_struct: &str, target_file: &str) -> String {
     format!(
-        r#"// Fluent builder for {target_struct} (source: {target_file})
-pub struct {target_struct}Builder {{
-    inner: {target_struct},
-}}
-
-impl {target_struct}Builder {{
-    pub fn new() -> Self {{
-        Self {{
-            inner: {target_struct}::default(),
-        }}
-    }}
-
-    pub fn build(self) -> {target_struct} {{
-        self.inner
-    }}
-}}
-"#
+        "PHASE_1_SCOUT\n\nPrzygotuj szablon factory/fixture/builder dla typu `{target_struct}` \
+         na podstawie pliku `{target_file}`.\n\n\
+         Wykryj język (detect_language), odczytaj definicję typu (read_file, ast_calls) i zwróć \
+         idiomatyczny dla tego stacku wzorzec test fixture (fluent builder, object mother, factory \
+         method — zależnie od konwencji języka). Nie zakładaj konkretnego języka z góry. \
+         Zakończ raportem finalize."
     )
 }
 
@@ -206,10 +195,14 @@ mod tests {
     }
 
     #[test]
-    fn generate_test_factory_emits_fluent_builder_skeleton() {
-        let code = generate_test_factory("User", "src/user.rs");
-        assert!(code.contains("UserBuilder"));
-        assert!(code.contains("src/user.rs"));
+    fn build_scout_factory_query_is_language_agnostic() {
+        let query = build_scout_factory_query("User", "src/models/User.java");
+        assert!(query.contains("PHASE_1_SCOUT"));
+        assert!(query.contains("User"));
+        assert!(query.contains("src/models/User.java"));
+        assert!(query.contains("detect_language"));
+        assert!(query.contains("finalize"));
+        assert!(!query.contains("pub struct"));
     }
 
     #[test]

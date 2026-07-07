@@ -14,7 +14,7 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
 pub use tools::{
-    build_scout_integration_query, builder_tool_set, generate_test_factory, parse_components,
+    build_scout_factory_query, build_scout_integration_query, builder_tool_set, parse_components,
     parse_factory_arguments, parse_write_test_suite_arguments,
 };
 
@@ -22,7 +22,7 @@ pub const BUILDER_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotnikiem TDD
 
 Masz do dyspozycji narzędzia (tool calls):
 - gather_integration_context — uruchamia pod-agenta Scout (ripgrep, AST, read_file) przed testami integracyjnymi
-- generate_test_factory — szkielet Fluent Buildera dla struktury
+- generate_test_factory — uruchamia Scout w celu wygenerowania idiomatycznego factory/fixture dla typu (język agnostic)
 - write_test_suite — zapis pliku testowego z fazą TDD (red|green|refactor)
 
 Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj narzędzia."#;
@@ -131,6 +131,23 @@ impl<
             _ => triage_ctx.input_prompt.contains("sukcesem"),
         }
     }
+
+    async fn run_scout_subagent(
+        &self,
+        context: &mut AgentContext,
+        label: &str,
+        query: String,
+    ) -> Result<String, String> {
+        context
+            .accumulated_data
+            .push_str(&format!("\n[SYSTEM]: Launching Scout for {label}\n"));
+
+        let scout_ctx =
+            AgentLoopOrchestrator::run(&self.scout_agent, query, BUILDER_SCOUT_MAX_ITERATIONS)
+                .await?;
+
+        Ok(format_scout_observation(&scout_ctx))
+    }
 }
 
 #[async_trait]
@@ -187,18 +204,9 @@ impl<
                 "gather_integration_context" => {
                     let components = parse_components(&tool_call.arguments)?;
                     let scout_query = build_scout_integration_query(&components);
-                    context
-                        .accumulated_data
-                        .push_str("\n[SYSTEM]: Launching Scout for integration context\n");
-
-                    let scout_ctx = AgentLoopOrchestrator::run(
-                        &self.scout_agent,
-                        scout_query,
-                        BUILDER_SCOUT_MAX_ITERATIONS,
-                    )
-                    .await?;
-
-                    let output = format_scout_observation(&scout_ctx);
+                    let output = self
+                        .run_scout_subagent(context, "integration context", scout_query)
+                        .await?;
                     context
                         .accumulated_data
                         .push_str(&format!("Observation:\n{output}\n"));
@@ -206,10 +214,13 @@ impl<
                 "generate_test_factory" => {
                     let (target_struct, target_file) =
                         parse_factory_arguments(&tool_call.arguments)?;
-                    let factory = generate_test_factory(&target_struct, &target_file);
+                    let scout_query = build_scout_factory_query(&target_struct, &target_file);
+                    let output = self
+                        .run_scout_subagent(context, "test factory", scout_query)
+                        .await?;
                     context
                         .accumulated_data
-                        .push_str(&format!("Observation:\n{factory}\n"));
+                        .push_str(&format!("Observation:\n{output}\n"));
                 }
                 "write_test_suite" => {
                     let (path, content, tdd_phase) =
