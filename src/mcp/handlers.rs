@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::agent::{AgentLoopOrchestrator, TriageAgent, TRIAGE_SYSTEM_PROMPT};
-use crate::domain::{AdjutantConfig, AgentPhase};
-use crate::llm::DeepSeekClient;
+use crate::domain::AdjutantConfig;
+use crate::llm::create_triage_llm_client;
 
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
 
@@ -45,8 +45,7 @@ pub async fn handle_verify_and_triage(
         })
         .unwrap_or_default();
 
-    let profile = config.get_profile(&AgentPhase::Triage).clone();
-    let client = DeepSeekClient::new(profile);
+    let client = create_triage_llm_client(&config)?;
     let agent = TriageAgent::new(client, target_paths, Arc::clone(&config));
 
     let result = AgentLoopOrchestrator::run(

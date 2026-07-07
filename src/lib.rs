@@ -22,6 +22,7 @@ pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, SEMANTIC_SIMILARITY_T
 pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 pub use error::AdjutantConfigError;
 pub use llm::{
+    create_llm_client, create_llm_client_for_phase, create_triage_llm_client, ConfiguredLlmClient,
     DeepSeekClient, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet,
     ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
 };

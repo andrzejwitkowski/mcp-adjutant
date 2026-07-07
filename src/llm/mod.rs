@@ -1,10 +1,14 @@
 mod deepseek;
+mod factory;
 mod request;
 mod tools;
 mod traits;
 mod types;
 
 pub use deepseek::DeepSeekClient;
+pub use factory::{
+    create_llm_client, create_llm_client_for_phase, create_triage_llm_client, ConfiguredLlmClient,
+};
 pub use request::LlmRequest;
 pub use tools::{LlmTool, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult, ToolParam};
 pub use traits::LlmClient;
