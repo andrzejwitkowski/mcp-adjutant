@@ -5,6 +5,7 @@ pub enum ParamType {
     String,
     Integer,
     StringEnum(Vec<String>),
+    StringArray,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +80,21 @@ impl ToolDefinition {
         self
     }
 
+    pub fn string_array_param(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        required: bool,
+    ) -> Self {
+        self.parameters.push(ToolParam {
+            name: name.into(),
+            description: description.into(),
+            param_type: ParamType::StringArray,
+            required,
+        });
+        self
+    }
+
     pub fn to_openai_json(&self) -> Value {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
@@ -96,6 +112,11 @@ impl ToolDefinition {
                 ParamType::StringEnum(options) => json!({
                     "type": "string",
                     "enum": options,
+                    "description": param.description,
+                }),
+                ParamType::StringArray => json!({
+                    "type": "array",
+                    "items": { "type": "string" },
                     "description": param.description,
                 }),
             };

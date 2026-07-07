@@ -1,20 +1,24 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
 use crate::agent::{
-    AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent,
+    TRIAGE_SYSTEM_PROMPT,
 };
+use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
-use crate::llm::{create_scout_llm_client, create_triage_llm_client};
+use crate::llm::{create_builder_llm_client, create_scout_llm_client, create_triage_llm_client};
 use crate::tools::LlmBuildDiscoverer;
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
+pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_scaffolding";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
+const BUILDER_MAX_ITERATIONS: u32 = 5;
 
 pub fn scout_context_schema() -> Value {
     json!({
@@ -50,8 +54,30 @@ pub fn verify_and_triage_schema() -> Value {
     })
 }
 
+pub fn generate_tests_and_scaffolding_schema() -> Value {
+    json!({
+        "name": GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+        "description": "Generuje testy (jednostkowe/integracyjne) i fabryki. Automatycznie sprawdza kompilację przez triage.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_file_path": { "type": "string" },
+                "test_type": {
+                    "type": "string",
+                    "enum": ["unit", "integration", "factory"]
+                }
+            },
+            "required": ["source_file_path", "test_type"]
+        }
+    })
+}
+
 pub fn registered_mcp_tools() -> Vec<Value> {
-    vec![scout_context_schema(), verify_and_triage_schema()]
+    vec![
+        scout_context_schema(),
+        verify_and_triage_schema(),
+        generate_tests_and_scaffolding_schema(),
+    ]
 }
 
 pub async fn handle_scout_context(
@@ -130,6 +156,78 @@ pub async fn handle_verify_and_triage(
 
     Ok(format!(
         "Triage report (finished={}, iterations={}):\n{}\n{}",
+        result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
+    ))
+}
+
+fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/embedding");
+    (fixtures.join("model.onnx"), fixtures.join("tokenizer.json"))
+}
+
+fn open_cache_manager_near(source_path: &Path) -> Result<ProjectCacheManager, String> {
+    let start_dir = if source_path.is_file() {
+        source_path.parent().unwrap_or(source_path)
+    } else {
+        source_path
+    };
+    let (model_path, tokenizer_path) = embedding_fixture_paths();
+    ProjectCacheManager::new(start_dir, &model_path, &tokenizer_path)
+}
+
+pub async fn handle_generate_tests_and_scaffolding(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+) -> Result<String, String> {
+    let source_file_path = args
+        .get("source_file_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "source_file_path is required".to_string())?;
+
+    let test_type = args
+        .get("test_type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "test_type is required".to_string())?;
+
+    const ALLOWED_TEST_TYPES: [&str; 3] = ["unit", "integration", "factory"];
+    if !ALLOWED_TEST_TYPES.contains(&test_type) {
+        return Err(format!(
+            "test_type must be one of {ALLOWED_TEST_TYPES:?}, got {test_type:?}"
+        ));
+    }
+
+    let source_path = PathBuf::from(source_file_path);
+    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
+
+    let builder_client = create_builder_llm_client(&config)?;
+    let scout_client = create_scout_llm_client(&config)?;
+    let triage_client = create_triage_llm_client(&config)?;
+    let agent = default_builder_agent(
+        builder_client,
+        cache_manager,
+        scout_client,
+        triage_client,
+        Arc::clone(&config),
+        vec![source_path.clone()],
+    );
+
+    let prompt = format!(
+        "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nWygeneruj test typu `{test_type}` dla pliku: {source_file_path}"
+    );
+
+    let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
+
+    if result.is_finished {
+        return Ok(format!(
+            "Builder finished successfully for {source_file_path} ({test_type}).\n{}",
+            result.accumulated_data
+        ));
+    }
+
+    Ok(format!(
+        "Builder report (finished={}, iterations={}):\n{}\n{}",
         result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
     ))
 }
