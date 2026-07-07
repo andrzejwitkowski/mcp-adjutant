@@ -1,0 +1,114 @@
+.config-app {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  font-family: system-ui, sans-serif;
+  color: #e8eaed;
+  background: #111318;
+  min-height: 100vh;
+}
+
+.config-app__header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.config-app__header p,
+.agent-panel header p,
+.llm-client-card__description {
+  margin: 0;
+  color: #9aa0a6;
+}
+
+.agent-panel {
+  margin-top: 2rem;
+}
+
+.agent-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.llm-client-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.llm-client-card {
+  border: 1px solid #2d3139;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: #181b22;
+}
+
+.llm-client-card.is-selected {
+  border-color: #5b8def;
+}
+
+.llm-client-card__header {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.llm-client-card__select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.llm-client-card__title {
+  font-weight: 600;
+}
+
+.llm-client-card__fields {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.llm-client-card__fields label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.llm-client-card__fields input {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #2d3139;
+  border-radius: 0.375rem;
+  background: #0f1115;
+  color: inherit;
+}
+
+.config-app__footer {
+  margin-top: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.config-app__footer button {
+  padding: 0.625rem 1rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: #5b8def;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.config-app__footer button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.config-app__message.is-error {
+  color: #f28b82;
+}
+
+.config-app__message.is-ready {
+  color: #81c995;
+}
