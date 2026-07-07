@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::agent::{AgentLoopOrchestrator, ScoutAgent, TriageAgent, TRIAGE_SYSTEM_PROMPT};
+use crate::agent::{AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT};
 use crate::domain::AdjutantConfig;
 use crate::llm::{create_scout_llm_client, create_triage_llm_client};
+use crate::tools::LlmBuildDiscoverer;
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
@@ -93,8 +94,16 @@ pub async fn handle_verify_and_triage(
         })
         .unwrap_or_default();
 
-    let client = create_triage_llm_client(&config)?;
-    let agent = TriageAgent::new(client, target_paths, Arc::clone(&config));
+    let triage_client = create_triage_llm_client(&config)?;
+    let scout_client = create_scout_llm_client(&config)?;
+    let discoverer = LlmBuildDiscoverer::new(scout_client);
+    let agent = TriageAgent::with_build_runner_and_discoverer(
+        triage_client,
+        target_paths,
+        Arc::clone(&config),
+        SystemBuildRunner,
+        discoverer,
+    );
 
     let result = AgentLoopOrchestrator::run(
         &agent,

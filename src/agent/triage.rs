@@ -8,7 +8,8 @@ use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
 use crate::tools::{
-    edit_file_line, find_nearest_module_boundary, get_dirty_files_from_git, run_build_command,
+    edit_file_line, find_nearest_module_boundary, get_dirty_files_from_git, inference_anchor,
+    run_build_command, snapshot_build_context, BuildCommandDiscoverer, NoopBuildDiscoverer,
 };
 
 pub const TRIAGE_SYSTEM_PROMPT: &str = r#"Jesteś agentem naprawczym kompilatora (PHASE_5_TRIAGE). Dostaniesz logi z błędami.
@@ -44,34 +45,57 @@ enum TriageAction {
 #[derive(Default)]
 struct TriageWorkspace {
     build_targets: Vec<(PathBuf, String)>,
+    input_paths: Vec<PathBuf>,
 }
 
-pub struct TriageAgent<C, B = SystemBuildRunner> {
+pub struct TriageAgent<C, B = SystemBuildRunner, D = NoopBuildDiscoverer> {
     llm_client: C,
     target_paths: Vec<PathBuf>,
     config: Arc<AdjutantConfig>,
     build_runner: B,
+    discoverer: D,
     workspace: Mutex<TriageWorkspace>,
 }
 
-impl<C: LlmClient> TriageAgent<C, SystemBuildRunner> {
+impl<C: LlmClient> TriageAgent<C, SystemBuildRunner, NoopBuildDiscoverer> {
     pub fn new(llm_client: C, target_paths: Vec<PathBuf>, config: Arc<AdjutantConfig>) -> Self {
         Self::with_build_runner(llm_client, target_paths, config, SystemBuildRunner)
     }
 }
 
-impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B> {
+impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B, NoopBuildDiscoverer> {
     pub fn with_build_runner(
         llm_client: C,
         target_paths: Vec<PathBuf>,
         config: Arc<AdjutantConfig>,
         build_runner: B,
     ) -> Self {
+        Self::with_build_runner_and_discoverer(
+            llm_client,
+            target_paths,
+            config,
+            build_runner,
+            NoopBuildDiscoverer,
+        )
+    }
+}
+
+impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
+    TriageAgent<C, B, D>
+{
+    pub fn with_build_runner_and_discoverer(
+        llm_client: C,
+        target_paths: Vec<PathBuf>,
+        config: Arc<AdjutantConfig>,
+        build_runner: B,
+        discoverer: D,
+    ) -> Self {
         Self {
             llm_client,
             target_paths,
             config,
             build_runner,
+            discoverer,
             workspace: Mutex::new(TriageWorkspace::default()),
         }
     }
@@ -84,9 +108,10 @@ impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B> {
         }
     }
 
-    fn collect_build_targets(&self, paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    fn resolve_build_targets(&self, paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
         let mut seen = HashSet::new();
         let mut targets = Vec::new();
+        let mut needs_discovery = HashSet::new();
 
         for path in paths {
             if let Some((dir, command)) = find_nearest_module_boundary(path, &self.config) {
@@ -94,10 +119,25 @@ impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B> {
                 if seen.insert(key.clone()) {
                     targets.push(key);
                 }
+            } else {
+                needs_discovery.insert(inference_anchor(path));
             }
         }
 
-        targets
+        for anchor in needs_discovery {
+            if targets.iter().any(|(dir, _)| dir == &anchor) {
+                continue;
+            }
+            let snapshot = snapshot_build_context(&anchor, 3)?;
+            if let Some(command) = self.discoverer.discover(&anchor, &snapshot)? {
+                let key = (anchor.clone(), command);
+                if seen.insert(key.clone()) {
+                    targets.push(key);
+                }
+            }
+        }
+
+        Ok(targets)
     }
 
     fn condense_build_errors(output: &str) -> String {
@@ -160,7 +200,9 @@ impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B> {
 }
 
 #[async_trait]
-impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> {
+impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousAgent
+    for TriageAgent<C, B, D>
+{
     fn name(&self) -> &'static str {
         "triage_agent"
     }
@@ -172,12 +214,13 @@ impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> 
         }
 
         let paths = self.resolve_target_paths()?;
-        let targets = self.collect_build_targets(&paths);
+        let targets = self.resolve_build_targets(&paths)?;
 
         let mut workspace = self
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        workspace.input_paths = paths;
         workspace.build_targets = targets.clone();
 
         let summary: Vec<String> = targets
@@ -194,18 +237,26 @@ impl<C: LlmClient, B: BuildCommandRunner> AutonomousAgent for TriageAgent<C, B> 
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let targets = {
+        let (targets, paths) = {
             let workspace = self
                 .workspace
                 .lock()
                 .map_err(|_| "triage workspace lock poisoned".to_string())?;
-            workspace.build_targets.clone()
+            (
+                workspace.build_targets.clone(),
+                workspace.input_paths.clone(),
+            )
         };
 
         if targets.is_empty() {
             context.is_finished = true;
-            context.input_prompt =
-                "Brak modułów do sprawdzenia (brak zmian w git lub nieznane ścieżki).".to_string();
+            context.input_prompt = if paths.is_empty() {
+                "Brak modułów do sprawdzenia (brak zmian w git lub nieznane ścieżki)."
+                    .to_string()
+            } else {
+                "Nie udało się rozpoznać polecenia kompilacji (brak manifestu i discovery nie zwróciło komendy)."
+                    .to_string()
+            };
             return Ok(());
         }
 

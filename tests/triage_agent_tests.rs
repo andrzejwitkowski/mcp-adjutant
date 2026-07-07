@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, BuildCommandRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, TriageAgent,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::find_nearest_module_boundary;
@@ -227,6 +228,70 @@ async fn triage_agent_rejects_edit_outside_module_roots() {
     assert!(
         contents.contains("broken syntax"),
         "file must remain unchanged"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+struct MockDiscoverer {
+    command: String,
+}
+
+impl BuildCommandDiscoverer for MockDiscoverer {
+    fn discover(
+        &self,
+        _anchor: &Path,
+        snapshot: &str,
+    ) -> Result<Option<String>, String> {
+        assert!(
+            snapshot.contains("kernel.cu"),
+            "discovery should receive directory snapshot, got:\n{snapshot}"
+        );
+        Ok(Some(self.command.clone()))
+    }
+}
+
+#[tokio::test]
+async fn triage_agent_discovers_build_command_for_unknown_stack() {
+    let root = temp_root("discovery");
+    let cuda = root.join("kernels");
+    std::fs::create_dir_all(&cuda).expect("dirs");
+    std::fs::write(cuda.join("kernel.cu"), "__global__ void k() {}").expect("cu");
+
+    let source = cuda.join("kernel.cu");
+    let edit_action = format!(
+        r#"ACTION: edit_file(path="{path}", line=1, content="__global__ void k() {{}}")"#,
+        path = source.display()
+    );
+
+    let llm = MockTriageLlm::new(edit_action);
+    let runner = MockBuildRunner::new("error: expected ';'", "nvcc ok");
+    let discoverer = MockDiscoverer {
+        command: "nvcc -std=c++17 -c kernel.cu".to_string(),
+    };
+
+    let config = Arc::new(AdjutantConfig::default());
+    let agent = TriageAgent::with_build_runner_and_discoverer(
+        llm,
+        vec![source.clone()],
+        Arc::clone(&config),
+        runner,
+        discoverer,
+    );
+
+    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 2)
+        .await
+        .expect("triage with discovery should complete");
+
+    assert!(
+        result.is_finished,
+        "discovery + fix loop should finish successfully"
+    );
+    assert!(
+        result
+            .accumulated_data
+            .contains("nvcc -std=c++17 -c kernel.cu"),
+        "expected discovered build command in report"
     );
 
     std::fs::remove_dir_all(&root).ok();
