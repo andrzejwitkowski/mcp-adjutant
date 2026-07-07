@@ -40,6 +40,8 @@ pub struct AdjutantConfig {
     pub phases: HashMap<AgentPhase, PhaseProfile>,
     pub server_port: u16,
     pub storage_path: String,
+    #[serde(default)]
+    pub triage_overrides: Option<HashMap<String, String>>,
 }
 
 impl Default for AdjutantConfig {
@@ -73,6 +75,7 @@ impl Default for AdjutantConfig {
             phases,
             server_port: 3_000,
             storage_path: default_storage_path(),
+            triage_overrides: None,
         }
     }
 }
