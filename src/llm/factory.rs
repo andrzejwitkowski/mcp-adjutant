@@ -39,6 +39,10 @@ pub fn create_triage_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlm
     create_llm_client_for_phase(config, AgentPhase::Triage)
 }
 
+pub fn create_scout_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Scout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +57,16 @@ mod tests {
         assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
         assert_eq!(profile.provider, Provider::DeepSeek);
         assert_eq!(profile.model_name, "deepseek-coder");
+    }
+
+    #[test]
+    fn create_scout_llm_client_uses_scout_phase_profile() {
+        let config = AdjutantConfig::default();
+        let profile = config.get_profile(&AgentPhase::Scout);
+
+        let client = create_scout_llm_client(&config).expect("scout client");
+        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+        assert_eq!(profile.provider, Provider::DeepSeek);
+        assert_eq!(profile.model_name, "deepseek-chat");
     }
 }

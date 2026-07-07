@@ -3,11 +3,32 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::agent::{AgentLoopOrchestrator, TriageAgent, TRIAGE_SYSTEM_PROMPT};
+use crate::agent::{AgentLoopOrchestrator, ScoutAgent, TriageAgent, TRIAGE_SYSTEM_PROMPT};
 use crate::domain::AdjutantConfig;
-use crate::llm::create_triage_llm_client;
+use crate::llm::{create_scout_llm_client, create_triage_llm_client};
 
+pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
+
+const SCOUT_MAX_ITERATIONS: u32 = 10;
+const TRIAGE_MAX_ITERATIONS: u32 = 3;
+
+pub fn scout_context_schema() -> Value {
+    json!({
+        "name": SCOUT_CONTEXT_TOOL_NAME,
+        "description": "Uruchamia autonomiczny zwiad kodu i zwraca skondensowany kontekst markdown.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Pytanie lub cel zwiadu po repozytorium."
+                }
+            },
+            "required": ["query"]
+        }
+    })
+}
 
 pub fn verify_and_triage_schema() -> Value {
     json!({
@@ -27,7 +48,34 @@ pub fn verify_and_triage_schema() -> Value {
 }
 
 pub fn registered_mcp_tools() -> Vec<Value> {
-    vec![verify_and_triage_schema()]
+    vec![scout_context_schema(), verify_and_triage_schema()]
+}
+
+pub async fn handle_scout_context(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+) -> Result<String, String> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .ok_or_else(|| "query is required".to_string())?
+        .to_string();
+
+    let client = create_scout_llm_client(&config)?;
+    let agent = ScoutAgent::new(client);
+
+    let result = AgentLoopOrchestrator::run(&agent, query, SCOUT_MAX_ITERATIONS).await?;
+
+    if result.is_finished {
+        return Ok(result.accumulated_data);
+    }
+
+    Ok(format!(
+        "Scout report (finished={}, iterations={}):\n{}",
+        result.is_finished, result.iterations, result.accumulated_data
+    ))
 }
 
 pub async fn handle_verify_and_triage(
@@ -51,7 +99,7 @@ pub async fn handle_verify_and_triage(
     let result = AgentLoopOrchestrator::run(
         &agent,
         format!("{VERIFY_AND_TRIAGE_TOOL_NAME}\n\n{TRIAGE_SYSTEM_PROMPT}"),
-        3,
+        TRIAGE_MAX_ITERATIONS,
     )
     .await?;
 

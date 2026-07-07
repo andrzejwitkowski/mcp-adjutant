@@ -22,11 +22,12 @@ pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, SEMANTIC_SIMILARITY_T
 pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 pub use error::AdjutantConfigError;
 pub use llm::{
-    create_llm_client, create_llm_client_for_phase, create_triage_llm_client, ConfiguredLlmClient,
-    DeepSeekClient, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet,
-    ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
+    create_llm_client, create_llm_client_for_phase, create_scout_llm_client,
+    create_triage_llm_client, ConfiguredLlmClient, DeepSeekClient, LlmClient, LlmModelTurn,
+    LlmRequest, LlmTool, LlmToolCall, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult,
+    ToolParam,
 };
 pub use mcp::{
-    handle_verify_and_triage, registered_mcp_tools, verify_and_triage_schema,
-    VERIFY_AND_TRIAGE_TOOL_NAME,
+    handle_scout_context, handle_verify_and_triage, registered_mcp_tools, scout_context_schema,
+    verify_and_triage_schema, SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
 };
