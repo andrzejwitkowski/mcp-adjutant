@@ -41,7 +41,8 @@ impl BuildCommandRunner for SystemBuildRunner {
 #[derive(Default)]
 struct TriageWorkspace {
     build_targets: Vec<(PathBuf, String)>,
-    input_paths: Vec<PathBuf>,
+    resolved_paths: Vec<PathBuf>,
+    retarget_paths: Vec<PathBuf>,
 }
 
 pub struct TriageAgent<C, B = SystemBuildRunner, D = NoopBuildDiscoverer> {
@@ -101,7 +102,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
-        workspace.input_paths = paths;
+        workspace.retarget_paths = paths;
         workspace.build_targets.clear();
         Ok(())
     }
@@ -111,8 +112,8 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
-        if !workspace.input_paths.is_empty() {
-            return Ok(workspace.input_paths.clone());
+        if !workspace.retarget_paths.is_empty() {
+            return Ok(workspace.retarget_paths.clone());
         }
         drop(workspace);
 
@@ -120,6 +121,18 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             get_dirty_files_from_git()
         } else {
             Ok(self.target_paths.clone())
+        }
+    }
+
+    fn red_test_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        if !workspace.retarget_paths.is_empty() {
+            Ok(workspace.retarget_paths.clone())
+        } else {
+            Ok(workspace.resolved_paths.clone())
         }
     }
 
@@ -250,11 +263,14 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             return Ok(false);
         }
 
+        let test_paths = self.red_test_paths()?;
         let mut assertion_failures = 0usize;
         let mut unexpected = Vec::new();
 
         for (dir, command) in targets {
-            let (_, test_cmd) = split_check_and_test_commands(command);
+            let (_, base_test_cmd) = split_check_and_test_commands(command);
+            let test_cmd = scope_test_command_for_paths(&base_test_cmd, &test_paths);
+            let command_scoped = test_cmd != base_test_cmd;
             match self.build_runner.run_build_command(dir, &test_cmd) {
                 Ok(output) => {
                     unexpected.push(format!(
@@ -263,7 +279,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
                     ));
                 }
                 Err(output) => {
-                    if is_assertion_test_failure(&output) {
+                    if is_assertion_test_failure(&output, &test_paths, command_scoped) {
                         assertion_failures += 1;
                         context.accumulated_data.push_str(&format!(
                             "TDD RED assertion failure (expected) in {} (`{test_cmd}`):\n{output}\n",
@@ -317,7 +333,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
-        workspace.input_paths = paths;
+        workspace.resolved_paths = paths;
         workspace.build_targets = targets.clone();
 
         let summary: Vec<String> = targets
@@ -341,7 +357,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                 .map_err(|_| "triage workspace lock poisoned".to_string())?;
             (
                 workspace.build_targets.clone(),
-                workspace.input_paths.clone(),
+                workspace.resolved_paths.clone(),
             )
         };
 
@@ -399,9 +415,10 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         match tool_call.name.as_str() {
             "edit_file" => {
                 let (path, line, content) = parse_edit_file_arguments(&tool_call.arguments)?;
-                if context.input_prompt.contains("TDD RED PHASE")
-                    && (content.contains("assert") || content.contains("panic!"))
-                {
+                let trimmed = content.trim_start();
+                let edits_assertion_statement =
+                    trimmed.starts_with("assert") || trimmed.starts_with("panic!");
+                if context.input_prompt.contains("TDD RED PHASE") && edits_assertion_statement {
                     return Err(
                         "TDD RED PHASE: zabroniona modyfikacja asercji lub panic!".to_string()
                     );
@@ -450,12 +467,45 @@ fn split_check_and_test_commands(command: &str) -> (String, String) {
     }
 }
 
-fn is_assertion_test_failure(output: &str) -> bool {
+fn scope_test_command_for_paths(test_cmd: &str, test_paths: &[PathBuf]) -> String {
+    if !test_cmd.starts_with("cargo test") || test_paths.len() != 1 {
+        return test_cmd.to_string();
+    }
+
+    let path = &test_paths[0];
+    let in_tests_dir = path
+        .components()
+        .any(|component| component.as_os_str() == "tests");
+    let Some(stem) = path.file_stem().and_then(|name| name.to_str()) else {
+        return test_cmd.to_string();
+    };
+
+    if in_tests_dir && path.extension().is_some_and(|ext| ext == "rs") {
+        format!("cargo test --test {stem}")
+    } else {
+        test_cmd.to_string()
+    }
+}
+
+fn is_assertion_test_failure(output: &str, test_paths: &[PathBuf], command_scoped: bool) -> bool {
     let lower = output.to_lowercase();
-    lower.contains("assertion")
-        || lower.contains("panicked at")
+    let has_assertion_signal = lower.contains("assertion")
         || lower.contains("assert_eq!")
-        || (lower.contains("test result: failed") && !lower.contains("error[e"))
+        || (lower.contains("test result: failed") && !lower.contains("error[e"));
+
+    if !has_assertion_signal {
+        return false;
+    }
+
+    if command_scoped || test_paths.is_empty() {
+        return true;
+    }
+
+    test_paths.iter().any(|path| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| lower.contains(&stem.to_lowercase()))
+    })
 }
 
 fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
@@ -509,5 +559,46 @@ mod tests {
     fn resolve_edit_path_rejects_escape_via_empty_module_root() {
         let allowed = vec![PathBuf::from("")];
         assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
+    }
+
+    #[test]
+    fn scope_test_command_for_paths_targets_cargo_integration_test() {
+        let scoped =
+            scope_test_command_for_paths("cargo test", &[PathBuf::from("tests/red_phase.rs")]);
+        assert_eq!(scoped, "cargo test --test red_phase");
+    }
+
+    #[test]
+    fn is_assertion_test_failure_requires_generated_test_name_when_unscoped() {
+        let output = "assertion `left == right` failed\nfailures:\n    red_phase_case\n";
+        assert!(is_assertion_test_failure(
+            output,
+            &[PathBuf::from("tests/red_phase.rs")],
+            false
+        ));
+        assert!(!is_assertion_test_failure(
+            output,
+            &[PathBuf::from("tests/other.rs")],
+            false
+        ));
+    }
+
+    #[test]
+    fn is_assertion_test_failure_accepts_scoped_command_without_name_match() {
+        let output = "assertion `left == right` failed\ntest result: FAILED";
+        assert!(is_assertion_test_failure(
+            output,
+            &[PathBuf::from("tests/relative_red.rs")],
+            true
+        ));
+    }
+
+    #[test]
+    fn is_assertion_test_failure_rejects_panic_without_assertion_signal() {
+        assert!(!is_assertion_test_failure(
+            "thread 'worker' panicked at 'boom'",
+            &[PathBuf::from("tests/red_phase.rs")],
+            false
+        ));
     }
 }

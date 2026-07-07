@@ -89,7 +89,7 @@ fn setup_cargo_project(root: &Path) -> PathBuf {
 async fn builder_agent_red_phase_accepts_failing_assertions_via_triage() {
     let project_root = unique_temp_project("builder-red");
     let test_path = setup_cargo_project(&project_root);
-    let test_path_str = test_path.to_string_lossy().into_owned();
+    let relative_test_path = "tests/red_phase.rs";
 
     let failing_test = r#"#[test]
 fn red_phase_case() {
@@ -97,7 +97,7 @@ fn red_phase_case() {
 }
 "#;
 
-    let llm = MockBuilderLlm::write_red_test(&test_path_str, failing_test);
+    let llm = MockBuilderLlm::write_red_test(relative_test_path, failing_test);
     let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
 
     let config = Arc::new(AdjutantConfig::default());

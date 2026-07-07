@@ -191,6 +191,13 @@ pub async fn handle_generate_tests_and_scaffolding(
         .and_then(Value::as_str)
         .ok_or_else(|| "test_type is required".to_string())?;
 
+    const ALLOWED_TEST_TYPES: [&str; 3] = ["unit", "integration", "factory"];
+    if !ALLOWED_TEST_TYPES.contains(&test_type) {
+        return Err(format!(
+            "test_type must be one of {ALLOWED_TEST_TYPES:?}, got {test_type:?}"
+        ));
+    }
+
     let source_path = PathBuf::from(source_file_path);
     let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 

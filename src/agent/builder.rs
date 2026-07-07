@@ -1,6 +1,6 @@
 mod tools;
 
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -30,13 +30,17 @@ Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj narzędzia."#
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_SCOUT_MAX_ITERATIONS: u32 = 8;
 
-fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> PathBuf {
+fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Result<PathBuf, String> {
     let candidate = PathBuf::from(path);
-    if candidate.is_absolute() {
-        candidate
-    } else {
-        project_root.join(candidate)
+    if candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+    {
+        return Err("test output path must stay under project root".to_string());
     }
+
+    Ok(project_root.join(candidate))
 }
 
 fn format_scout_observation(scout_ctx: &AgentContext) -> String {
@@ -233,7 +237,7 @@ impl<
                             .map_err(|_| "cache manager lock poisoned".to_string())?;
                         cache.project_root().to_path_buf()
                     };
-                    let path_buf = resolve_test_output_path(&project_root, &path);
+                    let path_buf = resolve_test_output_path(&project_root, &path)?;
 
                     if let Some(parent) = path_buf.parent() {
                         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -308,14 +312,19 @@ mod tests {
     #[test]
     fn resolve_test_output_path_joins_relative_paths_to_project_root() {
         let root = PathBuf::from("/repo/demo");
-        let resolved = resolve_test_output_path(&root, "tests/unit.rs");
+        let resolved = resolve_test_output_path(&root, "tests/unit.rs").expect("relative path");
         assert_eq!(resolved, PathBuf::from("/repo/demo/tests/unit.rs"));
     }
 
     #[test]
-    fn resolve_test_output_path_preserves_absolute_paths() {
+    fn resolve_test_output_path_rejects_absolute_paths() {
         let root = PathBuf::from("/repo/demo");
-        let resolved = resolve_test_output_path(&root, "/tmp/abs_test.rs");
-        assert_eq!(resolved, PathBuf::from("/tmp/abs_test.rs"));
+        assert!(resolve_test_output_path(&root, "/tmp/abs_test.rs").is_err());
+    }
+
+    #[test]
+    fn resolve_test_output_path_rejects_parent_traversal() {
+        let root = PathBuf::from("/repo/demo");
+        assert!(resolve_test_output_path(&root, "../escape.rs").is_err());
     }
 }

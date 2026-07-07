@@ -127,6 +127,9 @@ pub fn parse_write_test_suite_arguments(
     let path = required_str(arguments, "path")?;
     let content = required_str(arguments, "content")?;
     let tdd_phase = required_str(arguments, "tdd_phase")?;
+    if !matches!(tdd_phase.as_str(), "red" | "green" | "refactor") {
+        return Err("tool argument 'tdd_phase' must be one of: red, green, refactor".to_string());
+    }
     Ok((path, content, tdd_phase))
 }
 
@@ -217,5 +220,17 @@ mod tests {
         assert_eq!(path, "tests/example.rs");
         assert_eq!(content, "#[test] fn t() {}");
         assert_eq!(phase, "red");
+    }
+
+    #[test]
+    fn parse_write_test_suite_arguments_rejects_unknown_tdd_phase() {
+        let err = parse_write_test_suite_arguments(&json!({
+            "path": "tests/example.rs",
+            "content": "#[test] fn t() {}",
+            "tdd_phase": "blue",
+        }))
+        .expect_err("invalid phase");
+
+        assert!(err.contains("tdd_phase"));
     }
 }
