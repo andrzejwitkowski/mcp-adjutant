@@ -37,7 +37,10 @@ pub fn truncate_build_log(output: &str, max_lines: usize, max_bytes: usize) -> (
 
     let byte_truncated = tail.len() > max_bytes;
     if byte_truncated {
-        let start = tail.len().saturating_sub(max_bytes);
+        let mut start = tail.len().saturating_sub(max_bytes);
+        while start < tail.len() && !tail.is_char_boundary(start) {
+            start += 1;
+        }
         tail = tail[start..].to_string();
     }
 
@@ -52,6 +55,7 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     let had_trailing_newline = content.ends_with('\n');
+    let uses_crlf = content.contains("\r\n");
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
 
     if line_number > lines.len() {
@@ -62,9 +66,10 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
     }
 
     lines[line_number - 1] = new_content.to_string();
-    let mut updated = lines.join("\n");
+    let separator = if uses_crlf { "\r\n" } else { "\n" };
+    let mut updated = lines.join(separator);
     if had_trailing_newline {
-        updated.push('\n');
+        updated.push_str(separator);
     }
 
     std::fs::write(path, updated)
@@ -89,6 +94,22 @@ mod tests {
         edit_file_line(&path, 2, "bravo").expect("edit");
         let updated = fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "alpha\nbravo\ngamma\n");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn edit_file_line_preserves_crlf_line_endings() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("mcp-adjutant-edit-crlf-{nanos}.txt"));
+        fs::write(&path, "alpha\r\nbeta\r\n").expect("write");
+
+        edit_file_line(&path, 2, "bravo").expect("edit");
+        let updated = fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "alpha\r\nbravo\r\n");
 
         fs::remove_file(&path).ok();
     }

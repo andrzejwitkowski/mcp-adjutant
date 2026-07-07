@@ -94,6 +94,12 @@ impl AdjutantConfig {
             .get(phase)
             .expect("every agent phase must have a configured profile")
     }
+
+    pub fn try_get_profile(&self, phase: AgentPhase) -> Result<&PhaseProfile, String> {
+        self.phases
+            .get(&phase)
+            .ok_or_else(|| format!("missing profile for phase {phase:?}"))
+    }
 }
 
 fn phase_profile(model_name: &str, max_tokens: u32, temperature: f32) -> PhaseProfile {

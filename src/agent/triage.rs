@@ -313,6 +313,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
 }
 
 fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Err(format!(
+            "edit path must be relative to a triage module root: {}",
+            path.display()
+        ));
+    }
+
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -321,11 +328,10 @@ fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, S
     }
 
     for root in module_roots {
-        let candidate = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            root.join(path)
-        };
+        if root.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = root.join(path);
         if candidate.starts_with(root) {
             return Ok(candidate);
         }
@@ -350,6 +356,12 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("/repo/backend/src/main.rs"));
 
         assert!(resolve_edit_path(Path::new("../etc/passwd"), &allowed).is_err());
+        assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
+    }
+
+    #[test]
+    fn resolve_edit_path_rejects_escape_via_empty_module_root() {
+        let allowed = vec![PathBuf::from("")];
         assert!(resolve_edit_path(Path::new("/etc/passwd"), &allowed).is_err());
     }
 }

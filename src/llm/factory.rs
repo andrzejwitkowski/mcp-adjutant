@@ -32,7 +32,7 @@ pub fn create_llm_client_for_phase(
     config: &AdjutantConfig,
     phase: AgentPhase,
 ) -> Result<ConfiguredLlmClient, String> {
-    create_llm_client(config.get_profile(&phase).clone())
+    create_llm_client(config.try_get_profile(phase)?.clone())
 }
 
 pub fn create_triage_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
@@ -47,6 +47,7 @@ pub fn create_scout_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmC
 mod tests {
     use super::*;
     use crate::domain::Provider;
+    use std::collections::HashMap;
 
     #[test]
     fn create_triage_llm_client_uses_triage_phase_profile() {
@@ -68,5 +69,18 @@ mod tests {
         assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
         assert_eq!(profile.provider, Provider::DeepSeek);
         assert_eq!(profile.model_name, "deepseek-chat");
+    }
+
+    #[test]
+    fn create_triage_llm_client_missing_phase_returns_error() {
+        let config = AdjutantConfig {
+            phases: HashMap::new(),
+            ..Default::default()
+        };
+
+        match create_triage_llm_client(&config) {
+            Err(err) => assert!(err.contains("missing profile for phase Triage")),
+            Ok(_) => panic!("expected missing triage profile error"),
+        }
     }
 }

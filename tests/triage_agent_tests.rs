@@ -130,7 +130,7 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
     let source = backend.join("src/lib.rs");
     let broken = std::fs::read_to_string(&source).expect("read source");
 
-    let llm = MockTriageLlm::edit_file(&source, 1, "pub fn fixed() {}");
+    let llm = MockTriageLlm::edit_file(Path::new("src/lib.rs"), 1, "pub fn fixed() {}");
     let runner = MockBuildRunner::new(
         "error[E0425]: cannot find value `syntax` in this scope",
         "    Finished dev",
@@ -173,7 +173,7 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
     let (backend, _) = setup_monorepo(&root);
     let source = backend.join("src/lib.rs");
 
-    let llm = MockTriageLlm::edit_file(&source, 1, "pub fn fixed() {}");
+    let llm = MockTriageLlm::edit_file(Path::new("src/lib.rs"), 1, "pub fn fixed() {}");
     let runner = MockBuildRunner::new(
         "error[E0425]: cannot find value `syntax` in this scope",
         "    Finished dev",
@@ -204,7 +204,8 @@ async fn triage_agent_rejects_edit_outside_module_roots() {
     let (backend, _) = setup_monorepo(&root);
     let source = backend.join("src/lib.rs");
 
-    let llm = MockTriageLlm::edit_file(Path::new("/etc/passwd"), 1, "pwned");
+    let outside_path = temp_root("reject-edit-outside").join("not-a-module-root.rs");
+    let llm = MockTriageLlm::edit_file(&outside_path, 1, "pwned");
     let runner = MockBuildRunner::new("error[E0425]: broken", "ok");
 
     let config = Arc::new(AdjutantConfig::default());
@@ -215,7 +216,7 @@ async fn triage_agent_rejects_edit_outside_module_roots() {
 
     let err = result.expect_err("edit outside module roots should be rejected");
     assert!(
-        err.contains("edit path must be inside a triage module root"),
+        err.contains("edit path must be relative to a triage module root"),
         "unexpected error: {err}"
     );
 
@@ -251,7 +252,7 @@ async fn triage_agent_discovers_build_command_for_unknown_stack() {
 
     let source = cuda.join("kernel.cu");
 
-    let llm = MockTriageLlm::edit_file(&source, 1, "__global__ void k() {}");
+    let llm = MockTriageLlm::edit_file(Path::new("kernel.cu"), 1, "__global__ void k() {}");
     let runner = MockBuildRunner::new("error: expected ';'", "nvcc ok");
     let discoverer = MockDiscoverer {
         command: "nvcc -std=c++17 -c kernel.cu".to_string(),
