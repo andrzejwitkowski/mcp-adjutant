@@ -23,6 +23,27 @@ pub fn run_build_command(dir: &Path, command: &str) -> Result<String, String> {
     }
 }
 
+/// Truncates long build logs by keeping the tail (errors usually appear at the end).
+/// No language- or compiler-specific filtering — avoids dropping relevant lines for
+/// Java, Python, nvcc, etc.
+pub fn truncate_build_log(output: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
+    let lines: Vec<&str> = output.lines().collect();
+    let line_truncated = lines.len() > max_lines;
+    let mut tail = if line_truncated {
+        lines[lines.len() - max_lines..].join("\n")
+    } else {
+        output.to_string()
+    };
+
+    let byte_truncated = tail.len() > max_bytes;
+    if byte_truncated {
+        let start = tail.len().saturating_sub(max_bytes);
+        tail = tail[start..].to_string();
+    }
+
+    (tail, line_truncated || byte_truncated)
+}
+
 pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Result<(), String> {
     if line_number == 0 {
         return Err("line_number must be >= 1".to_string());
@@ -70,5 +91,32 @@ mod tests {
         assert_eq!(updated, "alpha\nbravo\ngamma\n");
 
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn truncate_build_log_keeps_tail_without_language_filtering() {
+        let log = (0..150)
+            .map(|i| format!("noise line {i}"))
+            .chain([
+                "error: expected ';'".to_string(),
+                "  --> src/main.java:42:5".to_string(),
+                "kernel.cu(12): error: identifier not found".to_string(),
+            ])
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let (truncated, was_truncated) = truncate_build_log(&log, 10, 4096);
+        assert!(was_truncated);
+        assert!(truncated.contains("main.java"));
+        assert!(truncated.contains("kernel.cu"));
+        assert!(!truncated.contains("noise line 0"));
+    }
+
+    #[test]
+    fn truncate_build_log_passes_short_output_unchanged() {
+        let log = "error: one failure\nnote: at foo.py:3";
+        let (truncated, was_truncated) = truncate_build_log(log, 120, 16_384);
+        assert!(!was_truncated);
+        assert_eq!(truncated, log);
     }
 }

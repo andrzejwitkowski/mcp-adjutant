@@ -11,7 +11,8 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
 use crate::tools::{
     edit_file_line, find_nearest_module_boundary, get_dirty_files_from_git, inference_anchor,
-    run_build_command, snapshot_build_context, BuildCommandDiscoverer, NoopBuildDiscoverer,
+    run_build_command, snapshot_build_context, truncate_build_log, BuildCommandDiscoverer,
+    NoopBuildDiscoverer,
 };
 
 pub use tools::{parse_edit_file_arguments, parse_report_error_arguments, triage_tool_set};
@@ -137,22 +138,8 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
         Ok(targets)
     }
 
-    fn condense_build_errors(output: &str) -> String {
-        output
-            .lines()
-            .filter(|line| {
-                let lower = line.to_ascii_lowercase();
-                lower.contains("error")
-                    || lower.contains("warning[")
-                    || line.contains("-->")
-                    || line.contains(".rs:")
-                    || line.contains(".ts:")
-                    || line.contains(".tsx:")
-            })
-            .take(80)
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+    const BUILD_LOG_MAX_LINES: usize = 120;
+    const BUILD_LOG_MAX_BYTES: usize = 24_000;
 
     fn module_roots(targets: &[(PathBuf, String)]) -> Vec<PathBuf> {
         targets.iter().map(|(dir, _)| dir.clone()).collect()
@@ -174,9 +161,18 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
                 }
                 Err(output) => {
                     all_ok = false;
-                    let condensed = Self::condense_build_errors(&output);
+                    let (body, truncated) = truncate_build_log(
+                        &output,
+                        Self::BUILD_LOG_MAX_LINES,
+                        Self::BUILD_LOG_MAX_BYTES,
+                    );
+                    let log = if truncated {
+                        format!("(log truncated — showing tail)\n{body}")
+                    } else {
+                        body
+                    };
                     combined_errors.push(format!(
-                        "Build FAILED in {} (`{command}`):\n{condensed}\n",
+                        "Build FAILED in {} (`{command}`):\n{log}\n",
                         dir.display()
                     ));
                 }
