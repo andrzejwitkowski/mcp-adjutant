@@ -77,9 +77,7 @@ impl<C: LlmClient, B: BuildCommandRunner> TriageAgent<C, B, NoopBuildDiscoverer>
     }
 }
 
-impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer>
-    TriageAgent<C, B, D>
-{
+impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent<C, B, D> {
     pub fn with_build_runner_and_discoverer(
         llm_client: C,
         target_paths: Vec<PathBuf>,
@@ -244,8 +242,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         if targets.is_empty() {
             context.is_finished = true;
             context.input_prompt = if paths.is_empty() {
-                "Brak modułów do sprawdzenia (brak zmian w git lub nieznane ścieżki)."
-                    .to_string()
+                "Brak modułów do sprawdzenia (brak zmian w git lub nieznane ścieżki).".to_string()
             } else {
                 "Nie udało się rozpoznać polecenia kompilacji (brak manifestu i discovery nie zwróciło komendy)."
                     .to_string()
@@ -279,9 +276,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         let thought = model_turn.content.unwrap_or_default();
         context.accumulated_data.push_str(&format!(
             "LLM triage response (iter {}):\nThought: {thought}\nTool: {}({})\n",
-            context.iterations,
-            tool_call.name,
-            tool_call.arguments
+            context.iterations, tool_call.name, tool_call.arguments
         ));
 
         match tool_call.name.as_str() {

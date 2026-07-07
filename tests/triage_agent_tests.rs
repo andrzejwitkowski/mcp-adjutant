@@ -233,11 +233,7 @@ struct MockDiscoverer {
 }
 
 impl BuildCommandDiscoverer for MockDiscoverer {
-    fn discover(
-        &self,
-        _anchor: &Path,
-        snapshot: &str,
-    ) -> Result<Option<String>, String> {
+    fn discover(&self, _anchor: &Path, snapshot: &str) -> Result<Option<String>, String> {
         assert!(
             snapshot.contains("kernel.cu"),
             "discovery should receive directory snapshot, got:\n{snapshot}"

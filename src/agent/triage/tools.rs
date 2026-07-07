@@ -120,13 +120,12 @@ mod tests {
 
     #[test]
     fn parse_edit_file_arguments_extracts_fields() {
-        let (path, line, content) =
-            parse_edit_file_arguments(&json!({
-                "path": "src/main.rs",
-                "line": 42,
-                "content": "pub struct NewName;"
-            }))
-            .expect("args");
+        let (path, line, content) = parse_edit_file_arguments(&json!({
+            "path": "src/main.rs",
+            "line": 42,
+            "content": "pub struct NewName;"
+        }))
+        .expect("args");
 
         assert_eq!(path, PathBuf::from("src/main.rs"));
         assert_eq!(line, 42);

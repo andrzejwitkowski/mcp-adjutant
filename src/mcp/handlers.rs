@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::agent::{AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT};
+use crate::agent::{
+    AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+};
 use crate::domain::AdjutantConfig;
 use crate::llm::{create_scout_llm_client, create_triage_llm_client};
 use crate::tools::LlmBuildDiscoverer;

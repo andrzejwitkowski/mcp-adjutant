@@ -44,7 +44,8 @@ const MODULE_BOUNDARIES: &[ModuleBoundary] = &[
     },
     ModuleBoundary {
         marker: "meson.build",
-        command: "meson compile -C build 2>/dev/null || (meson setup build && meson compile -C build)",
+        command:
+            "meson compile -C build 2>/dev/null || (meson setup build && meson compile -C build)",
     },
     ModuleBoundary {
         marker: "Makefile",
@@ -229,8 +230,11 @@ mod tests {
 
         let root = temp_root("python");
         fs::create_dir_all(root.join("service")).expect("dirs");
-        fs::write(root.join("service/pyproject.toml"), "[project]\nname = \"svc\"\n")
-            .expect("pyproject");
+        fs::write(
+            root.join("service/pyproject.toml"),
+            "[project]\nname = \"svc\"\n",
+        )
+        .expect("pyproject");
         let (dir, cmd) = find_nearest_module_boundary(&root.join("service/app.py"), &config)
             .expect("python boundary");
         assert_eq!(dir, root.join("service"));
@@ -248,8 +252,11 @@ mod tests {
 
         let root = temp_root("kotlin");
         fs::create_dir_all(root.join("mobile")).expect("dirs");
-        fs::write(root.join("mobile/settings.gradle.kts"), "rootProject.name = \"app\"")
-            .expect("gradle");
+        fs::write(
+            root.join("mobile/settings.gradle.kts"),
+            "rootProject.name = \"app\"",
+        )
+        .expect("gradle");
         let (dir, cmd) = find_nearest_module_boundary(&root.join("mobile/App.kt"), &config)
             .expect("kotlin boundary");
         assert_eq!(dir, root.join("mobile"));
@@ -258,8 +265,11 @@ mod tests {
 
         let root = temp_root("cpp");
         fs::create_dir_all(root.join("native/src")).expect("dirs");
-        fs::write(root.join("native/CMakeLists.txt"), "cmake_minimum_required(VERSION 3.0)")
-            .expect("cmake");
+        fs::write(
+            root.join("native/CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.0)",
+        )
+        .expect("cmake");
         let (dir, cmd) = find_nearest_module_boundary(&root.join("native/src/main.cpp"), &config)
             .expect("cpp boundary");
         assert_eq!(dir, root.join("native"));

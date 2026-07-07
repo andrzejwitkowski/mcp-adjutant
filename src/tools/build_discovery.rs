@@ -56,11 +56,7 @@ impl<C: LlmClient> BuildCommandDiscoverer for LlmBuildDiscoverer<C> {
             anchor.display()
         );
         let tools = LlmToolSet::new();
-        let request = LlmRequest::new(
-            BUILD_DISCOVERY_SYSTEM_PROMPT,
-            &user_message,
-            &tools,
-        );
+        let request = LlmRequest::new(BUILD_DISCOVERY_SYSTEM_PROMPT, &user_message, &tools);
         let turn = self.client.complete(request)?;
         let response = turn.content.unwrap_or_default();
         Ok(parse_build_discovery_response(&response))
@@ -69,7 +65,9 @@ impl<C: LlmClient> BuildCommandDiscoverer for LlmBuildDiscoverer<C> {
 
 pub fn inference_anchor(path: &Path) -> PathBuf {
     let mut current = if path.is_file() {
-        path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.to_path_buf())
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf())
     } else {
         path.to_path_buf()
     };
@@ -92,7 +90,10 @@ pub fn inference_anchor(path: &Path) -> PathBuf {
 
 pub fn snapshot_build_context(root: &Path, max_depth: usize) -> Result<String, String> {
     if !root.is_dir() {
-        return Err(format!("snapshot root must be a directory: {}", root.display()));
+        return Err(format!(
+            "snapshot root must be a directory: {}",
+            root.display()
+        ));
     }
 
     let mut lines = Vec::new();
