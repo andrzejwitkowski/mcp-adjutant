@@ -3,8 +3,61 @@ use std::process::Command;
 
 use crate::domain::AdjutantConfig;
 
-const CARGO_CHECK: &str = "cargo check --message-format=json";
-const NPM_TYPECHECK: &str = "npm run typecheck";
+struct ModuleBoundary {
+    marker: &'static str,
+    command: &'static str,
+}
+
+// ponytail: ordered table of known manifests; niche stacks (CUDA, Bazel, …) use triage_overrides
+const MODULE_BOUNDARIES: &[ModuleBoundary] = &[
+    ModuleBoundary {
+        marker: "Cargo.toml",
+        command: "cargo check --message-format=json",
+    },
+    ModuleBoundary {
+        marker: "package.json",
+        command: "npm run typecheck",
+    },
+    ModuleBoundary {
+        marker: "pyproject.toml",
+        command: "python -m compileall -q .",
+    },
+    ModuleBoundary {
+        marker: "requirements.txt",
+        command: "python -m compileall -q .",
+    },
+    ModuleBoundary {
+        marker: "setup.py",
+        command: "python -m compileall -q .",
+    },
+    ModuleBoundary {
+        marker: "Pipfile",
+        command: "python -m compileall -q .",
+    },
+    ModuleBoundary {
+        marker: "pom.xml",
+        command: "mvn -q -DskipTests compile",
+    },
+    ModuleBoundary {
+        marker: "CMakeLists.txt",
+        command: "cmake --build build 2>/dev/null || (cmake -S . -B build && cmake --build build)",
+    },
+    ModuleBoundary {
+        marker: "meson.build",
+        command: "meson compile -C build 2>/dev/null || (meson setup build && meson compile -C build)",
+    },
+    ModuleBoundary {
+        marker: "Makefile",
+        command: "make -k",
+    },
+];
+
+const GRADLE_MARKERS: &[&str] = &[
+    "settings.gradle.kts",
+    "build.gradle.kts",
+    "settings.gradle",
+    "build.gradle",
+];
 
 pub fn find_nearest_module_boundary(
     start_path: &Path,
@@ -20,17 +73,39 @@ pub fn find_nearest_module_boundary(
         if let Some(cmd) = match_triage_override(&current, config) {
             return Some((current.clone(), cmd));
         }
-        if current.join("Cargo.toml").is_file() {
-            return Some((current.clone(), CARGO_CHECK.to_string()));
-        }
-        if current.join("package.json").is_file() {
-            return Some((current.clone(), NPM_TYPECHECK.to_string()));
+        if let Some(cmd) = detect_builtin_boundary(&current) {
+            return Some((current.clone(), cmd));
         }
         if !current.pop() {
             break;
         }
     }
     None
+}
+
+fn detect_builtin_boundary(dir: &Path) -> Option<String> {
+    if GRADLE_MARKERS
+        .iter()
+        .any(|marker| dir.join(marker).is_file())
+    {
+        return Some(gradle_check_command(dir));
+    }
+
+    for boundary in MODULE_BOUNDARIES {
+        if dir.join(boundary.marker).is_file() {
+            return Some(boundary.command.to_string());
+        }
+    }
+
+    None
+}
+
+fn gradle_check_command(dir: &Path) -> String {
+    if dir.join("gradlew").is_file() {
+        "./gradlew check --no-daemon".to_string()
+    } else {
+        "gradle check".to_string()
+    }
 }
 
 fn match_triage_override(dir: &Path, config: &AdjutantConfig) -> Option<String> {
@@ -143,7 +218,83 @@ mod tests {
         let (dir, cmd) =
             find_nearest_module_boundary(&backend.join("src/lib.rs"), &config).expect("boundary");
         assert_eq!(dir, backend);
-        assert_eq!(cmd, CARGO_CHECK);
+        assert_eq!(cmd, "cargo check --message-format=json");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn find_nearest_module_boundary_detects_common_ecosystems() {
+        let config = AdjutantConfig::default();
+
+        let root = temp_root("python");
+        fs::create_dir_all(root.join("service")).expect("dirs");
+        fs::write(root.join("service/pyproject.toml"), "[project]\nname = \"svc\"\n")
+            .expect("pyproject");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("service/app.py"), &config)
+            .expect("python boundary");
+        assert_eq!(dir, root.join("service"));
+        assert_eq!(cmd, "python -m compileall -q .");
+        fs::remove_dir_all(&root).ok();
+
+        let root = temp_root("java");
+        fs::create_dir_all(root.join("api/src")).expect("dirs");
+        fs::write(root.join("api/pom.xml"), "<project></project>").expect("pom");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("api/src/Main.java"), &config)
+            .expect("java boundary");
+        assert_eq!(dir, root.join("api"));
+        assert_eq!(cmd, "mvn -q -DskipTests compile");
+        fs::remove_dir_all(&root).ok();
+
+        let root = temp_root("kotlin");
+        fs::create_dir_all(root.join("mobile")).expect("dirs");
+        fs::write(root.join("mobile/settings.gradle.kts"), "rootProject.name = \"app\"")
+            .expect("gradle");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("mobile/App.kt"), &config)
+            .expect("kotlin boundary");
+        assert_eq!(dir, root.join("mobile"));
+        assert_eq!(cmd, "gradle check");
+        fs::remove_dir_all(&root).ok();
+
+        let root = temp_root("cpp");
+        fs::create_dir_all(root.join("native/src")).expect("dirs");
+        fs::write(root.join("native/CMakeLists.txt"), "cmake_minimum_required(VERSION 3.0)")
+            .expect("cmake");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("native/src/main.cpp"), &config)
+            .expect("cpp boundary");
+        assert_eq!(dir, root.join("native"));
+        assert!(cmd.contains("cmake --build build"));
+        fs::remove_dir_all(&root).ok();
+
+        let root = temp_root("makefile");
+        fs::create_dir_all(root.join("firmware")).expect("dirs");
+        fs::write(root.join("firmware/Makefile"), "all:\n\ttrue\n").expect("makefile");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("firmware/device.c"), &config)
+            .expect("c boundary");
+        assert_eq!(dir, root.join("firmware"));
+        assert_eq!(cmd, "make -k");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn triage_override_covers_niche_stacks_like_cuda() {
+        let root = temp_root("cuda-override");
+        let cuda = root.join("kernels");
+        fs::create_dir_all(&cuda).expect("dirs");
+        fs::write(cuda.join("kernel.cu"), "__global__ void k() {}").expect("cu");
+
+        let config = AdjutantConfig {
+            triage_overrides: Some(HashMap::from([(
+                "kernels/".to_string(),
+                "nvcc -std=c++17 -c kernel.cu".to_string(),
+            )])),
+            ..Default::default()
+        };
+
+        let (dir, cmd) =
+            find_nearest_module_boundary(&cuda.join("kernel.cu"), &config).expect("cuda boundary");
+        assert_eq!(dir, cuda);
+        assert_eq!(cmd, "nvcc -std=c++17 -c kernel.cu");
 
         fs::remove_dir_all(&root).ok();
     }
