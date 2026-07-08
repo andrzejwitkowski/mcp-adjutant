@@ -7,18 +7,18 @@ use super::traits::{AgentContext, AutonomousAgent};
 use crate::cache::ProjectCacheManager;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
-pub const EVALUATOR_SYSTEM_PROMPT: &str = r#"Jesteś Surowym Inspektorem Jakości (QA_AGENT). Twoim zadaniem jest ocena pracy innych agentów AI.
-Otrzymasz:
-1. NAZWĘ AGENTA
-2. ORYGINALNE ZADANIE
-3. WYNIK JEGO PRACY
+pub const EVALUATOR_SYSTEM_PROMPT: &str = r#"You are a Strict Quality Inspector (QA_AGENT). Your job is to evaluate other AI agents.
+You will receive:
+1. AGENT NAME
+2. ORIGINAL TASK
+3. THEIR OUTPUT
 
-Twoim celem jest zwrócenie JEDNEGO poprawnego obiektu JSON (bez bloku markdown) o strukturze:
+Return ONE valid JSON object (no markdown fence) with this shape:
 {
-  "score": [ocena od 1 do 10],
-  "critique": "[Zwięzły opis: co zrobił dobrze, a czego zabrakło, by dostać 10/10? Zwróć uwagę na halucynacje, szum w danych lub braki w asercjach]"
+  "score": [rating from 1 to 10],
+  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]"
 }
-Bądź bezlitosny. Ocenę 10/10 przyznawaj tylko za idealne, chirurgiczne wykonanie."#;
+Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
 #[derive(Debug, Deserialize)]
 struct EvaluationPayload {
@@ -53,7 +53,7 @@ impl<C: LlmClient> EvaluatorAgent<C> {
 
     fn build_user_message(&self) -> String {
         format!(
-            "AGENT: {}\n\nORYGINALNE ZADANIE:\n{}\n\nWYNIK PRACY AGENTA:\n{}",
+            "AGENT: {}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
             self.target_agent, self.original_task, self.received_output
         )
     }
@@ -128,7 +128,7 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
             &evaluation.critique,
         )?;
 
-        let summary = format!("Ewaluacja zapisana. Ocena QA: {}/10", evaluation.score);
+        let summary = format!("Evaluation saved. QA score: {}/10", evaluation.score);
         context.accumulated_data = summary.clone();
         context.is_finished = true;
 

@@ -3,15 +3,15 @@ use std::path::{Path, PathBuf};
 
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
-pub const BUILD_DISCOVERY_SYSTEM_PROMPT: &str = r#"Jesteś detektorem systemów budowania. Dostaniesz strukturę katalogów i nazwy plików.
-Odpowiedz dokładnie jedną linią:
-- BUILD: command="polecenie shell do sprawdzenia kompilacji/typów"
+pub const BUILD_DISCOVERY_SYSTEM_PROMPT: &str = r#"You are a build-system detector. You will receive directory structure and file names.
+Reply with exactly one line:
+- BUILD: command="shell command to check compile/types"
 - BUILD: unknown
 
-Zasady:
-- polecenie uruchamia się w podanym katalogu roboczym
-- preferuj bezpieczne komendy check/compile, nie install/deploy
-- jedna linia, bez markdown"#;
+Rules:
+- the command runs in the given working directory
+- prefer safe check/compile commands, not install/deploy
+- one line, no markdown"#;
 
 const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -52,7 +52,7 @@ impl<C: LlmClient> LlmBuildDiscoverer<C> {
 impl<C: LlmClient> BuildCommandDiscoverer for LlmBuildDiscoverer<C> {
     fn discover(&self, anchor: &Path, snapshot: &str) -> Result<Option<String>, String> {
         let user_message = format!(
-            "Katalog roboczy: {}\n\nStruktura plików:\n{snapshot}\n\nJak skompilować lub sprawdzić ten moduł?",
+            "Working directory: {}\n\nFile structure:\n{snapshot}\n\nHow do I compile or type-check this module?",
             anchor.display()
         );
         let tools = LlmToolSet::new();

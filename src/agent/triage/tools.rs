@@ -19,11 +19,11 @@ impl EditFileTool {
         Self {
             definition: ToolDefinition::new(
                 "edit_file",
-                "Zamienia jedną linię pliku (numeracja 1-based). Używaj tylko dla trywialnych poprawek.",
+                "Replaces one file line (1-based numbering). Use only for trivial fixes.",
             )
-            .string_param("path", "Ścieżka do pliku (względna do modułu lub absolutna).", true)
-            .integer_param("line", "Numer linii do podmiany (>= 1).", true)
-            .string_param("content", "Nowa treść linii.", true),
+            .string_param("path", "File path (relative to module or absolute).", true)
+            .integer_param("line", "Line number to replace (>= 1).", true)
+            .string_param("content", "New line contents.", true),
         }
     }
 }
@@ -47,9 +47,9 @@ impl ReportArchitecturalErrorTool {
         Self {
             definition: ToolDefinition::new(
                 "report_architectural_error",
-                "Eskaluje złożony błąd kompilacji do architekta, gdy lokalna edycja nie wystarczy.",
+                "Escalates a complex compile error to an architect when a local edit is not enough.",
             )
-            .string_param("msg", "Opis problemu dla architekta.", true),
+            .string_param("msg", "Problem description for the architect.", true),
         }
     }
 }

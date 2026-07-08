@@ -25,12 +25,12 @@ impl DetectLanguageTool {
         Self {
             definition: ToolDefinition::new(
                 "detect_language",
-                "Wykrywa język pliku lub projektu na podstawie rozszerzenia, markerów (Cargo.toml, package.json, ...) i heurystyk treści.",
+                "Detects file or project language from extension, markers (Cargo.toml, package.json, ...), and content heuristics.",
             )
-            .string_param("path", "Ścieżka do pliku lub katalogu projektu.", true)
+            .string_param("path", "Path to a file or project directory.", true)
             .enum_param(
                 "scope",
-                "file = pojedynczy plik, project = skan katalogu repo.",
+                "file = single file, project = scan the repo directory.",
                 &["file", "project"],
                 true,
             ),
@@ -69,16 +69,12 @@ impl RipgrepTool {
         Self {
             definition: ToolDefinition::new(
                 "ripgrep",
-                "Szeroki zwiad tekstowy: uruchamia ripgrep z kontekstem linii.",
+                "Broad text search: runs ripgrep with line context.",
             )
-            .string_param(
-                "pattern",
-                "Wzorzec wyszukiwania przekazywany do ripgrep.",
-                true,
-            )
+            .string_param("pattern", "Search pattern passed to ripgrep.", true)
             .string_param(
                 "root",
-                "Katalog repozytorium do przeszukania (domyślnie bieżący katalog).",
+                "Repository directory to search (defaults to the current directory).",
                 false,
             ),
         }
@@ -106,14 +102,14 @@ impl AstCallsTool {
         Self {
             definition: ToolDefinition::new(
                 "ast_calls",
-                "Skalpel AST: zwraca numery linii fizycznych wywołań metody (bez komentarzy i stringów).",
+                "AST scalpel: returns physical line numbers of method calls (excluding comments and strings).",
             )
             .string_param(
                 "file",
-                "Ścieżka do pliku źródłowego (np. .rs, .py, .java, .kt, .sql, .c, .cpp).",
+                "Path to the source file (e.g. .rs, .py, .java, .kt, .sql, .c, .cpp).",
                 true,
             )
-            .string_param("method", "Nazwa wywoływanej metody/funkcji.", true),
+            .string_param("method", "Called method/function name.", true),
         }
     }
 }
@@ -144,11 +140,11 @@ impl ReadFileTool {
         Self {
             definition: ToolDefinition::new(
                 "read_file",
-                "Czyta wycinek pliku po numerach linii (1-based, włącznie).",
+                "Reads a file slice by line numbers (1-based, inclusive).",
             )
-            .string_param("file", "Ścieżka do pliku.", true)
-            .integer_param("start", "Pierwsza linia (>= 1).", true)
-            .integer_param("end", "Ostatnia linia (>= start).", true),
+            .string_param("file", "Path to the file.", true)
+            .integer_param("start", "First line (>= 1).", true)
+            .integer_param("end", "Last line (>= start).", true),
         }
     }
 }
@@ -175,9 +171,9 @@ impl FinalizeTool {
         Self {
             definition: ToolDefinition::new(
                 "finalize",
-                "Kończy zwiad i zwraca skondensowany raport markdown.",
+                "Ends scouting and returns a condensed markdown report.",
             )
-            .string_param("report", "Finalny skondensowany raport markdown.", true),
+            .string_param("report", "Final condensed markdown report.", true),
         }
     }
 }

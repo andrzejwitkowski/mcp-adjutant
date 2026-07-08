@@ -18,14 +18,14 @@ pub use tools::{
     parse_factory_arguments, parse_write_test_suite_arguments,
 };
 
-pub const BUILDER_SYSTEM_PROMPT: &str = r#"Jesteś autonomicznym robotnikiem TDD (PHASE_4_BUILDER). Generujesz testy jednostkowe, integracyjne oraz fabryki danych.
+pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHASE_4_BUILDER). You generate unit tests, integration tests, and data factories.
 
-Masz do dyspozycji narzędzia (tool calls):
-- gather_integration_context — uruchamia pod-agenta Scout (ripgrep, AST, read_file) przed testami integracyjnymi
-- generate_test_factory — uruchamia Scout w celu wygenerowania idiomatycznego factory/fixture dla typu (język agnostic)
-- write_test_suite — zapis pliku testowego z fazą TDD (red|green|refactor)
+Available tools (tool calls):
+- gather_integration_context — runs a Scout sub-agent (ripgrep, AST, read_file) before integration tests
+- generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
+- write_test_suite — writes a test file with a TDD phase (red|green|refactor)
 
-Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj narzędzia."#;
+Reply with a short rationale (Thought), then call tools."#;
 
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_SCOUT_MAX_ITERATIONS: u32 = 8;
@@ -109,7 +109,7 @@ impl<
             context.input_prompt.clone()
         } else {
             format!(
-                "{}\n\n---\nHistoria obserwacji:\n{}",
+                "{}\n\n---\nObservation history:\n{}",
                 context.input_prompt, context.accumulated_data
             )
         }
@@ -117,9 +117,9 @@ impl<
 
     fn triage_directive(tdd_phase: &str) -> &'static str {
         match tdd_phase {
-            "red" => "TDD RED PHASE: Kod MUSI się bezbłędnie skompilować (napraw braki importów, literówki w typach). Testy MUSZĄ oblewać asercje. NIE DOTYKAJ logiki asercji.",
-            "refactor" => "TDD REFACTOR PHASE: Kod musi się skompilować, a wszystkie testy MUSZĄ przejść na zielono po refaktoryzacji.",
-            _ => "TDD GREEN PHASE: Kod musi się skompilować, a wszystkie testy MUSZĄ przejść na zielono. Jeśli są błędy, napraw je.",
+            "red" => "TDD RED PHASE: Code MUST compile cleanly (fix missing imports, type typos). Tests MUST fail assertions. DO NOT touch assertion logic.",
+            "refactor" => "TDD REFACTOR PHASE: Code must compile and all tests MUST pass after refactoring.",
+            _ => "TDD GREEN PHASE: Code must compile and all tests MUST pass. If there are errors, fix them.",
         }
     }
 
@@ -131,8 +131,8 @@ impl<
         match tdd_phase {
             "red" => triage_ctx
                 .input_prompt
-                .contains("kompilacja udana, testy oblane"),
-            _ => triage_ctx.input_prompt.contains("sukcesem"),
+                .contains("compile succeeded, tests failing assertions"),
+            _ => triage_ctx.input_prompt.contains("completed successfully"),
         }
     }
 
@@ -186,7 +186,7 @@ impl<
                 return Err("model response missing tool call".to_string());
             }
             context.accumulated_data.push_str(&format!(
-                "Thought:\n{thought}\n(model nie wywołał narzędzia — kontynuuj)\n"
+                "Thought:\n{thought}\n(model did not call a tool — continue)\n"
             ));
             return Ok(());
         }
@@ -284,7 +284,7 @@ impl<
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
         context
             .input_prompt
-            .push_str("\nKontynuuj generowanie testów na podstawie ostatniej obserwacji.");
+            .push_str("\nContinue generating tests based on the latest observation.");
         Ok(())
     }
 }

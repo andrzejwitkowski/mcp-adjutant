@@ -63,7 +63,7 @@ impl LlmClient for MockTriageLlm {
     fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
         assert_eq!(request.system_prompt, TRIAGE_SYSTEM_PROMPT);
         assert!(
-            request.user_message.contains("Logi kompilacji"),
+            request.user_message.contains("Build logs"),
             "expected compiler logs in user message"
         );
         assert!(
@@ -154,7 +154,7 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
     assert!(
         result
             .input_prompt
-            .contains("Wszystkie testy/kompilacje zakończone sukcesem."),
+            .contains("All builds/tests completed successfully."),
         "success message expected, got: {}",
         result.input_prompt
     );
@@ -193,7 +193,7 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
     );
     assert!(result
         .input_prompt
-        .contains("Wszystkie testy/kompilacje zakończone sukcesem."));
+        .contains("All builds/tests completed successfully."));
 
     std::fs::remove_dir_all(&root).ok();
 }

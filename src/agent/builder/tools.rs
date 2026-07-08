@@ -18,7 +18,7 @@ impl GatherIntegrationContextTool {
         Self {
             definition: ToolDefinition::new(
                 "gather_integration_context",
-                "Uruchamia pod-agenta Scout (ripgrep, AST, read_file) w celu zebrania sygnatur i plików potrzebnych do testu integracyjnego. Wywołaj ZAWSZE przed napisaniem testu integracyjnego.",
+                "Runs a Scout sub-agent (ripgrep, AST, read_file) to collect signatures and files needed for an integration test. ALWAYS call this before writing an integration test.",
             )
             .string_array_param(
                 "components",
@@ -48,10 +48,10 @@ impl GenerateTestFactoryTool {
         Self {
             definition: ToolDefinition::new(
                 "generate_test_factory",
-                "Uruchamia pod-agenta Scout, aby na podstawie pliku źródłowego wygenerować idiomatyczny wzorzec factory/fixture dla danego typu (język agnostic).",
+                "Runs a Scout sub-agent to produce an idiomatic factory/fixture pattern for a type from a source file (language agnostic).",
             )
-            .string_param("target_struct", "Nazwa struktury docelowej.", true)
-            .string_param("target_file", "Ścieżka pliku źródłowego.", true),
+            .string_param("target_struct", "Target struct name.", true)
+            .string_param("target_file", "Source file path.", true),
         }
     }
 }
@@ -75,13 +75,13 @@ impl WriteTestSuiteTool {
         Self {
             definition: ToolDefinition::new(
                 "write_test_suite",
-                "Zapisuje wygenerowany zestaw testów na dysk.",
+                "Writes the generated test suite to disk.",
             )
-            .string_param("path", "Ścieżka docelowa pliku testowego.", true)
-            .string_param("content", "Treść pliku testowego.", true)
+            .string_param("path", "Destination test file path.", true)
+            .string_param("content", "Test file contents.", true)
             .enum_param(
                 "tdd_phase",
-                "red: test ma się skompilować, ale celowo oblewać asercje. green: test ma przejść na zielono.",
+                "red: test must compile but intentionally fail assertions. green: test must pass.",
                 &["red", "green", "refactor"],
                 true,
             ),
@@ -135,21 +135,21 @@ pub fn parse_write_test_suite_arguments(
 
 pub fn build_scout_integration_query(components: &[String]) -> String {
     format!(
-        "PHASE_1_SCOUT\n\nZbadaj repozytorium pod kątem testów integracyjnych dla komponentów:\n{}\n\n\
-         Użyj ripgrep, ast_calls i read_file, aby zebrać sygnatury metod, ścieżki plików, zależności \
-         i przykłady wywołań. Zakończ raportem finalize.",
+        "PHASE_1_SCOUT\n\nExplore the repository for integration tests covering components:\n{}\n\n\
+         Use ripgrep, ast_calls, and read_file to collect method signatures, file paths, dependencies, \
+         and call examples. Finish with a finalize report.",
         components.join(", ")
     )
 }
 
 pub fn build_scout_factory_query(target_struct: &str, target_file: &str) -> String {
     format!(
-        "PHASE_1_SCOUT\n\nPrzygotuj szablon factory/fixture/builder dla typu `{target_struct}` \
-         na podstawie pliku `{target_file}`.\n\n\
-         Wykryj język (detect_language), odczytaj definicję typu (read_file, ast_calls) i zwróć \
-         idiomatyczny dla tego stacku wzorzec test fixture (fluent builder, object mother, factory \
-         method — zależnie od konwencji języka). Nie zakładaj konkretnego języka z góry. \
-         Zakończ raportem finalize."
+        "PHASE_1_SCOUT\n\nPrepare a factory/fixture/builder template for type `{target_struct}` \
+         based on file `{target_file}`.\n\n\
+         Detect the language (detect_language), read the type definition (read_file, ast_calls), and return \
+         an idiomatic test fixture pattern for that stack (fluent builder, object mother, factory \
+         method — depending on language conventions). Do not assume a specific language up front. \
+         Finish with a finalize report."
     )
 }
 

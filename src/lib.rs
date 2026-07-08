@@ -3,6 +3,7 @@ pub mod cache;
 pub mod config_server;
 pub mod domain;
 pub mod error;
+pub mod jobs;
 pub mod llm;
 pub mod mcp;
 pub mod mcp_server;
@@ -24,6 +25,7 @@ pub use agent::{
 pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, SEMANTIC_SIMILARITY_THRESHOLD};
 pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 pub use error::AdjutantConfigError;
+pub use jobs::{query_job_status_schema, JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 pub use llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
     create_llm_client_for_phase, create_scout_llm_client, create_triage_llm_client,
@@ -32,8 +34,8 @@ pub use llm::{
 };
 pub use mcp::{
     evaluate_agent_performance_schema, generate_tests_and_scaffolding_schema,
-    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding, handle_scout_context,
-    handle_verify_and_triage, registered_mcp_tools, scout_context_schema, verify_and_triage_schema,
-    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-    SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
+    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding,
+    handle_query_job_status, handle_scout_context, handle_verify_and_triage, registered_mcp_tools,
+    scout_context_schema, verify_and_triage_schema, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
 };

@@ -17,14 +17,14 @@ use crate::tools::{
 
 pub use tools::{parse_edit_file_arguments, parse_report_error_arguments, triage_tool_set};
 
-pub const TRIAGE_SYSTEM_PROMPT: &str = r#"Jesteś agentem naprawczym kompilatora (PHASE_5_TRIAGE). Dostaniesz logi z błędami.
-Oceń, czy potrafisz naprawić kod (np. brakujący import, literówka).
+pub const TRIAGE_SYSTEM_PROMPT: &str = r#"You are a compiler repair agent (PHASE_5_TRIAGE). You will receive error logs.
+Decide whether you can fix the code (e.g. missing import, typo).
 
-Masz do dyspozycji narzędzia (tool calls):
-- edit_file — zamienia jedną linię pliku (path, line, content)
-- report_architectural_error — eskalacja, gdy naprawa wymaga architekta (msg)
+Available tools (tool calls):
+- edit_file — replace one file line (path, line, content)
+- report_architectural_error — escalate when a fix needs an architect (msg)
 
-Odpowiadaj krótkim uzasadnieniem (Thought), a następnie wywołaj dokładnie jedno narzędzie."#;
+Reply with a short rationale (Thought), then call exactly one tool."#;
 
 pub trait BuildCommandRunner: Send + Sync {
     fn run_build_command(&self, dir: &Path, command: &str) -> Result<String, String>;
@@ -211,7 +211,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         if all_ok {
             context.is_finished = true;
-            context.input_prompt = "Wszystkie testy/kompilacje zakończone sukcesem.".to_string();
+            context.input_prompt = "All builds/tests completed successfully.".to_string();
         } else if !combined_errors.is_empty() {
             context
                 .accumulated_data
@@ -304,7 +304,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         if assertion_failures > 0 {
             context.is_finished = true;
-            context.input_prompt = "kompilacja udana, testy oblane".to_string();
+            context.input_prompt = "compile succeeded, tests failing assertions".to_string();
             return Ok(true);
         }
 
@@ -364,9 +364,9 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
         if targets.is_empty() {
             context.is_finished = true;
             context.input_prompt = if paths.is_empty() {
-                "Brak modułów do sprawdzenia (brak zmian w git lub nieznane ścieżki).".to_string()
+                "No modules to check (no git changes or unknown paths).".to_string()
             } else {
-                "Nie udało się rozpoznać polecenia kompilacji (brak manifestu i discovery nie zwróciło komendy)."
+                "Could not resolve a build command (no manifest and discovery returned no command)."
                     .to_string()
             };
             return Ok(());
@@ -382,12 +382,12 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
 
         let user_message = if context.input_prompt.contains("TDD RED PHASE") {
             format!(
-                "Logi kompilacji do naprawy (TDD RED — napraw WYŁĄCZNIE błędy kompilacji, NIE zmieniaj asercji):\n\n{}\n\nWywołaj jedno narzędzie.",
+                "Build logs to fix (TDD RED — fix ONLY compile errors, do NOT change assertions):\n\n{}\n\nCall one tool.",
                 context.accumulated_data
             )
         } else {
             format!(
-                "Logi kompilacji do naprawy:\n\n{}\n\nWywołaj jedno narzędzie.",
+                "Build logs to fix:\n\n{}\n\nCall one tool.",
                 context.accumulated_data
             )
         };
@@ -399,7 +399,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             None => {
                 let thought = model_turn.content.unwrap_or_default();
                 context.accumulated_data.push_str(&format!(
-                    "LLM triage response (iter {}):\n{thought}\n(model nie wywołał narzędzia — ponawiam)\n",
+                    "LLM triage response (iter {}):\n{thought}\n(model did not call a tool — retrying)\n",
                     context.iterations
                 ));
                 return Ok(());
@@ -420,7 +420,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                     trimmed.starts_with("assert") || trimmed.starts_with("panic!");
                 if context.input_prompt.contains("TDD RED PHASE") && edits_assertion_statement {
                     return Err(
-                        "TDD RED PHASE: zabroniona modyfikacja asercji lub panic!".to_string()
+                        "TDD RED PHASE: modifying assertions or panic! is forbidden".to_string()
                     );
                 }
                 let module_roots = Self::module_roots(&targets);
@@ -452,7 +452,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
         context
             .input_prompt
-            .push_str("\nPonów kompilację po ostatniej próbie naprawy.");
+            .push_str("\nRe-run the build after the latest fix attempt.");
         Ok(())
     }
 }

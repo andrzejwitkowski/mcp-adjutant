@@ -6,10 +6,12 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
 use crate::domain::AdjutantConfig;
+use crate::jobs::{JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 use crate::mcp::{
-    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding, handle_scout_context,
-    handle_verify_and_triage, registered_mcp_tools, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
+    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding,
+    handle_query_job_status, handle_scout_context, handle_verify_and_triage, registered_mcp_tools,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+    SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
 };
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +45,7 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
         .build()
         .map_err(|err| format!("failed to start tokio runtime: {err}"))?;
 
+    let jobs = JobRegistry::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -71,7 +74,8 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
             "tools/list" => ok(id, list_tools_result()),
             "tools/call" => {
                 let config = Arc::clone(&config);
-                runtime.block_on(handle_tool_call(id, request.params, config))
+                let jobs = jobs.clone();
+                runtime.block_on(handle_tool_call(id, request.params, config, jobs))
             }
             "ping" => ok(id, json!({})),
             _ => err(id, -32601, format!("method not found: {}", request.method)),
@@ -113,6 +117,7 @@ async fn handle_tool_call(
     id: &Value,
     params: Value,
     config: Arc<RwLock<AdjutantConfig>>,
+    jobs: JobRegistry,
 ) -> String {
     let name = params
         .get("name")
@@ -125,14 +130,17 @@ async fn handle_tool_call(
 
     let config_snapshot = Arc::new(config.read().await.clone());
     let result = match name {
-        SCOUT_CONTEXT_TOOL_NAME => handle_scout_context(arguments, config_snapshot).await,
-        VERIFY_AND_TRIAGE_TOOL_NAME => handle_verify_and_triage(arguments, config_snapshot).await,
+        SCOUT_CONTEXT_TOOL_NAME => handle_scout_context(arguments, config_snapshot, &jobs).await,
+        VERIFY_AND_TRIAGE_TOOL_NAME => {
+            handle_verify_and_triage(arguments, config_snapshot, &jobs).await
+        }
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME => {
-            handle_generate_tests_and_scaffolding(arguments, config_snapshot).await
+            handle_generate_tests_and_scaffolding(arguments, config_snapshot, &jobs).await
         }
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => {
-            handle_evaluate_agent_performance(arguments, config_snapshot).await
+            handle_evaluate_agent_performance(arguments, config_snapshot, &jobs).await
         }
+        QUERY_JOB_STATUS_TOOL_NAME => handle_query_job_status(arguments, &jobs).await,
         other => Err(format!("unknown tool: {other}")),
     };
 
@@ -234,6 +242,33 @@ mod tests {
         let first = &result["tools"][0];
         assert!(first.get("inputSchema").is_some());
         assert!(first.get("input_schema").is_none());
+    }
+
+    #[test]
+    fn list_tools_includes_query_job_status() {
+        let result = list_tools_result();
+        let names = result["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"query_job_status"));
+    }
+
+    #[test]
+    fn scout_context_schema_requires_request_uuid() {
+        let result = list_tools_result();
+        let scout = result["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .find(|tool| tool["name"] == "scout_context")
+            .expect("scout tool");
+        let required = scout["inputSchema"]["required"]
+            .as_array()
+            .expect("required array");
+        assert!(required.iter().any(|value| value == "request_uuid"));
     }
 
     #[test]

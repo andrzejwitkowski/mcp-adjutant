@@ -30,7 +30,7 @@ async fn text_pruner_mock_loops_mutates_and_stops_when_short_enough() {
         "enrichment requirement should be present in context"
     );
     assert!(
-        result.input_prompt.contains("Wciąż za długie"),
+        result.input_prompt.contains("Still too long"),
         "mutation feedback should be present after failed iterations"
     );
 }
