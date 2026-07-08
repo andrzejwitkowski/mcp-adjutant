@@ -105,6 +105,13 @@ impl AdjutantConfig {
             .get(&phase)
             .ok_or_else(|| format!("missing profile for phase {phase:?}"))
     }
+
+    /// Fills in phase profiles present in defaults but missing from a persisted config.
+    pub fn merge_missing_from_defaults(&mut self) {
+        for (phase, profile) in AdjutantConfig::default().phases {
+            self.phases.entry(phase).or_insert(profile);
+        }
+    }
 }
 
 fn phase_profile(model_name: &str, max_tokens: u32, temperature: f32) -> PhaseProfile {
@@ -157,5 +164,37 @@ mod tests {
 
         assert_eq!(config.server_port, 3_000);
         assert!(!config.storage_path.is_empty());
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_adds_new_phases() {
+        let mut legacy = AdjutantConfig {
+            phases: HashMap::from([
+                (
+                    AgentPhase::Scout,
+                    phase_profile("deepseek-chat", 4_096, 0.3),
+                ),
+                (
+                    AgentPhase::Builder,
+                    phase_profile("deepseek-coder", 8_192, 0.2),
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(legacy.try_get_profile(AgentPhase::Evaluator).is_err());
+
+        legacy.merge_missing_from_defaults();
+
+        let evaluator = legacy
+            .try_get_profile(AgentPhase::Evaluator)
+            .expect("evaluator profile");
+        assert_eq!(evaluator.model_name, "deepseek-chat");
+        assert_eq!(evaluator.max_tokens, 2_048);
+        assert!((evaluator.temperature - 0.0).abs() < f32::EPSILON);
+        assert_eq!(
+            legacy.get_profile(&AgentPhase::Builder).model_name,
+            "deepseek-coder"
+        );
     }
 }

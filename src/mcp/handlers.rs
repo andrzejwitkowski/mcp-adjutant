@@ -95,6 +95,10 @@ pub fn evaluate_agent_performance_schema() -> Value {
                 "received_output": {
                     "type": "string",
                     "description": "Surowy wynik/raport, który agent Ci zwrócił."
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": "Opcjonalna ścieżka do pliku lub katalogu projektu, w którym zapisać ewaluację (domyślnie katalog roboczy MCP)."
                 }
             },
             "required": ["target_agent", "original_task", "received_output"]
@@ -291,7 +295,15 @@ pub async fn handle_evaluate_agent_performance(
         .ok_or_else(|| "received_output is required".to_string())?
         .to_string();
 
-    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(Path::new("."))?));
+    let cache_start = args
+        .get("project_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
     let client = create_evaluator_llm_client(&config)?;
     let agent = EvaluatorAgent::new(
         client,

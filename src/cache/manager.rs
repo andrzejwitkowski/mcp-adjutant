@@ -153,7 +153,11 @@ impl ProjectCacheManager {
     ) -> Result<(), String> {
         let created_at = current_unix_timestamp()?;
         let id = hash_query_text(&format!(
-            "{agent_name}\0{original_task}\0{created_at}\0{score}"
+            "{agent_name}\0{original_task}\0{agent_output}\0{feedback_notes}\0{created_at}\0{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos())
+                .unwrap_or(0)
         ));
 
         self.conn

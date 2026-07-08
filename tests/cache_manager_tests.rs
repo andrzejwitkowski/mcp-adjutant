@@ -297,3 +297,33 @@ fn git_tracked_dependency_change_invalidates_cache() {
 
     fs::remove_dir_all(&project_root).ok();
 }
+
+#[test]
+fn store_evaluation_allows_duplicate_scores_in_same_second() {
+    let project_root = unique_temp_project("eval-dup");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+
+    cache
+        .store_evaluation(
+            "Phase_1_Scout",
+            "same task",
+            "first output",
+            6,
+            "first critique",
+        )
+        .expect("first evaluation");
+    cache
+        .store_evaluation(
+            "Phase_1_Scout",
+            "same task",
+            "second output",
+            6,
+            "second critique",
+        )
+        .expect("second evaluation with same score");
+
+    fs::remove_dir_all(&project_root).ok();
+}

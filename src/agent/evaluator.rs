@@ -60,16 +60,24 @@ impl<C: LlmClient> EvaluatorAgent<C> {
 
     fn parse_evaluation_response(raw: &str) -> Result<EvaluationPayload, String> {
         let trimmed = raw.trim();
-        let json_body = trimmed
+        let fenced = trimmed
             .strip_prefix("```json")
             .or_else(|| trimmed.strip_prefix("```"))
             .and_then(|rest| rest.strip_suffix("```"))
             .map(str::trim)
             .unwrap_or(trimmed);
 
+        let json_body = extract_json_object(fenced).unwrap_or(fenced);
+
         serde_json::from_str(json_body)
             .map_err(|err| format!("failed to parse evaluator JSON response: {err}"))
     }
+}
+
+fn extract_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    (end > start).then(|| &text[start..=end])
 }
 
 #[async_trait]
@@ -129,5 +137,30 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 
     async fn mutate_next_iteration(&self, _context: &mut AgentContext) -> Result<(), String> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_json_object, EvaluatorAgent};
+
+    #[test]
+    fn extract_json_object_finds_object_inside_prose() {
+        let raw = "Here is my verdict: {\"score\": 7, \"critique\": \"ok\"} thanks.";
+        assert_eq!(
+            extract_json_object(raw),
+            Some(r#"{"score": 7, "critique": "ok"}"#)
+        );
+    }
+
+    #[test]
+    fn parse_evaluation_response_accepts_wrapped_prose() {
+        let payload = EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+            "Thought: done.\n{\"score\": 8, \"critique\": \"solid\"}\n",
+        )
+        .expect("parse wrapped json");
+
+        assert_eq!(payload.score, 8);
+        assert_eq!(payload.critique, "solid");
     }
 }
