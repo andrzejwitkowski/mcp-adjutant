@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +10,10 @@ use crate::agent::{
 };
 use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
+use crate::jobs::{
+    accepted_job_response, parse_request_uuid, query_job_status_schema,
+    request_uuid_schema_property, run_tracked_job, JobRegistry,
+};
 use crate::llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
     create_triage_llm_client,
@@ -28,16 +33,17 @@ const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 pub fn scout_context_schema() -> Value {
     json!({
         "name": SCOUT_CONTEXT_TOOL_NAME,
-        "description": "Uruchamia autonomiczny zwiad kodu i zwraca skondensowany kontekst markdown.",
+        "description": "Uruchamia autonomiczny zwiad kodu i zwraca skondensowany kontekst markdown. Zwraca natychmiast; wynik pobierz przez query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "Pytanie lub cel zwiadu po repozytorium."
-                }
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["query"]
+            "required": ["query", "request_uuid"]
         }
     })
 }
@@ -45,7 +51,7 @@ pub fn scout_context_schema() -> Value {
 pub fn verify_and_triage_schema() -> Value {
     json!({
         "name": VERIFY_AND_TRIAGE_TOOL_NAME,
-        "description": "Uruchamia analizę błędów kompilacji/typowania i automatycznie naprawia trywialne usterki. Wywołuj ZAWSZE po zmianach w kodzie przed napisaniem commitu.",
+        "description": "Uruchamia analizę błędów kompilacji/typowania i automatycznie naprawia trywialne usterki. Wywołuj ZAWSZE po zmianach w kodzie przed napisaniem commitu. Zwraca natychmiast; wynik pobierz przez query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -53,8 +59,10 @@ pub fn verify_and_triage_schema() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Lista ścieżek do sprawdzanych plików. Jeśli puste, agent sprawdzi git status."
-                }
-            }
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["request_uuid"]
         }
     })
 }
@@ -62,7 +70,7 @@ pub fn verify_and_triage_schema() -> Value {
 pub fn generate_tests_and_scaffolding_schema() -> Value {
     json!({
         "name": GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-        "description": "Generuje testy (jednostkowe/integracyjne) i fabryki. Automatycznie sprawdza kompilację przez triage.",
+        "description": "Generuje testy (jednostkowe/integracyjne) i fabryki. Automatycznie sprawdza kompilację przez triage. Zwraca natychmiast; wynik pobierz przez query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -70,9 +78,10 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
                 "test_type": {
                     "type": "string",
                     "enum": ["unit", "integration", "factory"]
-                }
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["source_file_path", "test_type"]
+            "required": ["source_file_path", "test_type", "request_uuid"]
         }
     })
 }
@@ -80,7 +89,7 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
 pub fn evaluate_agent_performance_schema() -> Value {
     json!({
         "name": EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-        "description": "Wywołaj to narzędzie, aby ocenić jakość raportu lub kodu dostarczonego przez innego agenta (np. Scouta lub Buildera). Pozwala to systemowi uczyć się na błędach i optymalizować przyszłe wywołania.",
+        "description": "Wywołaj to narzędzie, aby ocenić jakość raportu lub kodu dostarczonego przez innego agenta (np. Scouta lub Buildera). Zwraca natychmiast; wynik pobierz przez query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -99,9 +108,10 @@ pub fn evaluate_agent_performance_schema() -> Value {
                 "project_path": {
                     "type": "string",
                     "description": "Opcjonalna ścieżka do pliku lub katalogu projektu, w którym zapisać ewaluację (domyślnie katalog roboczy MCP)."
-                }
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["target_agent", "original_task", "received_output"]
+            "required": ["target_agent", "original_task", "received_output", "request_uuid"]
         }
     })
 }
@@ -112,13 +122,44 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         verify_and_triage_schema(),
         generate_tests_and_scaffolding_schema(),
         evaluate_agent_performance_schema(),
+        query_job_status_schema(),
     ]
+}
+
+async fn dispatch_async_job<F, Fut>(
+    registry: &JobRegistry,
+    request_uuid: String,
+    tool_name: &str,
+    work: F,
+) -> Result<String, String>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<String, String>> + Send + 'static,
+{
+    registry.register(&request_uuid, tool_name)?;
+    let registry = registry.clone();
+    let accepted_uuid = request_uuid.clone();
+    tokio::spawn(async move {
+        run_tracked_job(registry, request_uuid, work).await;
+    });
+    Ok(accepted_job_response(&accepted_uuid, tool_name))
+}
+
+pub async fn handle_query_job_status(
+    args: Value,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let status = registry.query(&request_uuid)?;
+    serde_json::to_string_pretty(&status).map_err(|err| format!("serialize status: {err}"))
 }
 
 pub async fn handle_scout_context(
     args: Value,
     config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
 ) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -127,25 +168,34 @@ pub async fn handle_scout_context(
         .ok_or_else(|| "query is required".to_string())?
         .to_string();
 
-    let client = create_scout_llm_client(&config)?;
-    let agent = ScoutAgent::new(client);
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        SCOUT_CONTEXT_TOOL_NAME,
+        move || async move {
+            let client = create_scout_llm_client(&config)?;
+            let agent = ScoutAgent::new(client);
+            let result = AgentLoopOrchestrator::run(&agent, query, SCOUT_MAX_ITERATIONS).await?;
 
-    let result = AgentLoopOrchestrator::run(&agent, query, SCOUT_MAX_ITERATIONS).await?;
+            if result.is_finished {
+                return Ok(result.accumulated_data);
+            }
 
-    if result.is_finished {
-        return Ok(result.accumulated_data);
-    }
-
-    Ok(format!(
-        "Scout report (finished={}, iterations={}):\n{}",
-        result.is_finished, result.iterations, result.accumulated_data
-    ))
+            Ok(format!(
+                "Scout report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
+            ))
+        },
+    )
+    .await
 }
 
 pub async fn handle_verify_and_triage(
     args: Value,
     config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
 ) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
     let target_paths: Vec<PathBuf> = args
         .get("target_paths")
         .and_then(Value::as_array)
@@ -157,42 +207,50 @@ pub async fn handle_verify_and_triage(
         })
         .unwrap_or_default();
 
-    let triage_client = create_triage_llm_client(&config)?;
-    let scout_client = create_scout_llm_client(&config)?;
-    let discoverer = LlmBuildDiscoverer::new(scout_client);
-    let agent = TriageAgent::with_build_runner_and_discoverer(
-        triage_client,
-        target_paths,
-        Arc::clone(&config),
-        SystemBuildRunner,
-        discoverer,
-    );
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        VERIFY_AND_TRIAGE_TOOL_NAME,
+        move || async move {
+            let triage_client = create_triage_llm_client(&config)?;
+            let scout_client = create_scout_llm_client(&config)?;
+            let discoverer = LlmBuildDiscoverer::new(scout_client);
+            let agent = TriageAgent::with_build_runner_and_discoverer(
+                triage_client,
+                target_paths,
+                Arc::clone(&config),
+                SystemBuildRunner,
+                discoverer,
+            );
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        format!("{VERIFY_AND_TRIAGE_TOOL_NAME}\n\n{TRIAGE_SYSTEM_PROMPT}"),
-        TRIAGE_MAX_ITERATIONS,
+            let result = AgentLoopOrchestrator::run(
+                &agent,
+                format!("{VERIFY_AND_TRIAGE_TOOL_NAME}\n\n{TRIAGE_SYSTEM_PROMPT}"),
+                TRIAGE_MAX_ITERATIONS,
+            )
+            .await?;
+
+            if result.is_finished {
+                if result
+                    .input_prompt
+                    .contains("Wszystkie testy/kompilacje zakończone sukcesem.")
+                {
+                    return Ok(result.input_prompt);
+                }
+                if !result.accumulated_data.is_empty()
+                    && !result.accumulated_data.starts_with("Triage targets")
+                {
+                    return Ok(result.accumulated_data);
+                }
+            }
+
+            Ok(format!(
+                "Triage report (finished={}, iterations={}):\n{}\n{}",
+                result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
+            ))
+        },
     )
-    .await?;
-
-    if result.is_finished {
-        if result
-            .input_prompt
-            .contains("Wszystkie testy/kompilacje zakończone sukcesem.")
-        {
-            return Ok(result.input_prompt);
-        }
-        if !result.accumulated_data.is_empty()
-            && !result.accumulated_data.starts_with("Triage targets")
-        {
-            return Ok(result.accumulated_data);
-        }
-    }
-
-    Ok(format!(
-        "Triage report (finished={}, iterations={}):\n{}\n{}",
-        result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
-    ))
+    .await
 }
 
 fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
@@ -213,64 +271,78 @@ fn open_cache_manager_near(source_path: &Path) -> Result<ProjectCacheManager, St
 pub async fn handle_generate_tests_and_scaffolding(
     args: Value,
     config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
 ) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
     let source_file_path = args
         .get("source_file_path")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|path| !path.is_empty())
-        .ok_or_else(|| "source_file_path is required".to_string())?;
+        .ok_or_else(|| "source_file_path is required".to_string())?
+        .to_string();
 
     let test_type = args
         .get("test_type")
         .and_then(Value::as_str)
-        .ok_or_else(|| "test_type is required".to_string())?;
+        .ok_or_else(|| "test_type is required".to_string())?
+        .to_string();
 
     const ALLOWED_TEST_TYPES: [&str; 3] = ["unit", "integration", "factory"];
-    if !ALLOWED_TEST_TYPES.contains(&test_type) {
+    if !ALLOWED_TEST_TYPES.contains(&test_type.as_str()) {
         return Err(format!(
             "test_type must be one of {ALLOWED_TEST_TYPES:?}, got {test_type:?}"
         ));
     }
 
-    let source_path = PathBuf::from(source_file_path);
-    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+        move || async move {
+            let source_path = PathBuf::from(&source_file_path);
+            let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 
-    let builder_client = create_builder_llm_client(&config)?;
-    let scout_client = create_scout_llm_client(&config)?;
-    let triage_client = create_triage_llm_client(&config)?;
-    let agent = default_builder_agent(
-        builder_client,
-        cache_manager,
-        scout_client,
-        triage_client,
-        Arc::clone(&config),
-        vec![source_path.clone()],
-    );
+            let builder_client = create_builder_llm_client(&config)?;
+            let scout_client = create_scout_llm_client(&config)?;
+            let triage_client = create_triage_llm_client(&config)?;
+            let agent = default_builder_agent(
+                builder_client,
+                cache_manager,
+                scout_client,
+                triage_client,
+                Arc::clone(&config),
+                vec![source_path.clone()],
+            );
 
-    let prompt = format!(
-        "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nWygeneruj test typu `{test_type}` dla pliku: {source_file_path}"
-    );
+            let prompt = format!(
+                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nWygeneruj test typu `{test_type}` dla pliku: {source_file_path}"
+            );
 
-    let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
+            let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
 
-    if result.is_finished {
-        return Ok(format!(
-            "Builder finished successfully for {source_file_path} ({test_type}).\n{}",
-            result.accumulated_data
-        ));
-    }
+            if result.is_finished {
+                return Ok(format!(
+                    "Builder finished successfully for {source_file_path} ({test_type}).\n{}",
+                    result.accumulated_data
+                ));
+            }
 
-    Ok(format!(
-        "Builder report (finished={}, iterations={}):\n{}\n{}",
-        result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
-    ))
+            Ok(format!(
+                "Builder report (finished={}, iterations={}):\n{}\n{}",
+                result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
+            ))
+        },
+    )
+    .await
 }
 
 pub async fn handle_evaluate_agent_performance(
     args: Value,
     config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
 ) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
     let target_agent = args
         .get("target_agent")
         .and_then(Value::as_str)
@@ -303,29 +375,37 @@ pub async fn handle_evaluate_agent_performance(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
-    let client = create_evaluator_llm_client(&config)?;
-    let agent = EvaluatorAgent::new(
-        client,
-        cache_manager,
-        target_agent,
-        original_task,
-        received_output,
-    );
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+        move || async move {
+            let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
+            let client = create_evaluator_llm_client(&config)?;
+            let agent = EvaluatorAgent::new(
+                client,
+                cache_manager,
+                target_agent,
+                original_task,
+                received_output,
+            );
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME.to_string(),
-        EVALUATOR_MAX_ITERATIONS,
+            let result = AgentLoopOrchestrator::run(
+                &agent,
+                EVALUATE_AGENT_PERFORMANCE_TOOL_NAME.to_string(),
+                EVALUATOR_MAX_ITERATIONS,
+            )
+            .await?;
+
+            if result.is_finished {
+                return Ok(result.accumulated_data);
+            }
+
+            Ok(format!(
+                "Evaluator report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
+            ))
+        },
     )
-    .await?;
-
-    if result.is_finished {
-        return Ok(result.accumulated_data);
-    }
-
-    Ok(format!(
-        "Evaluator report (finished={}, iterations={}):\n{}",
-        result.is_finished, result.iterations, result.accumulated_data
-    ))
+    .await
 }
