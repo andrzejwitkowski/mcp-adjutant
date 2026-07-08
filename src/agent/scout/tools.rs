@@ -71,11 +71,7 @@ impl RipgrepTool {
                 "ripgrep",
                 "Broad text search: runs ripgrep with line context.",
             )
-            .string_param(
-                "pattern",
-                "Search pattern passed to ripgrep.",
-                true,
-            )
+            .string_param("pattern", "Search pattern passed to ripgrep.", true)
             .string_param(
                 "root",
                 "Repository directory to search (defaults to the current directory).",

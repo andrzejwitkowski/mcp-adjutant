@@ -45,10 +45,7 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
         .expect("evaluator orchestrator run");
 
     assert!(result.is_finished);
-    assert_eq!(
-        result.accumulated_data,
-        "Evaluation saved. QA score: 6/10"
-    );
+    assert_eq!(result.accumulated_data, "Evaluation saved. QA score: 6/10");
 
     let db_path = project_root.join(".adjutant/cache.db");
     let conn = Connection::open(&db_path).expect("open cache.db");

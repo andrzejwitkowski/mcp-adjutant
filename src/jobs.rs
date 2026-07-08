@@ -11,6 +11,7 @@ pub const QUERY_JOB_STATUS_TOOL_NAME: &str = "query_job_status";
 
 const STALL_HINT_AFTER: Duration = Duration::from_secs(90);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const TERMINAL_RETENTION: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,9 +67,8 @@ impl HeartbeatHandle {
 impl Drop for HeartbeatHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
+        // ponytail: detach heartbeat thread; join() would block a Tokio worker
+        let _ = self.thread.take();
     }
 }
 
@@ -86,6 +86,7 @@ impl JobRegistry {
 
     pub fn register(&self, request_uuid: &str, tool_name: &str) -> Result<(), String> {
         let mut jobs = self.inner.lock().expect("job registry lock");
+        evict_stale_terminal_jobs(&mut jobs);
         if jobs.contains_key(request_uuid) {
             return Err(format!(
                 "request_uuid already in use: {request_uuid}. Use a fresh UUID or poll query_job_status."
@@ -142,8 +143,8 @@ impl JobRegistry {
             return Err(format!("unknown request_uuid: {request_uuid}"));
         };
 
-        let possibly_stalled = job.status == JobStatus::Running
-            && job.last_heartbeat.elapsed() > STALL_HINT_AFTER;
+        let possibly_stalled =
+            job.status == JobStatus::Running && job.last_heartbeat.elapsed() > STALL_HINT_AFTER;
 
         Ok(json!({
             "request_uuid": request_uuid,
@@ -176,6 +177,13 @@ impl Default for JobRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn evict_stale_terminal_jobs(jobs: &mut HashMap<String, JobRecord>) {
+    jobs.retain(|_, job| {
+        !matches!(job.status, JobStatus::Completed | JobStatus::Failed)
+            || job.updated_at.elapsed() <= TERMINAL_RETENTION
+    });
 }
 
 fn elapsed_since_unix(instant: Instant) -> u64 {
@@ -252,10 +260,9 @@ where
         Err(join_error) if join_error.is_panic() => {
             registry.fail(&request_uuid, "Job panicked during execution".to_string());
         }
-        Err(join_error) => registry.fail(
-            &request_uuid,
-            format!("Job task cancelled: {join_error}"),
-        ),
+        Err(join_error) => {
+            registry.fail(&request_uuid, format!("Job task cancelled: {join_error}"))
+        }
     }
 }
 
@@ -321,10 +328,36 @@ mod tests {
         assert_eq!(status["result"], Value::Null);
     }
 
+    #[test]
+    fn register_evicts_stale_terminal_jobs() {
+        let registry = JobRegistry::new();
+        registry
+            .register("old-job", "scout_context")
+            .expect("register");
+        registry.complete("old-job", "done".to_string());
+        {
+            let mut jobs = registry.inner.lock().expect("lock");
+            let job = jobs.get_mut("old-job").expect("job");
+            job.updated_at = Instant::now() - TERMINAL_RETENTION - Duration::from_secs(1);
+        }
+
+        registry
+            .register("new-job", "scout_context")
+            .expect("register");
+
+        assert!(registry.query("old-job").is_err());
+        assert_eq!(
+            registry.query("new-job").expect("query")["status"],
+            "queued"
+        );
+    }
+
     #[tokio::test]
     async fn run_tracked_job_marks_failed_on_panic() {
         let registry = JobRegistry::new();
-        registry.register("job-1", "scout_context").expect("register");
+        registry
+            .register("job-1", "scout_context")
+            .expect("register");
 
         run_tracked_job(registry.clone(), "job-1".to_string(), || async {
             panic!("boom");

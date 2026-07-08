@@ -82,7 +82,9 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
                 if thought.is_empty() {
                     return Err("model response missing tool call".to_string());
                 }
-                let step = format!("Thought:\n{thought}\nObservation:\n(model did not call a tool — continue)\n");
+                let step = format!(
+                    "Thought:\n{thought}\nObservation:\n(model did not call a tool — continue)\n"
+                );
                 context.accumulated_data.push_str(&step);
                 return Ok(());
             }

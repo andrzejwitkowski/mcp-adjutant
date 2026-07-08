@@ -132,9 +132,7 @@ impl<
             "red" => triage_ctx
                 .input_prompt
                 .contains("compile succeeded, tests failing assertions"),
-            _ => triage_ctx
-                .input_prompt
-                .contains("completed successfully"),
+            _ => triage_ctx.input_prompt.contains("completed successfully"),
         }
     }
 
