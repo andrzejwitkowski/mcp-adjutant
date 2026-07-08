@@ -7,6 +7,7 @@ use std::time::Duration;
 mod common;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
+use rusqlite::{params, Connection};
 
 fn init_git_repo(project_root: &Path) {
     Command::new("git")
@@ -310,20 +311,31 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
         .store_evaluation(
             "Phase_1_Scout",
             "same task",
-            "first output",
+            "identical output",
             6,
-            "first critique",
+            "identical critique",
         )
         .expect("first evaluation");
     cache
         .store_evaluation(
             "Phase_1_Scout",
             "same task",
-            "second output",
+            "identical output",
             6,
-            "second critique",
+            "identical critique",
         )
         .expect("second evaluation with same score");
+
+    let db_path = project_root.join(".adjutant/cache.db");
+    let conn = Connection::open(&db_path).expect("open cache.db");
+    let count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agent_evaluations WHERE agent_name = ?1",
+            params!["Phase_1_Scout"],
+            |row| row.get(0),
+        )
+        .expect("count evaluations");
+    assert_eq!(count, 2, "both evaluations should be persisted");
 
     fs::remove_dir_all(&project_root).ok();
 }
