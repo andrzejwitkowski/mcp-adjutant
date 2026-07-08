@@ -33,13 +33,13 @@ const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 pub fn scout_context_schema() -> Value {
     json!({
         "name": SCOUT_CONTEXT_TOOL_NAME,
-        "description": "Uruchamia autonomiczny zwiad kodu i zwraca skondensowany kontekst markdown. Zwraca natychmiast; wynik pobierz przez query_job_status.",
+        "description": "Runs autonomous code scouting and returns condensed markdown context. Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Pytanie lub cel zwiadu po repozytorium."
+                    "description": "Question or scouting goal for the repository."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -51,14 +51,14 @@ pub fn scout_context_schema() -> Value {
 pub fn verify_and_triage_schema() -> Value {
     json!({
         "name": VERIFY_AND_TRIAGE_TOOL_NAME,
-        "description": "Uruchamia analizę błędów kompilacji/typowania i automatycznie naprawia trywialne usterki. Wywołuj ZAWSZE po zmianach w kodzie przed napisaniem commitu. Zwraca natychmiast; wynik pobierz przez query_job_status.",
+        "description": "Runs compile/type error analysis and automatically fixes trivial issues. ALWAYS call after code changes before committing. Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "target_paths": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Lista ścieżek do sprawdzanych plików. Jeśli puste, agent sprawdzi git status."
+                    "description": "Paths to check. If empty, the agent uses git status."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -70,7 +70,7 @@ pub fn verify_and_triage_schema() -> Value {
 pub fn generate_tests_and_scaffolding_schema() -> Value {
     json!({
         "name": GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-        "description": "Generuje testy (jednostkowe/integracyjne) i fabryki. Automatycznie sprawdza kompilację przez triage. Zwraca natychmiast; wynik pobierz przez query_job_status.",
+        "description": "Generates unit/integration tests and factories. Automatically verifies compilation via triage. Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -89,25 +89,25 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
 pub fn evaluate_agent_performance_schema() -> Value {
     json!({
         "name": EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-        "description": "Wywołaj to narzędzie, aby ocenić jakość raportu lub kodu dostarczonego przez innego agenta (np. Scouta lub Buildera). Zwraca natychmiast; wynik pobierz przez query_job_status.",
+        "description": "Evaluate the quality of a report or code produced by another agent (e.g. Scout or Builder). Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "target_agent": {
                     "type": "string",
-                    "description": "Nazwa agenta, którego oceniasz (np. 'Phase_1_Scout')."
+                    "description": "Name of the agent you are evaluating (e.g. 'Phase_1_Scout')."
                 },
                 "original_task": {
                     "type": "string",
-                    "description": "Czego dokładnie oczekiwałeś od tego agenta?"
+                    "description": "What exactly did you expect from this agent?"
                 },
                 "received_output": {
                     "type": "string",
-                    "description": "Surowy wynik/raport, który agent Ci zwrócił."
+                    "description": "Raw result/report the agent returned."
                 },
                 "project_path": {
                     "type": "string",
-                    "description": "Opcjonalna ścieżka do pliku lub katalogu projektu, w którym zapisać ewaluację (domyślnie katalog roboczy MCP)."
+                    "description": "Optional project file or directory path where the evaluation is stored (defaults to the MCP working directory)."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -233,7 +233,7 @@ pub async fn handle_verify_and_triage(
             if result.is_finished {
                 if result
                     .input_prompt
-                    .contains("Wszystkie testy/kompilacje zakończone sukcesem.")
+                    .contains("All builds/tests completed successfully.")
                 {
                     return Ok(result.input_prompt);
                 }
@@ -316,7 +316,7 @@ pub async fn handle_generate_tests_and_scaffolding(
             );
 
             let prompt = format!(
-                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nWygeneruj test typu `{test_type}` dla pliku: {source_file_path}"
+                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nGenerate a `{test_type}` test for file: {source_file_path}"
             );
 
             let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;

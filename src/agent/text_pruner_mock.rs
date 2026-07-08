@@ -4,7 +4,7 @@ use super::traits::{AgentContext, AutonomousAgent};
 
 const MAX_OUTPUT_CHARS: usize = 100;
 const ENRICHMENT_SUFFIX: &str = "\n[MUST BE LESS THAN 100 CHARS]";
-const MUTATION_SUFFIX: &str = "\nWciąż za długie, wykonaj bardziej agresywny prunining";
+const MUTATION_SUFFIX: &str = "\nStill too long, apply more aggressive pruning";
 
 pub struct TextPrunerMock;
 

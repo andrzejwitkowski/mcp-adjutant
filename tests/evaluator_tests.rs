@@ -13,12 +13,12 @@ impl LlmClient for MockEvaluatorLlm {
         assert_eq!(request.system_prompt, EVALUATOR_SYSTEM_PROMPT);
         assert!(request.tools.definitions().is_empty());
         assert!(request.user_message.contains("Phase_1_Scout"));
-        assert!(request.user_message.contains("Znajdź wywołania invoke"));
-        assert!(request.user_message.contains("raport bez dowodów"));
+        assert!(request.user_message.contains("Find invoke call sites"));
+        assert!(request.user_message.contains("report without evidence"));
 
         Ok(LlmModelTurn {
             content: Some(
-                r#"{"score": 6, "critique": "Za dużo komentarzy w kodzie."}"#.to_string(),
+                r#"{"score": 6, "critique": "Too many comments in the code."}"#.to_string(),
             ),
             tool_calls: vec![],
         })
@@ -36,8 +36,8 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
         MockEvaluatorLlm,
         Arc::clone(&cache_manager),
         "Phase_1_Scout",
-        "Znajdź wywołania invoke w sample.rs",
-        "raport bez dowodów",
+        "Find invoke call sites in sample.rs",
+        "report without evidence",
     );
 
     let result = AgentLoopOrchestrator::run(&agent, "evaluate_agent_performance".to_string(), 1)
@@ -47,7 +47,7 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
     assert!(result.is_finished);
     assert_eq!(
         result.accumulated_data,
-        "Ewaluacja zapisana. Ocena QA: 6/10"
+        "Evaluation saved. QA score: 6/10"
     );
 
     let db_path = project_root.join(".adjutant/cache.db");
@@ -62,7 +62,7 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
 
     assert_eq!(agent_name, "Phase_1_Scout");
     assert_eq!(score, 6);
-    assert_eq!(feedback, "Za dużo komentarzy w kodzie.");
+    assert_eq!(feedback, "Too many comments in the code.");
 
     std::fs::remove_dir_all(&project_root).ok();
 }

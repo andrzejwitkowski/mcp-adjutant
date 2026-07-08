@@ -24,7 +24,7 @@ impl LlmClient for ReactiveScriptClient {
 
         if request.user_message.contains("Call sites at lines") {
             return Ok(LlmModelTurn {
-                content: Some("Raport gotowy.".to_string()),
+                content: Some("Report ready.".to_string()),
                 tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "found invoke calls" }),
@@ -33,7 +33,7 @@ impl LlmClient for ReactiveScriptClient {
         }
 
         Ok(LlmModelTurn {
-            content: Some("Szukam wywołań AST.".to_string()),
+            content: Some("Searching for AST call sites.".to_string()),
             tool_calls: vec![LlmToolCall {
                 name: "ast_calls".to_string(),
                 arguments: serde_json::json!({
@@ -68,7 +68,7 @@ impl LlmClient for ScriptClient {
 async fn scout_agent_executes_react_tools_then_finalizes() {
     let client = ScriptClient::new(vec![
         LlmModelTurn {
-            content: Some("Szeroki zwiad pliku.".to_string()),
+            content: Some("Broad file search.".to_string()),
             tool_calls: vec![LlmToolCall {
                 name: "read_file".to_string(),
                 arguments: serde_json::json!({
@@ -79,7 +79,7 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
             }],
         },
         LlmModelTurn {
-            content: Some("Raport gotowy.".to_string()),
+            content: Some("Report ready.".to_string()),
             tool_calls: vec![LlmToolCall {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
@@ -88,7 +88,7 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
     ]);
 
     let agent = ScoutAgent::new(client);
-    let result = AgentLoopOrchestrator::run(&agent, "Znajdź marker".to_string(), 5)
+    let result = AgentLoopOrchestrator::run(&agent, "Find marker".to_string(), 5)
         .await
         .expect("scout loop should complete");
 
