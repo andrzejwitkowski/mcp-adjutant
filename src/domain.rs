@@ -14,6 +14,7 @@ pub enum AgentPhase {
     Builder,
     Triage,
     Babysitter,
+    Evaluator,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,6 +67,10 @@ impl Default for AdjutantConfig {
             (
                 AgentPhase::Babysitter,
                 phase_profile("deepseek-chat", 4_096, 0.4),
+            ),
+            (
+                AgentPhase::Evaluator,
+                phase_profile("deepseek-chat", 2_048, 0.0),
             ),
         ]
         .into_iter()
@@ -137,6 +142,7 @@ mod tests {
             (AgentPhase::Builder, "deepseek-coder", 8_192, 0.2),
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
+            (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
         ];
 
         for (phase, model_name, max_tokens, temperature) in expected_models {

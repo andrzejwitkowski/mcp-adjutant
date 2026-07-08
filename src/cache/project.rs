@@ -33,6 +33,15 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY(insight_id) REFERENCES insights(id) ON DELETE CASCADE,
         FOREIGN KEY(code_node_id) REFERENCES code_nodes(id) ON DELETE CASCADE
     );",
+    "CREATE TABLE IF NOT EXISTS agent_evaluations (
+        id TEXT PRIMARY KEY,
+        agent_name TEXT NOT NULL,
+        original_task TEXT NOT NULL,
+        agent_output TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        feedback_notes TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    );",
 ];
 
 pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), String> {

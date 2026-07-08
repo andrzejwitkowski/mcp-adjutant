@@ -7,9 +7,9 @@ use tokio::sync::RwLock;
 
 use crate::domain::AdjutantConfig;
 use crate::mcp::{
-    handle_generate_tests_and_scaffolding, handle_scout_context, handle_verify_and_triage,
-    registered_mcp_tools, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME,
-    VERIFY_AND_TRIAGE_TOOL_NAME,
+    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding, handle_scout_context,
+    handle_verify_and_triage, registered_mcp_tools, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
 };
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +129,9 @@ async fn handle_tool_call(
         VERIFY_AND_TRIAGE_TOOL_NAME => handle_verify_and_triage(arguments, config_snapshot).await,
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME => {
             handle_generate_tests_and_scaffolding(arguments, config_snapshot).await
+        }
+        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => {
+            handle_evaluate_agent_performance(arguments, config_snapshot).await
         }
         other => Err(format!("unknown tool: {other}")),
     };

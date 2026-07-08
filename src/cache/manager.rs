@@ -142,6 +142,40 @@ impl ProjectCacheManager {
         Ok(())
     }
 
+    /// Persists an LLM-as-a-Judge evaluation for meta-learning and prompt optimization.
+    pub fn store_evaluation(
+        &mut self,
+        agent_name: &str,
+        original_task: &str,
+        agent_output: &str,
+        score: i32,
+        feedback_notes: &str,
+    ) -> Result<(), String> {
+        let created_at = current_unix_timestamp()?;
+        let id = hash_query_text(&format!(
+            "{agent_name}\0{original_task}\0{created_at}\0{score}"
+        ));
+
+        self.conn
+            .execute(
+                "INSERT INTO agent_evaluations
+                 (id, agent_name, original_task, agent_output, score, feedback_notes, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    id,
+                    agent_name,
+                    original_task,
+                    agent_output,
+                    score,
+                    feedback_notes,
+                    created_at
+                ],
+            )
+            .map_err(|err| format!("failed to store agent evaluation: {err}"))?;
+
+        Ok(())
+    }
+
     pub fn project_root(&self) -> &Path {
         &self.project_root
     }
