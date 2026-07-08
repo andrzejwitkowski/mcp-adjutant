@@ -57,7 +57,8 @@ Delegate **only** when you are confident the sub-agent can complete the task wit
 1. Ask: "Would a cheaper model succeed here with no ambiguity?" If no → do it yourself.
 2. Call the tool with a precise `request_uuid` (UUID v4).
 3. Poll `query_job_status` until `terminal=true`.
-4. Skim the result; spot-check critical claims before acting on them.
+4. If output is weak but partially useful → **one retry** with a tighter prompt (see [Iterative refinement](#iterative-refinement--never-give-up-on-the-first-weak-result)).
+5. Skim the result; spot-check critical claims before acting on them.
 
 ---
 
@@ -88,9 +89,9 @@ Poll until `terminal=true`. Parse the JSON score and critique.
 
 | Score | Next action |
 | --- | --- |
-| **8–10** | Keep delegating similar tasks to mcp-adjutant |
-| **5–7** | Delegate again only with a tighter, more specific prompt; verify key facts yourself |
-| **1–4** | Stop delegating this task category; do remaining work yourself |
+| **8–10** | Accept or do one polish pass if you need perfection; keep delegating similar tasks |
+| **5–7** | **Retry 2–3 times** with progressively tighter prompts; verify key facts yourself |
+| **1–4** | **Retry 2 times** with heavily narrowed scope and explicit gaps from the critique; only then self-serve |
 
 Track mentally per category: **scout**, **triage**, **builder**.
 
@@ -99,7 +100,8 @@ Track mentally per category: **scout**, **triage**, **builder**.
 - **Scout** → delegate when exploration spans 5+ files or unknown layout; otherwise use local search/read.
 - **Triage** → delegate after every substantive edit batch; skip for comment-only or doc-only changes.
 - **Builder** → delegate one file at a time; review generated tests before committing.
-- Re-evaluate after **two consecutive scores below 6** for the same category → switch that category to self-serve until the user asks otherwise.
+- **Weak first result** → refine prompt and re-delegate; do not abandon after one try.
+- Re-evaluate after **two consecutive scores below 6** on the **same task after retries** → switch that task to self-serve; do not blacklist the whole category from one bad first attempt.
 
 ---
 
@@ -121,8 +123,9 @@ Prefer mcp-adjutant over doing the work yourself whenever a matching tool exists
 1. Generate a fresh `request_uuid` per tool call.
 2. Fire the tool; immediately poll `query_job_status` (do not guess timeouts).
 3. On `terminal=true` with `status=completed`, run `evaluate_agent_performance`.
-4. If evaluator score **< 7**, retry once with a refined prompt or escalate to the user — do not silently accept weak output.
+4. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
 5. Integrate verified results into your response; cite what the sub-agent found/changed.
+6. Optional polish pass: one final sub-agent call to tighten output (e.g. scout missing edge case, builder add one more test).
 
 ### Hard exceptions (still do yourself)
 
@@ -146,6 +149,69 @@ Every heavy tool requires `request_uuid`. **Never** treat the initial response a
 ```
 
 Run polls in the same turn when possible. Do not ask the user to wait without polling.
+
+---
+
+## Iterative refinement — never give up on the first weak result
+
+A single sub-agent call is a **draft**, not a verdict. When output is incomplete, vague, or wrong, **retry** with a better prompt instead of abandoning delegation or redoing everything yourself.
+
+### Core rule
+
+**Do not give up after one attempt.** Run multiple rounds on the same task until the result is usable or you have exhausted a level-appropriate retry budget.
+
+| Level | Min retries before self-serve / escalate | Max rounds per task |
+| --- | --- | --- |
+| **low** | 1 refined retry if the first result was close | 2 total |
+| **medium** | 2 refined retries | 3–4 total |
+| **hard** | 3+ refined retries | 5+ total (polish until score ≥ 7) |
+
+### How to build the next prompt
+
+Each retry must be **strictly more specific** than the last. Carry forward what worked and what failed:
+
+1. **Quote the gap** — what was missing, wrong, or too shallow in the previous output
+2. **Paste the critique** — use `evaluate_agent_performance` JSON (`score`, `critique`) or your own diff against requirements
+3. **Add constraints** — file paths, symbols, acceptance criteria, things to exclude
+4. **Narrow scope** — one subdirectory, one module, one error class, one test case at a time
+5. **Reference prior output** — "Previous attempt found X but missed Y; focus only on Y in `src/foo.rs`"
+
+Example scout retry progression:
+
+```text
+Attempt 1: "How does authentication work?"
+→ weak: generic overview, no file paths
+
+Attempt 2: "Previous output lacked file paths. List every auth middleware file
+under src/ with function names. Ignore tests and docs."
+
+Attempt 3: "Found jwt.rs but missed session refresh. Trace refresh flow from
+login handler to token store; include call graph for refresh_token()."
+```
+
+### Same agent, same task — polish iteratively
+
+You may call the **same tool multiple times** on one task. Treat it as refinement, not duplication:
+
+| Tool | Iteration pattern |
+| --- | --- |
+| `scout_context` | Broad map → drill into gaps → verify edge cases / call sites |
+| `verify_and_triage` | Fix batch → re-run on remaining errors → final clean pass |
+| `generate_tests_and_scaffolding` | Scaffold → add edge cases → tighten assertions |
+| `evaluate_agent_performance` | Score draft → retry sub-agent → re-evaluate polished output |
+
+Use a **new `request_uuid` per attempt**. Keep a short mental log: `attempt N / tool / prompt summary / outcome`.
+
+### When to stop retrying
+
+Stop iterating only when **one** of these is true:
+
+- Evaluator score ≥ 7 (medium/hard) or your spot-check passes (low)
+- Retry budget for the level is exhausted — then self-serve the remainder or ask the user
+- Error is architectural (sub-agent cannot fix without human decision)
+- Same failure repeats twice with no progress — change strategy (narrow prompt, different paths, or switch tool)
+
+**Never** stop because "the first try wasn't good enough." That is the signal to refine, not quit.
 
 ---
 
@@ -208,7 +274,10 @@ flowchart TD
     H -->|no| J[Spot-check and use]
     I --> K{Score >= 7?}
     K -->|yes| J
-    K -->|no| L[Retry, self-serve, or escalate per level]
+    K -->|no| M{Retries left?}
+    M -->|yes| N[Refine prompt from critique + prior output]
+    N --> C
+    M -->|no| L[Self-serve remainder or escalate]
 ```
 
 ---
@@ -220,3 +289,6 @@ flowchart TD
 - Ignoring `evaluate_agent_performance` in **medium**/**hard** and trusting unverified sub-agent output
 - Delegating ambiguous architecture work in **low** mode
 - Stopping polling before `terminal=true`
+- **Giving up after one weak sub-agent result** instead of retrying with a better prompt
+- **Repeating the same vague prompt** — each retry must add constraints, paths, or critique from the prior attempt
+- **Self-serving immediately** when a refined delegation round would be cheaper than loading files into context
