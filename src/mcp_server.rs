@@ -7,9 +7,9 @@ use tokio::sync::RwLock;
 
 use crate::domain::AdjutantConfig;
 use crate::mcp::{
-    handle_generate_tests_and_scaffolding, handle_scout_context, handle_verify_and_triage,
-    registered_mcp_tools, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME,
-    VERIFY_AND_TRIAGE_TOOL_NAME,
+    handle_evaluate_agent_performance, handle_generate_tests_and_scaffolding, handle_scout_context,
+    handle_verify_and_triage, registered_mcp_tools, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
 };
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +130,9 @@ async fn handle_tool_call(
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME => {
             handle_generate_tests_and_scaffolding(arguments, config_snapshot).await
         }
+        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => {
+            handle_evaluate_agent_performance(arguments, config_snapshot).await
+        }
         other => Err(format!("unknown tool: {other}")),
     };
 
@@ -239,5 +242,34 @@ mod tests {
         let value: Value = serde_json::from_str(&payload).expect("json");
         assert_eq!(value["id"], Value::Null);
         assert_eq!(value["error"]["code"], -32700);
+    }
+
+    #[test]
+    fn list_tools_result_includes_evaluate_agent_performance_tool() {
+        let result = list_tools_result();
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+
+        assert!(names.contains(&EVALUATE_AGENT_PERFORMANCE_TOOL_NAME));
+    }
+
+    #[tokio::test]
+    async fn handle_tool_call_routes_unknown_tool_to_error() {
+        let config = Arc::new(RwLock::new(AdjutantConfig::default()));
+        let id = json!(1);
+        let params = json!({ "name": "not_a_real_tool", "arguments": {} });
+
+        let payload = handle_tool_call(&id, params, config).await;
+        let value: Value = serde_json::from_str(&payload).expect("json");
+
+        assert_eq!(value["result"]["isError"], true);
+        assert!(value["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text content")
+            .contains("unknown tool: not_a_real_tool"));
     }
 }

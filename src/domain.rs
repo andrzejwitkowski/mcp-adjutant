@@ -14,6 +14,7 @@ pub enum AgentPhase {
     Builder,
     Triage,
     Babysitter,
+    Evaluator,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,6 +68,10 @@ impl Default for AdjutantConfig {
                 AgentPhase::Babysitter,
                 phase_profile("deepseek-chat", 4_096, 0.4),
             ),
+            (
+                AgentPhase::Evaluator,
+                phase_profile("deepseek-chat", 2_048, 0.0),
+            ),
         ]
         .into_iter()
         .collect();
@@ -99,6 +104,13 @@ impl AdjutantConfig {
         self.phases
             .get(&phase)
             .ok_or_else(|| format!("missing profile for phase {phase:?}"))
+    }
+
+    /// Fills in phase profiles present in defaults but missing from a persisted config.
+    pub fn merge_missing_from_defaults(&mut self) {
+        for (phase, profile) in AdjutantConfig::default().phases {
+            self.phases.entry(phase).or_insert(profile);
+        }
     }
 }
 
@@ -137,6 +149,7 @@ mod tests {
             (AgentPhase::Builder, "deepseek-coder", 8_192, 0.2),
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
+            (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
         ];
 
         for (phase, model_name, max_tokens, temperature) in expected_models {
@@ -151,5 +164,84 @@ mod tests {
 
         assert_eq!(config.server_port, 3_000);
         assert!(!config.storage_path.is_empty());
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_adds_new_phases() {
+        let mut legacy = AdjutantConfig {
+            phases: HashMap::from([
+                (
+                    AgentPhase::Scout,
+                    phase_profile("deepseek-chat", 4_096, 0.3),
+                ),
+                (
+                    AgentPhase::Builder,
+                    phase_profile("deepseek-coder", 8_192, 0.2),
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(legacy.try_get_profile(AgentPhase::Evaluator).is_err());
+
+        legacy.merge_missing_from_defaults();
+
+        let evaluator = legacy
+            .try_get_profile(AgentPhase::Evaluator)
+            .expect("evaluator profile");
+        assert_eq!(evaluator.model_name, "deepseek-chat");
+        assert_eq!(evaluator.max_tokens, 2_048);
+        assert!((evaluator.temperature - 0.0).abs() < f32::EPSILON);
+        assert_eq!(
+            legacy.get_profile(&AgentPhase::Builder).model_name,
+            "deepseek-coder"
+        );
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_does_not_overwrite_existing_profile() {
+        let mut config = AdjutantConfig {
+            phases: HashMap::from([(
+                AgentPhase::Evaluator,
+                phase_profile("custom-evaluator-model", 512, 0.9),
+            )]),
+            ..Default::default()
+        };
+
+        config.merge_missing_from_defaults();
+
+        let evaluator = config.get_profile(&AgentPhase::Evaluator);
+        assert_eq!(evaluator.model_name, "custom-evaluator-model");
+        assert_eq!(evaluator.max_tokens, 512);
+        assert!((evaluator.temperature - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_is_idempotent() {
+        let mut config = AdjutantConfig {
+            phases: HashMap::from([(
+                AgentPhase::Scout,
+                phase_profile("deepseek-chat", 4_096, 0.3),
+            )]),
+            ..Default::default()
+        };
+
+        config.merge_missing_from_defaults();
+        let after_first_merge = config.clone();
+
+        config.merge_missing_from_defaults();
+
+        assert_eq!(config, after_first_merge);
+        assert_eq!(config.phases.len(), AdjutantConfig::default().phases.len());
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_on_fully_populated_config_is_a_no_op() {
+        let mut config = AdjutantConfig::default();
+        let original = config.clone();
+
+        config.merge_missing_from_defaults();
+
+        assert_eq!(config, original);
     }
 }

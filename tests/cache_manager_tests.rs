@@ -4,6 +4,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use rusqlite::{params, Connection};
+
 mod common;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
@@ -294,6 +296,156 @@ fn git_tracked_dependency_change_invalidates_cache() {
         cached.is_none(),
         "tracked file change should invalidate cache"
     );
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn store_evaluation_allows_duplicate_scores_in_same_second() {
+    let project_root = unique_temp_project("eval-dup");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+
+    cache
+        .store_evaluation(
+            "Phase_1_Scout",
+            "same task",
+            "first output",
+            6,
+            "first critique",
+        )
+        .expect("first evaluation");
+    cache
+        .store_evaluation(
+            "Phase_1_Scout",
+            "same task",
+            "second output",
+            6,
+            "second critique",
+        )
+        .expect("second evaluation with same score");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn store_evaluation_persists_all_columns_correctly() {
+    let project_root = unique_temp_project("eval-columns");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+    cache
+        .store_evaluation(
+            "Phase_3_Triage",
+            "Sprawdź kompilację",
+            "Kompilacja zakończona sukcesem",
+            9,
+            "Bardzo dokładna weryfikacja",
+        )
+        .expect("store evaluation");
+
+    let db_path = project_root.join(".adjutant/cache.db");
+    let conn = Connection::open(&db_path).expect("open cache.db");
+    let (id, agent_name, original_task, agent_output, score, feedback_notes, created_at): (
+        String,
+        String,
+        String,
+        String,
+        i32,
+        String,
+        i64,
+    ) = conn
+        .query_row(
+            "SELECT id, agent_name, original_task, agent_output, score, feedback_notes, created_at
+             FROM agent_evaluations WHERE agent_name = ?1",
+            params!["Phase_3_Triage"],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .expect("evaluation row");
+
+    assert_eq!(id.len(), 64, "id should be a sha256 hex digest");
+    assert_eq!(agent_name, "Phase_3_Triage");
+    assert_eq!(original_task, "Sprawdź kompilację");
+    assert_eq!(agent_output, "Kompilacja zakończona sukcesem");
+    assert_eq!(score, 9);
+    assert_eq!(feedback_notes, "Bardzo dokładna weryfikacja");
+    assert!(created_at > 0, "created_at should be a positive timestamp");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn store_evaluation_creates_distinct_rows_for_sequential_calls() {
+    let project_root = unique_temp_project("eval-sequential");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+
+    cache
+        .store_evaluation("Phase_1_Scout", "task a", "output a", 4, "critique a")
+        .expect("first evaluation");
+    cache
+        .store_evaluation("Phase_2_Builder", "task b", "output b", 8, "critique b")
+        .expect("second evaluation");
+
+    let db_path = project_root.join(".adjutant/cache.db");
+    let conn = Connection::open(&db_path).expect("open cache.db");
+
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agent_evaluations", [], |row| {
+            row.get(0)
+        })
+        .expect("count evaluations");
+    assert_eq!(total, 2);
+
+    let distinct_ids: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT id) FROM agent_evaluations",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count distinct ids");
+    assert_eq!(distinct_ids, 2, "each evaluation should have a unique id");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn agent_evaluations_table_is_created_by_project_cache_migrations() {
+    let project_root = unique_temp_project("eval-migration");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    // Opening the cache manager alone (without ever storing an evaluation) must run
+    // the migration that creates the agent_evaluations table.
+    open_cache_manager(&project_root);
+
+    let db_path = project_root.join(".adjutant/cache.db");
+    let conn = Connection::open(&db_path).expect("open cache.db");
+
+    let table_name: String = conn
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_evaluations'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("agent_evaluations table should exist");
+
+    assert_eq!(table_name, "agent_evaluations");
 
     fs::remove_dir_all(&project_root).ok();
 }

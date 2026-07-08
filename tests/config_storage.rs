@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mcp_adjutant::config_server::load_or_default;
 use mcp_adjutant::{AdjutantConfig, AdjutantConfigError, AgentPhase, Provider};
 
 fn unique_temp_path(test_name: &str) -> PathBuf {
@@ -25,6 +26,68 @@ fn default_config_roundtrip_preserves_all_fields() {
 
     let loaded = AdjutantConfig::load_from_file(&config_path).expect("load saved config");
     assert_eq!(original, loaded);
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn load_or_default_merges_missing_phases_from_defaults() {
+    let temp_dir = unique_temp_path("legacy-config");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let config_path = temp_dir.join("legacy.json");
+
+    let legacy_json = r#"{
+        "phases": {
+            "scout": {
+                "provider": "deepseek",
+                "api_key": null,
+                "base_url": "https://api.deepseek.com/v1",
+                "model_name": "deepseek-chat",
+                "max_tokens": 4096,
+                "temperature": 0.3
+            }
+        },
+        "server_port": 3000,
+        "storage_path": "/tmp/legacy.json"
+    }"#;
+    std::fs::write(&config_path, legacy_json).expect("write legacy config");
+
+    let loaded = load_or_default(&config_path);
+    loaded
+        .try_get_profile(AgentPhase::Evaluator)
+        .expect("evaluator profile merged from defaults");
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn load_or_default_preserves_custom_evaluator_profile_when_present() {
+    let temp_dir = unique_temp_path("custom-evaluator-config");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let config_path = temp_dir.join("custom.json");
+
+    let mut config = AdjutantConfig::default();
+    config.phases.insert(
+        AgentPhase::Evaluator,
+        mcp_adjutant::PhaseProfile {
+            provider: Provider::OpenAI,
+            api_key: Some("sk-evaluator".to_string()),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_name: "gpt-4o-mini".to_string(),
+            max_tokens: 1_024,
+            temperature: 0.1,
+        },
+    );
+    config.save_to_file(&config_path).expect("save config");
+
+    let loaded = load_or_default(&config_path);
+    let evaluator = loaded
+        .try_get_profile(AgentPhase::Evaluator)
+        .expect("evaluator profile");
+
+    assert_eq!(evaluator.model_name, "gpt-4o-mini");
+    assert_eq!(evaluator.provider, Provider::OpenAI);
+    assert_eq!(evaluator.max_tokens, 1_024);
 
     std::fs::remove_dir_all(&temp_dir).ok();
 }
