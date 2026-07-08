@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -7,7 +9,8 @@ use serde_json::{json, Value};
 
 pub const QUERY_JOB_STATUS_TOOL_NAME: &str = "query_job_status";
 
-const STALL_AFTER: Duration = Duration::from_secs(90);
+const STALL_HINT_AFTER: Duration = Duration::from_secs(90);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +31,45 @@ struct JobRecord {
     created_at: Instant,
     updated_at: Instant,
     last_heartbeat: Instant,
+}
+
+struct HeartbeatHandle {
+    stop: Arc<AtomicBool>,
+    thread: Option<ThreadJoinHandle<()>>,
+}
+
+impl HeartbeatHandle {
+    fn start(registry: JobRegistry, request_uuid: String) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            let mut elapsed = Duration::ZERO;
+            while !stop_flag.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(1));
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                elapsed += Duration::from_secs(1);
+                if elapsed >= HEARTBEAT_INTERVAL {
+                    elapsed = Duration::ZERO;
+                    registry.heartbeat(&request_uuid);
+                }
+            }
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for HeartbeatHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -67,19 +109,19 @@ impl JobRegistry {
     }
 
     pub fn set_running(&self, request_uuid: &str) {
-        self.mutate(request_uuid, |job| {
+        self.mutate_if_active(request_uuid, |job| {
             job.status = JobStatus::Running;
         });
     }
 
     pub fn heartbeat(&self, request_uuid: &str) {
-        self.mutate(request_uuid, |job| {
+        self.mutate_if_active(request_uuid, |job| {
             job.last_heartbeat = Instant::now();
         });
     }
 
     pub fn complete(&self, request_uuid: &str, result: String) {
-        self.mutate(request_uuid, |job| {
+        self.mutate_if_active(request_uuid, |job| {
             job.status = JobStatus::Completed;
             job.result = Some(result);
             job.error = None;
@@ -87,7 +129,7 @@ impl JobRegistry {
     }
 
     pub fn fail(&self, request_uuid: &str, error: String) {
-        self.mutate(request_uuid, |job| {
+        self.mutate_if_active(request_uuid, |job| {
             job.status = JobStatus::Failed;
             job.error = Some(error);
             job.result = None;
@@ -95,15 +137,13 @@ impl JobRegistry {
     }
 
     pub fn query(&self, request_uuid: &str) -> Result<Value, String> {
-        let mut jobs = self.inner.lock().expect("job registry lock");
-        let Some(job) = jobs.get_mut(request_uuid) else {
+        let jobs = self.inner.lock().expect("job registry lock");
+        let Some(job) = jobs.get(request_uuid) else {
             return Err(format!("unknown request_uuid: {request_uuid}"));
         };
 
-        if job.status == JobStatus::Running && job.last_heartbeat.elapsed() > STALL_AFTER {
-            job.status = JobStatus::Stalled;
-            job.updated_at = Instant::now();
-        }
+        let possibly_stalled = job.status == JobStatus::Running
+            && job.last_heartbeat.elapsed() > STALL_HINT_AFTER;
 
         Ok(json!({
             "request_uuid": request_uuid,
@@ -113,18 +153,19 @@ impl JobRegistry {
             "updated_at_secs": elapsed_since_unix(job.updated_at),
             "elapsed_secs": job.created_at.elapsed().as_secs(),
             "seconds_since_heartbeat": job.last_heartbeat.elapsed().as_secs(),
+            "possibly_stalled": possibly_stalled,
             "result": job.result,
             "error": job.error,
-            "terminal": matches!(
-                job.status,
-                JobStatus::Completed | JobStatus::Failed | JobStatus::Stalled
-            ),
+            "terminal": matches!(job.status, JobStatus::Completed | JobStatus::Failed),
         }))
     }
 
-    fn mutate(&self, request_uuid: &str, update: impl FnOnce(&mut JobRecord)) {
+    fn mutate_if_active(&self, request_uuid: &str, update: impl FnOnce(&mut JobRecord)) {
         let mut jobs = self.inner.lock().expect("job registry lock");
         if let Some(job) = jobs.get_mut(request_uuid) {
+            if !matches!(job.status, JobStatus::Queued | JobStatus::Running) {
+                return;
+            }
             update(job);
             job.updated_at = Instant::now();
         }
@@ -159,7 +200,7 @@ pub fn request_uuid_schema_property() -> Value {
     json!({
         "request_uuid": {
             "type": "string",
-            "description": "Caller-generated UUID for this request. The tool returns immediately; poll query_job_status with the same UUID until status is terminal (completed, failed, or stalled)."
+            "description": "Caller-generated UUID for this request. The tool returns immediately; poll query_job_status with the same UUID until terminal=true."
         }
     })
 }
@@ -179,7 +220,7 @@ pub fn accepted_job_response(request_uuid: &str, tool_name: &str) -> String {
 pub fn query_job_status_schema() -> Value {
     json!({
         "name": QUERY_JOB_STATUS_TOOL_NAME,
-        "description": "Poll async adjutant job status by request_uuid. Do not guess timeouts — call this until terminal=true.",
+        "description": "Poll async adjutant job status by request_uuid. Do not guess timeouts — call this until terminal=true. possibly_stalled=true is advisory only; keep polling.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -199,22 +240,23 @@ where
     Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
 {
     registry.set_running(&request_uuid);
-    let heartbeat_registry = registry.clone();
-    let heartbeat_uuid = request_uuid.clone();
-    let heartbeat = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            heartbeat_registry.heartbeat(&heartbeat_uuid);
+    registry.heartbeat(&request_uuid);
+    let _heartbeat = HeartbeatHandle::start(registry.clone(), request_uuid.clone());
+
+    let work_handle = tokio::spawn(work());
+    let join_result = work_handle.await;
+
+    match join_result {
+        Ok(Ok(result)) => registry.complete(&request_uuid, result),
+        Ok(Err(error)) => registry.fail(&request_uuid, error),
+        Err(join_error) if join_error.is_panic() => {
+            registry.fail(&request_uuid, "Job panicked during execution".to_string());
         }
-    });
-
-    match work().await {
-        Ok(result) => registry.complete(&request_uuid, result),
-        Err(error) => registry.fail(&request_uuid, error),
+        Err(join_error) => registry.fail(
+            &request_uuid,
+            format!("Job task cancelled: {join_error}"),
+        ),
     }
-
-    heartbeat.abort();
 }
 
 #[cfg(test)]
@@ -232,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn query_marks_stalled_without_heartbeat() {
+    fn query_reports_possibly_stalled_without_mutating_status() {
         let registry = JobRegistry::new();
         registry
             .register("job-1", "scout_context")
@@ -241,12 +283,13 @@ mod tests {
             let mut jobs = registry.inner.lock().expect("lock");
             let job = jobs.get_mut("job-1").expect("job");
             job.status = JobStatus::Running;
-            job.last_heartbeat = Instant::now() - STALL_AFTER - Duration::from_secs(1);
+            job.last_heartbeat = Instant::now() - STALL_HINT_AFTER - Duration::from_secs(1);
         }
 
         let status = registry.query("job-1").expect("query");
-        assert_eq!(status["status"], "stalled");
-        assert_eq!(status["terminal"], true);
+        assert_eq!(status["status"], "running");
+        assert_eq!(status["possibly_stalled"], true);
+        assert_eq!(status["terminal"], false);
     }
 
     #[test]
@@ -261,5 +304,39 @@ mod tests {
         assert_eq!(status["status"], "completed");
         assert_eq!(status["result"], "done");
         assert_eq!(status["terminal"], true);
+    }
+
+    #[test]
+    fn complete_does_not_overwrite_terminal_failure() {
+        let registry = JobRegistry::new();
+        registry
+            .register("job-1", "scout_context")
+            .expect("register");
+        registry.fail("job-1", "first failure".to_string());
+        registry.complete("job-1", "late success".to_string());
+
+        let status = registry.query("job-1").expect("query");
+        assert_eq!(status["status"], "failed");
+        assert_eq!(status["error"], "first failure");
+        assert_eq!(status["result"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn run_tracked_job_marks_failed_on_panic() {
+        let registry = JobRegistry::new();
+        registry.register("job-1", "scout_context").expect("register");
+
+        run_tracked_job(registry.clone(), "job-1".to_string(), || async {
+            panic!("boom");
+        })
+        .await;
+
+        let status = registry.query("job-1").expect("query");
+        assert_eq!(status["status"], "failed");
+        assert_eq!(status["terminal"], true);
+        assert!(status["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("panicked"));
     }
 }
