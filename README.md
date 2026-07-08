@@ -30,6 +30,8 @@ Instructs premium agents when and how to delegate work to mcp-adjutant sub-agent
 
 Set the level via user instruction, or `MCP_ADJUTANT_DELEGATION_LEVEL=low|medium|hard`.
 
+The skill requires **iterative refinement**: if a sub-agent result is weak, retry with better prompts built from the prior attempt and its critique — do not give up after one try. Same tool can be called multiple times to polish one task.
+
 Copy `.cursor/skills/` into your project (or install globally under `~/.cursor/skills/`) so Cursor auto-discovers the skill once mcp-adjutant is connected.
 
 ## Prerequisites
