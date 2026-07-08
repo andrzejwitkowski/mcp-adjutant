@@ -98,7 +98,10 @@ pub fn resolve_config_path(config: &AdjutantConfig) -> PathBuf {
 
 pub fn load_or_default(path: &Path) -> AdjutantConfig {
     match AdjutantConfig::load_from_file(path) {
-        Ok(config) => config,
+        Ok(mut config) => {
+            config.merge_missing_from_defaults();
+            config
+        }
         Err(AdjutantConfigError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
             let config = AdjutantConfig::default();
             let _ = config.save_to_file(path);

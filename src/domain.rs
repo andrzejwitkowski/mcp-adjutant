@@ -14,6 +14,7 @@ pub enum AgentPhase {
     Builder,
     Triage,
     Babysitter,
+    Evaluator,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,6 +68,10 @@ impl Default for AdjutantConfig {
                 AgentPhase::Babysitter,
                 phase_profile("deepseek-chat", 4_096, 0.4),
             ),
+            (
+                AgentPhase::Evaluator,
+                phase_profile("deepseek-chat", 2_048, 0.0),
+            ),
         ]
         .into_iter()
         .collect();
@@ -99,6 +104,13 @@ impl AdjutantConfig {
         self.phases
             .get(&phase)
             .ok_or_else(|| format!("missing profile for phase {phase:?}"))
+    }
+
+    /// Fills in phase profiles present in defaults but missing from a persisted config.
+    pub fn merge_missing_from_defaults(&mut self) {
+        for (phase, profile) in AdjutantConfig::default().phases {
+            self.phases.entry(phase).or_insert(profile);
+        }
     }
 }
 
@@ -137,6 +149,7 @@ mod tests {
             (AgentPhase::Builder, "deepseek-coder", 8_192, 0.2),
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
+            (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
         ];
 
         for (phase, model_name, max_tokens, temperature) in expected_models {
@@ -151,5 +164,37 @@ mod tests {
 
         assert_eq!(config.server_port, 3_000);
         assert!(!config.storage_path.is_empty());
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_adds_new_phases() {
+        let mut legacy = AdjutantConfig {
+            phases: HashMap::from([
+                (
+                    AgentPhase::Scout,
+                    phase_profile("deepseek-chat", 4_096, 0.3),
+                ),
+                (
+                    AgentPhase::Builder,
+                    phase_profile("deepseek-coder", 8_192, 0.2),
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        assert!(legacy.try_get_profile(AgentPhase::Evaluator).is_err());
+
+        legacy.merge_missing_from_defaults();
+
+        let evaluator = legacy
+            .try_get_profile(AgentPhase::Evaluator)
+            .expect("evaluator profile");
+        assert_eq!(evaluator.model_name, "deepseek-chat");
+        assert_eq!(evaluator.max_tokens, 2_048);
+        assert!((evaluator.temperature - 0.0).abs() < f32::EPSILON);
+        assert_eq!(
+            legacy.get_profile(&AgentPhase::Builder).model_name,
+            "deepseek-coder"
+        );
     }
 }

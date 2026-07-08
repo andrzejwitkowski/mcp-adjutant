@@ -4,21 +4,26 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, AgentLoopOrchestrator, ScoutAgent, SystemBuildRunner, TriageAgent,
-    TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent, SystemBuildRunner,
+    TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
-use crate::llm::{create_builder_llm_client, create_scout_llm_client, create_triage_llm_client};
+use crate::llm::{
+    create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
+    create_triage_llm_client,
+};
 use crate::tools::LlmBuildDiscoverer;
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
 pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_scaffolding";
+pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_MAX_ITERATIONS: u32 = 5;
+const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 
 pub fn scout_context_schema() -> Value {
     json!({
@@ -72,11 +77,41 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
     })
 }
 
+pub fn evaluate_agent_performance_schema() -> Value {
+    json!({
+        "name": EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+        "description": "Wywołaj to narzędzie, aby ocenić jakość raportu lub kodu dostarczonego przez innego agenta (np. Scouta lub Buildera). Pozwala to systemowi uczyć się na błędach i optymalizować przyszłe wywołania.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_agent": {
+                    "type": "string",
+                    "description": "Nazwa agenta, którego oceniasz (np. 'Phase_1_Scout')."
+                },
+                "original_task": {
+                    "type": "string",
+                    "description": "Czego dokładnie oczekiwałeś od tego agenta?"
+                },
+                "received_output": {
+                    "type": "string",
+                    "description": "Surowy wynik/raport, który agent Ci zwrócił."
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": "Opcjonalna ścieżka do pliku lub katalogu projektu, w którym zapisać ewaluację (domyślnie katalog roboczy MCP)."
+                }
+            },
+            "required": ["target_agent", "original_task", "received_output"]
+        }
+    })
+}
+
 pub fn registered_mcp_tools() -> Vec<Value> {
     vec![
         scout_context_schema(),
         verify_and_triage_schema(),
         generate_tests_and_scaffolding_schema(),
+        evaluate_agent_performance_schema(),
     ]
 }
 
@@ -229,5 +264,68 @@ pub async fn handle_generate_tests_and_scaffolding(
     Ok(format!(
         "Builder report (finished={}, iterations={}):\n{}\n{}",
         result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
+    ))
+}
+
+pub async fn handle_evaluate_agent_performance(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+) -> Result<String, String> {
+    let target_agent = args
+        .get("target_agent")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "target_agent is required".to_string())?
+        .to_string();
+
+    let original_task = args
+        .get("original_task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "original_task is required".to_string())?
+        .to_string();
+
+    let received_output = args
+        .get("received_output")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "received_output is required".to_string())?
+        .to_string();
+
+    let cache_start = args
+        .get("project_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
+    let client = create_evaluator_llm_client(&config)?;
+    let agent = EvaluatorAgent::new(
+        client,
+        cache_manager,
+        target_agent,
+        original_task,
+        received_output,
+    );
+
+    let result = AgentLoopOrchestrator::run(
+        &agent,
+        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME.to_string(),
+        EVALUATOR_MAX_ITERATIONS,
+    )
+    .await?;
+
+    if result.is_finished {
+        return Ok(result.accumulated_data);
+    }
+
+    Ok(format!(
+        "Evaluator report (finished={}, iterations={}):\n{}",
+        result.is_finished, result.iterations, result.accumulated_data
     ))
 }

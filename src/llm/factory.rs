@@ -47,6 +47,10 @@ pub fn create_builder_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLl
     create_llm_client_for_phase(config, AgentPhase::Builder)
 }
 
+pub fn create_evaluator_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Evaluator)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
