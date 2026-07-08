@@ -16,6 +16,22 @@ mcp-adjutant exposes five MCP tools. Four run long-lived agent jobs asynchronous
 
 Heavy tools return immediately with a `request_uuid`. Your client (or you) must call `query_job_status` with that UUID until the job finishes. Do not guess timeouts — keep polling until `terminal=true`.
 
+## Agent skill (delegation levels)
+
+Bundled Cursor/agent skill: [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](.cursor/skills/mcp-adjutant-delegation/SKILL.md)
+
+Instructs premium agents when and how to delegate work to mcp-adjutant sub-agents. Three usage levels:
+
+| Level | Behavior |
+| --- | --- |
+| **low** | Delegate only when clearly cost-effective (broad scout, mechanical triage, boilerplate tests) |
+| **medium** (default) | Start selective; use `evaluate_agent_performance` to adapt — delegate more when scores are high, self-serve when low |
+| **hard** | Always delegate matching work (scout before context-heavy tasks, triage after edits, evaluate every result) |
+
+Set the level via user instruction, or `MCP_ADJUTANT_DELEGATION_LEVEL=low|medium|hard`.
+
+Copy `.cursor/skills/` into your project (or install globally under `~/.cursor/skills/`) so Cursor auto-discovers the skill once mcp-adjutant is connected.
+
 ## Prerequisites
 
 | Requirement | Notes |
