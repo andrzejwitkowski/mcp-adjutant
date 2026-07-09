@@ -13,7 +13,10 @@ pub use builder::{
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
 pub use orchestrator::AgentLoopOrchestrator;
-pub use scout::{scout_tool_set, ScoutAgent, ScoutModelTurn, ScoutToolCall, SCOUT_SYSTEM_PROMPT};
+pub use scout::{
+    run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
+    ScoutToolCall, SCOUT_SYSTEM_PROMPT,
+};
 pub use text_pruner_mock::TextPrunerMock;
 pub use traits::{AgentContext, AutonomousAgent};
 pub use triage::{

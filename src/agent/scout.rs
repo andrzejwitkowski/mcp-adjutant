@@ -1,10 +1,14 @@
+mod cache_flow;
 mod tools;
 
 use async_trait::async_trait;
+use serde_json::Value;
 
 use super::traits::{AgentContext, AutonomousAgent};
+use crate::cache::resolve_workspace_path;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall, LlmToolSet};
 
+pub use cache_flow::{run_scout_with_cache, ScoutCacheOutcome};
 pub use tools::scout_tool_set;
 
 pub const SCOUT_SYSTEM_PROMPT: &str = r#"You are an autonomous code scout (PHASE_1_SCOUT). Your goal is to gather and condense code context.
@@ -17,6 +21,8 @@ Available tools (tool calls):
 - finalize — end scouting with a condensed markdown report
 
 Selection rule: If you do not know the language or repo layout, use detect_language. If you do not know where code lives, use ripgrep. When you know the files, use ast_calls. When you have the essence, call finalize.
+
+Efficiency: Finalize within 6 tool turns once you can answer. Do not repeat the same tool with identical arguments.
 
 Reply with a short rationale (Thought), then call exactly one tool."#;
 
@@ -42,6 +48,19 @@ impl<C: LlmClient> ScoutAgent<C> {
 
     pub fn tools(&self) -> &LlmToolSet {
         &self.tools
+    }
+
+    fn record_touched_file(context: &mut AgentContext, tool_name: &str, args: &Value) {
+        let Some(path) = (match tool_name {
+            "read_file" | "ast_calls" => args.get("file").and_then(Value::as_str),
+            "detect_language" if args.get("scope").and_then(Value::as_str) == Some("file") => {
+                args.get("path").and_then(Value::as_str)
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        context.touched_files.push(resolve_workspace_path(path));
     }
 
     fn build_user_message(context: &AgentContext) -> String {
@@ -91,6 +110,7 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
         };
 
         let invocation = self.tools.invoke(&tool_call.name, &tool_call.arguments)?;
+        Self::record_touched_file(context, &tool_call.name, &tool_call.arguments);
 
         let thought = model_turn.content.unwrap_or_default();
         let step = format!(
@@ -102,6 +122,7 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
         if invocation.is_terminal {
             context.accumulated_data = invocation.output;
             context.is_finished = true;
+            context.agent_completed = true;
         }
 
         Ok(())

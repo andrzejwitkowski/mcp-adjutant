@@ -58,17 +58,6 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Resul
     Ok(project_root.join(candidate))
 }
 
-fn format_scout_observation(scout_ctx: &AgentContext) -> String {
-    if scout_ctx.is_finished {
-        scout_ctx.accumulated_data.clone()
-    } else {
-        format!(
-            "Scout report (partial, finished={}, iterations={}):\n{}",
-            scout_ctx.is_finished, scout_ctx.iterations, scout_ctx.accumulated_data
-        )
-    }
-}
-
 pub struct BuilderAgent<C, SC, TC, B, D>
 where
     SC: LlmClient,
@@ -175,7 +164,14 @@ impl<
             AgentLoopOrchestrator::run(&self.scout_agent, query, BUILDER_SCOUT_MAX_ITERATIONS)
                 .await?;
 
-        Ok(format_scout_observation(&scout_ctx))
+        Ok(if scout_ctx.is_finished {
+            scout_ctx.accumulated_data
+        } else {
+            format!(
+                "Scout report (finished={}, iterations={}):\n{}",
+                scout_ctx.is_finished, scout_ctx.iterations, scout_ctx.accumulated_data
+            )
+        })
     }
 }
 
