@@ -66,7 +66,11 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
             Ok(request) => request,
             Err(parse_err) => {
                 let response = err(&Value::Null, -32700, format!("Parse error: {parse_err}"));
-                write_message(&mut stdout, &response, framing.unwrap_or(StdioFraming::Ndjson))?;
+                write_message(
+                    &mut stdout,
+                    &response,
+                    framing.unwrap_or(StdioFraming::Ndjson),
+                )?;
                 continue;
             }
         };

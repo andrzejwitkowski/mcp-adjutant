@@ -175,7 +175,7 @@ fn extract_green_test_path(log: &str) -> Option<PathBuf> {
         .filter_map(|line| line.split(" for ").nth(1))
         .map(str::trim)
         .map(PathBuf::from)
-        .last()
+        .next_back()
 }
 
 fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
@@ -200,9 +200,7 @@ fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Err(format!(
-        "cargo test --test {stem} failed:\n{combined}"
-    ))
+    Err(format!("cargo test --test {stem} failed:\n{combined}"))
 }
 
 pub async fn handle_scout_context(

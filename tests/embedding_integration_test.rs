@@ -1,7 +1,5 @@
 mod common;
 
-use std::path::Path;
-
 use common::embedding_fixture_paths;
 use mcp_adjutant::cache::embedding::LocalEmbeddingEngine;
 
@@ -15,7 +13,12 @@ fn embedding_engine_loads_fixtures() {
     let engine = LocalEmbeddingEngine::new(&model_path, &tokenizer_path)
         .expect("failed to load embedding engine");
 
-    let embedding = engine.generate("hello world").expect("failed to generate embedding");
+    let embedding = engine
+        .generate("hello world")
+        .expect("failed to generate embedding");
 
-    assert_eq!(embedding.len(), mcp_adjutant::cache::embedding::EMBEDDING_DIM);
+    assert_eq!(
+        embedding.len(),
+        mcp_adjutant::cache::embedding::EMBEDDING_DIM
+    );
 }

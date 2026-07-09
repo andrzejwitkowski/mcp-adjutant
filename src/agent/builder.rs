@@ -45,8 +45,14 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Resul
         return Err("test output path must stay under project root".to_string());
     }
 
-    if candidate.file_name().is_some_and(|name| name == "cache_manager_tests.rs") {
-        return Err("refusing to overwrite tests/cache_manager_tests.rs — write a new file under tests/".to_string());
+    if candidate
+        .file_name()
+        .is_some_and(|name| name == "cache_manager_tests.rs")
+    {
+        return Err(
+            "refusing to overwrite tests/cache_manager_tests.rs — write a new file under tests/"
+                .to_string(),
+        );
     }
 
     Ok(project_root.join(candidate))
@@ -252,8 +258,7 @@ impl<
                         .push_str(&format!("Observation:\n{output}\n"));
                 }
                 "write_test_suite" => {
-                    let (path, tdd_phase) =
-                        parse_write_test_suite_arguments(&tool_call.arguments)?;
+                    let (path, tdd_phase) = parse_write_test_suite_arguments(&tool_call.arguments)?;
                     let content = match extract_test_content(
                         model_turn.content.as_deref(),
                         &tool_call.arguments,

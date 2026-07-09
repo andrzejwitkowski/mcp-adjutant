@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
 use crate::cache::{mcp_workspace_root, resolve_workspace_path};
+use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
 use crate::tools::{
     detect_file_language, detect_project_languages, read_file_range, run_ripgrep, AstUsageFinder,
 };
@@ -214,13 +214,15 @@ fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
 }
 
 fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
-    let value = arguments.get(key).ok_or_else(|| {
-        format!("tool argument '{key}' must be a positive integer")
-    })?;
+    let value = arguments
+        .get(key)
+        .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))?;
     let n = match value {
-        Value::Number(num) => num
-            .as_u64()
-            .or_else(|| num.as_f64().filter(|f| f.is_finite() && *f >= 1.0).map(|f| f as u64)),
+        Value::Number(num) => num.as_u64().or_else(|| {
+            num.as_f64()
+                .filter(|f| f.is_finite() && *f >= 1.0)
+                .map(|f| f as u64)
+        }),
         Value::String(text) => text.parse::<u64>().ok(),
         _ => None,
     }
