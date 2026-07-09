@@ -1,3 +1,6 @@
+//! Shared helpers for integration tests; not every test binary uses every helper.
+#![allow(dead_code)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
