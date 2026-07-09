@@ -14,6 +14,8 @@ impl AgentLoopOrchestrator {
             iterations: 0,
             max_iterations: max_iters,
             is_finished: false,
+            agent_completed: false,
+            touched_files: Vec::new(),
         };
 
         agent.enrich_context(&mut context).await?;

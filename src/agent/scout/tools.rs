@@ -88,12 +88,9 @@ impl LlmTool for RipgrepTool {
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let pattern = required_str(arguments, "pattern")?;
-        let root = arguments
-            .get("root")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| mcp_workspace_root().to_string_lossy().into_owned());
-        run_ripgrep(&pattern, &resolve_workspace_path(&root))
+        // ponytail: always search MCP workspace — LLM-provided roots have caused permission errors
+        let root = mcp_workspace_root();
+        run_ripgrep(&pattern, &root)
     }
 }
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 
 #[derive(Debug, Clone)]
@@ -7,6 +9,8 @@ pub struct AgentContext {
     pub iterations: u32,
     pub max_iterations: u32,
     pub is_finished: bool,
+    pub agent_completed: bool,
+    pub touched_files: Vec<PathBuf>,
 }
 
 #[async_trait]
