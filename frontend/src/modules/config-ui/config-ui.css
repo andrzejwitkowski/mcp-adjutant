@@ -112,3 +112,263 @@
 .config-app__message.is-ready {
   color: #81c995;
 }
+
+.config-nav {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.config-nav a {
+  color: #9aa0a6;
+  text-decoration: none;
+  font-size: 0.9rem;
+  padding: 0.25rem 0;
+  border-bottom: 2px solid transparent;
+}
+
+.config-nav a:hover,
+.config-nav a.is-active {
+  color: #e8eaed;
+  border-bottom-color: #5b8def;
+}
+
+.config-app__header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.config-app__quick-links {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.config-app__quick-links a {
+  color: #5b8def;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.config-app__quick-links a:hover {
+  text-decoration: underline;
+}
+
+.config-btn {
+  padding: 0.5rem 0.875rem;
+  border: 1px solid #2d3139;
+  border-radius: 0.375rem;
+  background: #181b22;
+  color: #e8eaed;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.config-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.config-app__empty,
+.config-app__meta,
+.config-app__footer-note {
+  color: #9aa0a6;
+  margin: 1rem 0 0;
+}
+
+.config-app__footer-note {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+}
+
+.stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.stat-card {
+  border: 1px solid #2d3139;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: #181b22;
+  min-width: 6rem;
+}
+
+.stat-card__label {
+  display: block;
+  font-size: 0.75rem;
+  color: #9aa0a6;
+}
+
+.stat-card__value {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
+.eval-list,
+.insight-list {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.eval-card,
+.insight-card {
+  border: 1px solid #2d3139;
+  border-radius: 0.5rem;
+  background: #181b22;
+  overflow: hidden;
+}
+
+.eval-card__summary,
+.insight-card__summary {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.eval-card__agent {
+  font-weight: 600;
+  flex: 1;
+}
+
+.eval-card__time {
+  color: #9aa0a6;
+  font-size: 0.8rem;
+}
+
+.eval-card__detail {
+  padding: 0 1rem 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.eval-card__detail h3 {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+
+.eval-card__detail pre,
+.insight-card__content {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  background: #0f1115;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}
+
+.score-badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.score-badge.is-high {
+  background: #1e3a2f;
+  color: #81c995;
+}
+
+.score-badge.is-mid {
+  background: #3a331e;
+  color: #fdd663;
+}
+
+.score-badge.is-low {
+  background: #3a1e1e;
+  color: #f28b82;
+}
+
+.data-panel {
+  margin-top: 2rem;
+}
+
+.data-panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+  border: 1px solid #2d3139;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  background: #181b22;
+  color: #9aa0a6;
+  font-weight: 600;
+}
+
+.data-table td code {
+  font-size: 0.8rem;
+}
+
+.insight-card__preview {
+  margin: 0;
+  padding: 0 1rem 0.75rem;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+.status-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.status-chip.is-clean {
+  background: #1e3a2f;
+  color: #81c995;
+}
+
+.status-chip.is-dirty {
+  background: #3a331e;
+  color: #fdd663;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.pager__status {
+  color: #9aa0a6;
+  font-size: 0.9rem;
+  min-width: 8rem;
+  text-align: center;
+}

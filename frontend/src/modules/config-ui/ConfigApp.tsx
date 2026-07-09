@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { LlmClientCatalog } from './LlmClientCatalog'
+import { NavBar } from './NavBar'
 import type { AdjutantConfig, AgentPhase, PhaseProfile } from './types'
 import './config-ui.css'
 
@@ -129,9 +130,14 @@ export function ConfigApp() {
 
   return (
     <main className="config-app">
+      <NavBar />
       <header className="config-app__header">
         <h1>mcp-adjutant LLM config</h1>
         <p>Choose an OpenAI-compatible client per agent phase.</p>
+        <div className="config-app__quick-links">
+          <a href="#/evaluations">Agent evaluations</a>
+          <a href="#/cache">Scout semantic cache</a>
+        </div>
       </header>
 
       {AGENT_PHASES.map(({ phase, title, hint }) => (

@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -12,6 +12,10 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::cache::{
+    load_cache_snapshot, list_evaluations_page, mcp_workspace_root, open_cache_connection,
+    CacheSnapshot, EVALUATIONS_PAGE_SIZE, EvaluationsPage,
+};
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
 
@@ -28,6 +32,8 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
 
     let app = Router::new()
         .route("/api/config", get(get_config).put(put_config))
+        .route("/api/evaluations", get(get_evaluations))
+        .route("/api/cache", get(get_cache))
         .fallback_service(serve_dir)
         .with_state(state);
 
@@ -65,6 +71,38 @@ async fn put_config(
     Ok(Json(config.clone()))
 }
 
+fn open_workspace_cache() -> Result<(std::path::PathBuf, rusqlite::Connection), String> {
+    open_cache_connection(&mcp_workspace_root())
+}
+
+async fn get_evaluations(
+    State(_state): State<ConfigServerState>,
+    Query(query): Query<EvaluationsQuery>,
+) -> Result<Json<EvaluationsPage>, CacheApiError> {
+    let (_, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
+    let page = list_evaluations_page(&conn, query.page, EVALUATIONS_PAGE_SIZE)
+        .map_err(CacheApiError::from)?;
+    Ok(Json(page))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EvaluationsQuery {
+    #[serde(default = "default_evaluations_page")]
+    page: u32,
+}
+
+fn default_evaluations_page() -> u32 {
+    1
+}
+
+async fn get_cache(
+    State(_state): State<ConfigServerState>,
+) -> Result<Json<CacheSnapshot>, CacheApiError> {
+    let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
+    let snapshot = load_cache_snapshot(&conn, &project_root).map_err(CacheApiError::from)?;
+    Ok(Json(snapshot))
+}
+
 #[derive(Debug)]
 struct AppError(AdjutantConfigError);
 
@@ -81,6 +119,26 @@ impl IntoResponse for AppError {
             format!("failed to save config: {}", self.0),
         )
             .into_response()
+    }
+}
+
+#[derive(Debug)]
+struct CacheApiError(String);
+
+impl From<String> for CacheApiError {
+    fn from(error: String) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for CacheApiError {
+    fn into_response(self) -> Response {
+        let status = if self.0.contains("could not find project root") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        (status, self.0).into_response()
     }
 }
 

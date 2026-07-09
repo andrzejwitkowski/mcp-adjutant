@@ -69,6 +69,11 @@ pub fn resolve_workspace_path(path: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+/// Opens (or creates) the per-project SQLite cache without loading the embedding engine.
+pub fn open_cache_connection(start_dir: &Path) -> Result<(PathBuf, Connection), String> {
+    prepare_project_cache(start_dir)
+}
+
 pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), String> {
     let project_root = find_project_root(start_dir)?;
     let adjutant_dir = project_root.join(ADJUTANT_DIR);
