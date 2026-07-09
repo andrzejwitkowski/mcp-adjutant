@@ -62,7 +62,7 @@ fn cache_snapshot_reports_embeddings_and_dirty_nodes() {
     assert_eq!(snapshot.overview.query_count, 1);
     assert_eq!(snapshot.overview.insight_count, 1);
     assert_eq!(snapshot.overview.embedding_count, 1);
-    assert_eq!(snapshot.queries[0].has_embedding, true);
+    assert!(snapshot.queries[0].has_embedding);
     assert_eq!(snapshot.code_nodes.len(), 1);
     assert!(snapshot.code_nodes[0].is_dirty);
     assert_eq!(snapshot.dependencies.len(), 1);
