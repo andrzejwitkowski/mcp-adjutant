@@ -2,7 +2,6 @@ mod common;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
 use std::fs;
-use std::path::Path;
 
 #[test]
 fn prepare_project_cache_creates_adjutant_dir_and_db() {

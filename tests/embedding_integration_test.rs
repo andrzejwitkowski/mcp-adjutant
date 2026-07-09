@@ -1,7 +1,5 @@
 mod common;
 
-use std::path::Path;
-
 use common::embedding_fixture_paths;
 use mcp_adjutant::cache::embedding::LocalEmbeddingEngine;
 
