@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::domain::AdjutantConfig;
+use crate::cache::mcp_workspace_root;
 
 struct ModuleBoundary {
     marker: &'static str,
@@ -121,7 +122,9 @@ fn match_triage_override(dir: &Path, config: &AdjutantConfig) -> Option<String> 
 }
 
 pub fn get_dirty_files_from_git() -> Result<Vec<PathBuf>, String> {
+    let repo_root = mcp_workspace_root();
     let output = Command::new("git")
+        .current_dir(&repo_root)
         .args(["status", "--porcelain"])
         .output()
         .map_err(|err| format!("failed to spawn git: {err}"))?;
@@ -151,7 +154,7 @@ pub fn get_dirty_files_from_git() -> Result<Vec<PathBuf>, String> {
         }
         path_part = path_part.trim_matches('"');
         if !path_part.is_empty() {
-            files.push(PathBuf::from(path_part));
+            files.push(repo_root.join(path_part));
         }
     }
 

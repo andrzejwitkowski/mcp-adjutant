@@ -14,8 +14,9 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
 pub use tools::{
-    build_scout_factory_query, build_scout_integration_query, builder_tool_set, parse_components,
-    parse_factory_arguments, parse_write_test_suite_arguments,
+    build_scout_factory_query, build_scout_integration_query, builder_tool_set,
+    extract_test_content, parse_components, parse_factory_arguments,
+    parse_write_test_suite_arguments,
 };
 
 pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHASE_4_BUILDER). You generate unit tests, integration tests, and data factories.
@@ -23,7 +24,11 @@ pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHA
 Available tools (tool calls):
 - gather_integration_context — runs a Scout sub-agent (ripgrep, AST, read_file) before integration tests
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
-- write_test_suite — writes a test file with a TDD phase (red|green|refactor)
+- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Put the full test file contents in your message; the tool only takes path and tdd_phase.
+
+Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new file under `tests/`, never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
+
+TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED.
 
 Reply with a short rationale (Thought), then call tools."#;
 
@@ -38,6 +43,10 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Resul
             .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
     {
         return Err("test output path must stay under project root".to_string());
+    }
+
+    if candidate.file_name().is_some_and(|name| name == "cache_manager_tests.rs") {
+        return Err("refusing to overwrite tests/cache_manager_tests.rs — write a new file under tests/".to_string());
     }
 
     Ok(project_root.join(candidate))
@@ -105,12 +114,22 @@ impl<
     }
 
     fn build_user_message(context: &AgentContext) -> String {
-        if context.accumulated_data.is_empty() {
+        const MAX_OBSERVATION_CHARS: usize = 24_000;
+        let observations = if context.accumulated_data.len() > MAX_OBSERVATION_CHARS {
+            format!(
+                "(observation history truncated)\n{}",
+                &context.accumulated_data[context.accumulated_data.len() - MAX_OBSERVATION_CHARS..]
+            )
+        } else {
+            context.accumulated_data.clone()
+        };
+
+        if observations.is_empty() {
             context.input_prompt.clone()
         } else {
             format!(
                 "{}\n\n---\nObservation history:\n{}",
-                context.input_prompt, context.accumulated_data
+                context.input_prompt, observations
             )
         }
     }
@@ -181,7 +200,7 @@ impl<
         let model_turn = self.llm_client.complete(request)?;
 
         if model_turn.tool_calls.is_empty() {
-            let thought = model_turn.content.unwrap_or_default();
+            let thought = model_turn.content.as_deref().unwrap_or("").to_string();
             if thought.is_empty() {
                 return Err("model response missing tool call".to_string());
             }
@@ -191,7 +210,7 @@ impl<
             return Ok(());
         }
 
-        let thought = model_turn.content.unwrap_or_default();
+        let thought = model_turn.content.as_deref().unwrap_or("").to_string();
         if !thought.is_empty() {
             context
                 .accumulated_data
@@ -206,6 +225,12 @@ impl<
 
             match tool_call.name.as_str() {
                 "gather_integration_context" => {
+                    if context.input_prompt.contains("`unit` test") {
+                        context.accumulated_data.push_str(
+                            "Observation:\nFor unit tests, call write_test_suite directly with path under tests/ and content. Do not use gather_integration_context.\n",
+                        );
+                        return Ok(());
+                    }
                     let components = parse_components(&tool_call.arguments)?;
                     let scout_query = build_scout_integration_query(&components);
                     let output = self
@@ -227,8 +252,20 @@ impl<
                         .push_str(&format!("Observation:\n{output}\n"));
                 }
                 "write_test_suite" => {
-                    let (path, content, tdd_phase) =
+                    let (path, tdd_phase) =
                         parse_write_test_suite_arguments(&tool_call.arguments)?;
+                    let content = match extract_test_content(
+                        model_turn.content.as_deref(),
+                        &tool_call.arguments,
+                    ) {
+                        Ok(content) => content,
+                        Err(err) => {
+                            context
+                                .accumulated_data
+                                .push_str(&format!("Observation:\n{err}\n"));
+                            return Ok(());
+                        }
+                    };
 
                     let project_root = {
                         let cache = self
@@ -265,7 +302,15 @@ impl<
                     ));
 
                     if Self::triage_success(&triage_ctx, &tdd_phase) {
-                        context.is_finished = true;
+                        if tdd_phase == "red" {
+                            context.accumulated_data.push_str(
+                                "\n[RED OK]: tests compile and fail assertions. \
+                                 Call write_test_suite again with tdd_phase=green — job is not done until GREEN.\n",
+                            );
+                        } else {
+                            context.is_finished = true;
+                            context.accumulated_data.push_str("\n[BUILDER GREEN OK]\n");
+                        }
                     } else {
                         context.accumulated_data.push_str(
                             "\n[TRIAGE FAILURE]: triage did not reach expected TDD outcome\n",

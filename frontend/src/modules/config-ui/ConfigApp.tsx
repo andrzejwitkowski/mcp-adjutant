@@ -19,6 +19,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     title: 'Builder',
     hint: 'Test generation and scaffolding',
   },
+  {
+    phase: 'evaluator',
+    title: 'Evaluator',
+    hint: 'QA sub-agent output quality (scores 1–10)',
+  },
 ]
 
 const DEFAULT_PROFILE: PhaseProfile = {

@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -8,7 +9,7 @@ use crate::agent::{
     default_builder_agent, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent, SystemBuildRunner,
     TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
-use crate::cache::ProjectCacheManager;
+use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
 use crate::jobs::{
     accepted_job_response, parse_request_uuid, query_job_status_schema,
@@ -27,7 +28,7 @@ pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performan
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
-const BUILDER_MAX_ITERATIONS: u32 = 5;
+const BUILDER_MAX_ITERATIONS: u32 = 8;
 const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 
 pub fn scout_context_schema() -> Value {
@@ -154,6 +155,56 @@ pub async fn handle_query_job_status(
     serde_json::to_string_pretty(&status).map_err(|err| format!("serialize status: {err}"))
 }
 
+fn integration_test_exemplar() -> String {
+    let path = mcp_workspace_root().join("tests/cache_manager_tests.rs");
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let lines: Vec<&str> = content.lines().collect();
+    let excerpt = if lines.len() > 47 {
+        lines[6..47].join("\n")
+    } else {
+        content
+    };
+    format!(
+        "Golden integration-test pattern (copy this setup — do not use tempfile):\n```rust\n{excerpt}\n```"
+    )
+}
+
+fn extract_green_test_path(log: &str) -> Option<PathBuf> {
+    log.lines()
+        .filter(|line| line.contains("[SYSTEM]: Launching Triage (green)"))
+        .filter_map(|line| line.split(" for ").nth(1))
+        .map(str::trim)
+        .map(PathBuf::from)
+        .last()
+}
+
+fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
+    let project_root = mcp_workspace_root();
+    let stem = test_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid test path: {}", test_path.display()))?;
+
+    let output = Command::new("cargo")
+        .args(["test", "--test", stem])
+        .current_dir(&project_root)
+        .output()
+        .map_err(|err| format!("failed to run cargo test --test {stem}: {err}"))?;
+
+    if output.status.success() {
+        return Ok(format!("cargo test --test {stem}: all tests passed"));
+    }
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Err(format!(
+        "cargo test --test {stem} failed:\n{combined}"
+    ))
+}
+
 pub async fn handle_scout_context(
     args: Value,
     config: Arc<AdjutantConfig>,
@@ -202,7 +253,7 @@ pub async fn handle_verify_and_triage(
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item.as_str().map(PathBuf::from))
+                .filter_map(|item| item.as_str().map(resolve_workspace_path))
                 .collect()
         })
         .unwrap_or_default();
@@ -300,12 +351,13 @@ pub async fn handle_generate_tests_and_scaffolding(
         request_uuid,
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
         move || async move {
-            let source_path = PathBuf::from(&source_file_path);
+            let source_path = resolve_workspace_path(&source_file_path);
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 
             let builder_client = create_builder_llm_client(&config)?;
-            let scout_client = create_scout_llm_client(&config)?;
-            let triage_client = create_triage_llm_client(&config)?;
+            // ponytail: builder sub-agents use builder phase model (same as parent agent)
+            let scout_client = create_builder_llm_client(&config)?;
+            let triage_client = create_builder_llm_client(&config)?;
             let agent = default_builder_agent(
                 builder_client,
                 cache_manager,
@@ -315,15 +367,43 @@ pub async fn handle_generate_tests_and_scaffolding(
                 vec![source_path.clone()],
             );
 
+            let source_excerpt = std::fs::read_to_string(&source_path)
+                .map(|contents| {
+                    const MAX: usize = 8_000;
+                    if contents.len() > MAX {
+                        format!("{}...\n(truncated)", &contents[..MAX])
+                    } else {
+                        contents
+                    }
+                })
+                .unwrap_or_else(|err| format!("(could not read source file: {err})"));
+
+            let exemplar = integration_test_exemplar();
+
             let prompt = format!(
-                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\nGenerate a `{test_type}` test for file: {source_file_path}"
+                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n\
+                 Generate a `{test_type}` test for file: {source_file_path}\n\n\
+                 Write ONE test function first to a **new** file `tests/<name>_integration_test.rs` — never overwrite `tests/cache_manager_tests.rs`.\n\
+                 Workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). Job succeeds only when GREEN passes.\n\
+                 Use `mod common;` and helpers from `tests/common/mod.rs` — do not add new dev-dependencies.\n\
+                 Direct SQLite checks use `project_root.join(\".adjutant/cache.db\")` — never `cache.sqlite`.\n\
+                 Integration test crates cannot use `crate::` — import via `mcp_adjutant::...`.\n\n\
+                 {exemplar}\n\n\
+                 Source excerpt:\n```\n{source_excerpt}\n```"
             );
 
             let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
 
-            if result.is_finished {
+            let green_ok = result.accumulated_data.contains("[BUILDER GREEN OK]");
+            let builder_hard_stopped = result.iterations >= BUILDER_MAX_ITERATIONS
+                && result.accumulated_data.contains("iteration limit after");
+
+            if result.is_finished && green_ok && !builder_hard_stopped {
+                let test_path = extract_green_test_path(&result.accumulated_data)
+                    .ok_or_else(|| "builder finished GREEN but no test path found in log".to_string())?;
+                let cargo_summary = verify_cargo_test_passes(&test_path)?;
                 return Ok(format!(
-                    "Builder finished successfully for {source_file_path} ({test_type}).\n{}",
+                    "Builder finished successfully for {source_file_path} ({test_type}). {cargo_summary}\n{}",
                     result.accumulated_data
                 ));
             }
@@ -373,7 +453,7 @@ pub async fn handle_evaluate_agent_performance(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .unwrap_or_else(mcp_workspace_root);
 
     dispatch_async_job(
         registry,

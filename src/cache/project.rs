@@ -44,6 +44,31 @@ const MIGRATIONS: &[&str] = &[
     );",
 ];
 
+/// MCP workspace root: env override, then process cwd, then compile-time repo root.
+pub fn mcp_workspace_root() -> PathBuf {
+    std::env::var("MCP_ADJUTANT_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        })
+}
+
+/// Resolve a relative path against [`mcp_workspace_root`].
+pub fn resolve_workspace_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    let stripped = path
+        .to_string_lossy()
+        .strip_prefix("./")
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let p = Path::new(&stripped);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        mcp_workspace_root().join(p)
+    }
+}
+
 pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), String> {
     let project_root = find_project_root(start_dir)?;
     let adjutant_dir = project_root.join(ADJUTANT_DIR);
@@ -118,7 +143,7 @@ pub fn current_unix_timestamp() -> Result<i64, String> {
         .map_err(|err| format!("system clock is before UNIX epoch: {err}"))
 }
 
-fn find_project_root(start_dir: &Path) -> Result<PathBuf, String> {
+pub fn find_project_root(start_dir: &Path) -> Result<PathBuf, String> {
     let start_dir = fs::canonicalize(start_dir)
         .map_err(|err| format!("failed to canonicalize {}: {err}", start_dir.display()))?;
 
@@ -185,4 +210,29 @@ fn path_to_posix_string(path: &Path) -> String {
     }
 
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_workspace_path_joins_dot() {
+        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
+        assert_eq!(
+            resolve_workspace_path("."),
+            PathBuf::from("/tmp/mcp-adjutant/.")
+        );
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+    }
+
+    #[test]
+    fn resolve_workspace_path_joins_relative_paths() {
+        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
+        assert_eq!(
+            resolve_workspace_path("./src/cache/project.rs"),
+            PathBuf::from("/tmp/mcp-adjutant/src/cache/project.rs")
+        );
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+    }
 }

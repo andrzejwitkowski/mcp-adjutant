@@ -22,7 +22,7 @@ pub use agent::{
     ScoutModelTurn, ScoutToolCall, SystemBuildRunner, TextPrunerMock, TriageAgent,
     BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
-pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, SEMANTIC_SIMILARITY_THRESHOLD};
+pub use cache::{LocalEmbeddingEngine, ProjectCacheManager, EMBEDDING_DIM, SEMANTIC_SIMILARITY_THRESHOLD};
 pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 pub use error::AdjutantConfigError;
 pub use jobs::{query_job_status_schema, JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};

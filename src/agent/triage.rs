@@ -43,6 +43,8 @@ struct TriageWorkspace {
     build_targets: Vec<(PathBuf, String)>,
     resolved_paths: Vec<PathBuf>,
     retarget_paths: Vec<PathBuf>,
+    /// When non-empty (builder `retarget`), `edit_file` may only touch these paths.
+    editable_paths: Vec<PathBuf>,
 }
 
 pub struct TriageAgent<C, B = SystemBuildRunner, D = NoopBuildDiscoverer> {
@@ -102,9 +104,18 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
-        workspace.retarget_paths = paths;
+        workspace.retarget_paths = paths.clone();
+        workspace.editable_paths = paths;
         workspace.build_targets.clear();
         Ok(())
+    }
+
+    fn editable_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "triage workspace lock poisoned".to_string())?;
+        Ok(workspace.editable_paths.clone())
     }
 
     fn resolve_target_paths(&self) -> Result<Vec<PathBuf>, String> {
@@ -118,9 +129,16 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         drop(workspace);
 
         if self.target_paths.is_empty() {
-            get_dirty_files_from_git()
+            Ok(get_dirty_files_from_git()?
+                .into_iter()
+                .map(|path| crate::cache::resolve_workspace_path(&path))
+                .collect())
         } else {
-            Ok(self.target_paths.clone())
+            Ok(self
+                .target_paths
+                .iter()
+                .map(|path| crate::cache::resolve_workspace_path(path))
+                .collect())
         }
     }
 
@@ -153,6 +171,14 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         }
 
         for anchor in needs_discovery {
+            let anchor = if anchor.is_dir() {
+                anchor
+            } else {
+                anchor
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or(anchor)
+            };
             if targets.iter().any(|(dir, _)| dir == &anchor) {
                 continue;
             }
@@ -425,6 +451,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
                 }
                 let module_roots = Self::module_roots(&targets);
                 let resolved = resolve_edit_path(&path, &module_roots)?;
+                let editable_paths = self.editable_paths()?;
+                if let Err(msg) = assert_edit_allowed(&resolved, &editable_paths) {
+                    context
+                        .accumulated_data
+                        .push_str(&format!("Edit rejected: {msg}\n"));
+                    return Ok(());
+                }
                 edit_file_line(&resolved, line, &content)?;
                 context.accumulated_data.push_str(&format!(
                     "Applied edit_file({}, line={line})\n",
@@ -505,11 +538,27 @@ fn insert_cargo_test_filter(test_cmd: &str, stem: &str) -> String {
     }
 }
 
-fn is_assertion_test_failure(output: &str, test_paths: &[PathBuf], command_scoped: bool) -> bool {
+fn is_setup_test_failure(output: &str) -> bool {
     let lower = output.to_lowercase();
-    let has_assertion_signal = lower.contains("assertion")
+    lower.contains("no such file or directory")
+        || lower.contains("failed to canonicalize")
+        || lower.contains("e0433:")
+        || lower.contains("e0061:")
+        || lower.contains("e0599:")
+        || lower.contains("unresolved import")
+        || lower.contains("tempfile::")
+}
+
+fn is_assertion_test_failure(output: &str, test_paths: &[PathBuf], command_scoped: bool) -> bool {
+    if is_setup_test_failure(output) {
+        return false;
+    }
+
+    let lower = output.to_lowercase();
+    let has_assertion_signal = lower.contains("assertion `")
         || lower.contains("assert_eq!")
-        || (lower.contains("test result: failed") && !lower.contains("error[e"));
+        || lower.contains("assertion failed")
+        || (lower.contains("panicked at") && lower.contains("assert"));
 
     if !has_assertion_signal {
         return false;
@@ -526,8 +575,57 @@ fn is_assertion_test_failure(output: &str, test_paths: &[PathBuf], command_scope
     })
 }
 
+fn is_protected_test_infra(path: &Path) -> bool {
+    path.ends_with("tests/common/mod.rs") || path.ends_with("tests/cache_manager_tests.rs")
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn assert_edit_allowed(resolved: &Path, editable_paths: &[PathBuf]) -> Result<(), String> {
+    if is_protected_test_infra(resolved) {
+        return Err(format!(
+            "{} is shared test infrastructure — edit the generated test file instead",
+            resolved.display()
+        ));
+    }
+    if editable_paths.is_empty() {
+        return Ok(());
+    }
+    if editable_paths
+        .iter()
+        .any(|allowed| paths_equivalent(resolved, allowed))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is outside builder triage scope (editable: {})",
+        resolved.display(),
+        editable_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, String> {
     if path.is_absolute() {
+        for root in module_roots {
+            if root.as_os_str().is_empty() {
+                continue;
+            }
+            if path.starts_with(root) {
+                return Ok(path.to_path_buf());
+            }
+        }
         return Err(format!(
             "edit path must be relative to a triage module root: {}",
             path.display()
@@ -560,6 +658,46 @@ fn resolve_edit_path(path: &Path, module_roots: &[PathBuf]) -> Result<PathBuf, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assert_edit_allowed_blocks_shared_test_infra() {
+        let err = assert_edit_allowed(
+            Path::new("/repo/tests/common/mod.rs"),
+            &[PathBuf::from("/repo/tests/new_integration_test.rs")],
+        )
+        .expect_err("shared infra must be protected");
+        assert!(err.contains("shared test infrastructure"));
+    }
+
+    #[test]
+    fn assert_edit_allowed_scopes_builder_edits_to_target_test() {
+        let target = PathBuf::from("/repo/tests/new_integration_test.rs");
+        assert!(assert_edit_allowed(&target, &[target.clone()]).is_ok());
+
+        let err = assert_edit_allowed(
+            Path::new("/repo/tests/other.rs"),
+            &[PathBuf::from("/repo/tests/new_integration_test.rs")],
+        )
+        .expect_err("out-of-scope edit");
+        assert!(err.contains("outside builder triage scope"));
+    }
+
+    #[test]
+    fn assert_edit_allowed_allows_standalone_triage_outside_denylist() {
+        assert!(
+            assert_edit_allowed(Path::new("/repo/src/lib.rs"), &[]).is_ok(),
+            "empty editable_paths keeps standalone triage behavior"
+        );
+    }
+
+    #[test]
+    fn resolve_edit_path_accepts_absolute_paths_under_module_root() {
+        let root = PathBuf::from("/repo/backend");
+        let allowed = vec![root.clone()];
+        let resolved =
+            resolve_edit_path(Path::new("/repo/backend/src/main.rs"), &allowed).expect("absolute");
+        assert_eq!(resolved, PathBuf::from("/repo/backend/src/main.rs"));
+    }
 
     #[test]
     fn resolve_edit_path_rejects_traversal_and_outside_roots() {
@@ -629,6 +767,19 @@ mod tests {
             output,
             &[PathBuf::from("tests/relative_red.rs")],
             true
+        ));
+    }
+
+    #[test]
+    fn is_assertion_test_failure_rejects_setup_panic() {
+        let output = "panicked at tests/cache_manager_integration_tests.rs:15:10:\n\
+            Failed to create ProjectCacheManager: \"failed to canonicalize /tmp/x: \
+            No such file or directory (os error 2)\"\n\
+            test result: FAILED. 0 passed; 1 failed";
+        assert!(!is_assertion_test_failure(
+            output,
+            &[PathBuf::from("tests/cache_manager_integration_tests.rs")],
+            true,
         ));
     }
 

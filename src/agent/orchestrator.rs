@@ -30,6 +30,22 @@ impl AgentLoopOrchestrator {
             agent.mutate_next_iteration(&mut context).await?;
         }
 
+        // ponytail: hard stop — treat accumulated observations as the scout report when capped
+        if !context.is_finished {
+            if context.accumulated_data.is_empty() {
+                context.accumulated_data = format!(
+                    "Scout stopped after {} iteration(s) (max {}).",
+                    context.iterations, context.max_iterations
+                );
+            } else {
+                context.accumulated_data = format!(
+                    "## Scout report (iteration limit after {} of {} turns)\n\n{}",
+                    context.iterations, context.max_iterations, context.accumulated_data
+                );
+            }
+            context.is_finished = true;
+        }
+
         Ok(context)
     }
 }

@@ -1,8 +1,7 @@
-use std::path::Path;
-
 use serde_json::Value;
 
 use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
+use crate::cache::{mcp_workspace_root, resolve_workspace_path};
 use crate::tools::{
     detect_file_language, detect_project_languages, read_file_range, run_ripgrep, AstUsageFinder,
 };
@@ -46,9 +45,10 @@ impl LlmTool for DetectLanguageTool {
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let path = required_str(arguments, "path")?;
         let scope = required_str(arguments, "scope")?;
+        let path = resolve_workspace_path(path);
         let report = match scope.as_str() {
-            "file" => serde_json::to_string(&detect_file_language(Path::new(&path))?),
-            "project" => serde_json::to_string(&detect_project_languages(Path::new(&path))?),
+            "file" => serde_json::to_string(&detect_file_language(&path)?),
+            "project" => serde_json::to_string(&detect_project_languages(&path)?),
             other => {
                 return Err(format!(
                     "detect_language scope must be file|project, got: {other}"
@@ -74,7 +74,7 @@ impl RipgrepTool {
             .string_param("pattern", "Search pattern passed to ripgrep.", true)
             .string_param(
                 "root",
-                "Repository directory to search (defaults to the current directory).",
+                "Repository directory to search (defaults to the MCP project root).",
                 false,
             ),
         }
@@ -88,8 +88,12 @@ impl LlmTool for RipgrepTool {
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let pattern = required_str(arguments, "pattern")?;
-        let root = arguments.get("root").and_then(Value::as_str).unwrap_or(".");
-        run_ripgrep(&pattern, Path::new(root))
+        let root = arguments
+            .get("root")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| mcp_workspace_root().to_string_lossy().into_owned());
+        run_ripgrep(&pattern, &resolve_workspace_path(&root))
     }
 }
 
@@ -122,7 +126,8 @@ impl LlmTool for AstCallsTool {
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let file = required_str(arguments, "file")?;
         let method = required_str(arguments, "method")?;
-        let lines = AstUsageFinder::find_calls_in_file(Path::new(&file), &method)?;
+        let file = resolve_workspace_path(&file);
+        let lines = AstUsageFinder::find_calls_in_file(&file, &method)?;
         if lines.is_empty() {
             Ok("No call sites found.".to_string())
         } else {
@@ -156,9 +161,17 @@ impl LlmTool for ReadFileTool {
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let file = required_str(arguments, "file")?;
-        let start = required_usize(arguments, "start")?;
-        let end = required_usize(arguments, "end")?;
-        read_file_range(Path::new(&file), start, end)
+        let path = resolve_workspace_path(&file);
+        let mut start = required_usize(arguments, "start")?;
+        let mut end = required_usize(arguments, "end")?;
+        // ponytail: clamp LLM line numbers (JSON f64 / huge end values) to file bounds
+        let line_count = std::fs::read_to_string(&path)
+            .map(|content| content.lines().count())
+            .unwrap_or(0)
+            .max(1);
+        end = end.min(line_count);
+        start = start.clamp(1, end);
+        read_file_range(&path, start, end)
     }
 }
 
@@ -201,11 +214,21 @@ fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
 }
 
 fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))
+    let value = arguments.get(key).ok_or_else(|| {
+        format!("tool argument '{key}' must be a positive integer")
+    })?;
+    let n = match value {
+        Value::Number(num) => num
+            .as_u64()
+            .or_else(|| num.as_f64().filter(|f| f.is_finite() && *f >= 1.0).map(|f| f as u64)),
+        Value::String(text) => text.parse::<u64>().ok(),
+        _ => None,
+    }
+    .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))?;
+    if n == 0 {
+        return Err(format!("tool argument '{key}' must be >= 1"));
+    }
+    usize::try_from(n).map_err(|_| format!("tool argument '{key}' is too large"))
 }
 
 #[cfg(test)]

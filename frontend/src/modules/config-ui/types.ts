@@ -1,6 +1,6 @@
 export type Provider = 'deep_seek' | 'open_router' | 'open_ai' | 'custom'
 
-export type AgentPhase = 'scout' | 'triage' | 'builder'
+export type AgentPhase = 'scout' | 'triage' | 'builder' | 'evaluator'
 
 export interface PhaseProfile {
   provider: Provider

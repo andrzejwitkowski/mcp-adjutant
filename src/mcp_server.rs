@@ -38,6 +38,12 @@ struct JsonRpcError {
     message: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StdioFraming {
+    Ndjson,
+    ContentLength,
+}
+
 // ponytail: minimal MCP stdio loop; rmcp needs edition2024 / newer rustc
 pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -48,9 +54,10 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
     let jobs = JobRegistry::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+    let mut framing = None;
 
     loop {
-        let message = read_message(&stdin)?;
+        let message = read_message(&stdin, &mut framing)?;
         let Some(message) = message else {
             break;
         };
@@ -59,7 +66,7 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
             Ok(request) => request,
             Err(parse_err) => {
                 let response = err(&Value::Null, -32700, format!("Parse error: {parse_err}"));
-                write_message(&mut stdout, &response)?;
+                write_message(&mut stdout, &response, framing.unwrap_or(StdioFraming::Ndjson))?;
                 continue;
             }
         };
@@ -70,8 +77,11 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
 
         let id = request.id.as_ref().expect("checked above");
         let response = match request.method.as_str() {
-            "initialize" => ok(id, initialize_result()),
+            "initialize" => ok(id, initialize_result(&request.params)),
             "tools/list" => ok(id, list_tools_result()),
+            "resources/list" => ok(id, json!({ "resources": [] })),
+            "resources/templates/list" => ok(id, json!({ "resourceTemplates": [] })),
+            "prompts/list" => ok(id, json!({ "prompts": [] })),
             "tools/call" => {
                 let config = Arc::clone(&config);
                 let jobs = jobs.clone();
@@ -81,16 +91,33 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
             _ => err(id, -32601, format!("method not found: {}", request.method)),
         };
 
-        write_message(&mut stdout, &response)?;
+        write_message(
+            &mut stdout,
+            &response,
+            framing.unwrap_or(StdioFraming::Ndjson),
+        )?;
     }
 
     Ok(())
 }
 
-fn initialize_result() -> Value {
+fn initialize_result(params: &Value) -> Value {
+    let requested = params
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("2024-11-05");
+    let protocol_version = match requested {
+        "2025-06-18" | "2025-03-26" | "2024-11-05" => requested,
+        _ => "2024-11-05",
+    };
+
     json!({
-        "protocolVersion": "2024-11-05",
-        "capabilities": { "tools": {} },
+        "protocolVersion": protocol_version,
+        "capabilities": {
+            "tools": {},
+            "resources": {},
+            "prompts": {}
+        },
         "serverInfo": {
             "name": "mcp-adjutant",
             "version": env!("CARGO_PKG_VERSION")
@@ -182,26 +209,41 @@ fn err(id: &Value, code: i32, message: String) -> String {
     .expect("serialize error")
 }
 
-fn read_message(stdin: &io::Stdin) -> Result<Option<String>, String> {
+fn read_message(
+    stdin: &io::Stdin,
+    framing: &mut Option<StdioFraming>,
+) -> Result<Option<String>, String> {
     let mut stdin_lock = stdin.lock();
-    let mut headers = Vec::new();
+    let mut first_line = String::new();
+    let read = stdin_lock
+        .read_line(&mut first_line)
+        .map_err(|err| format!("failed to read MCP header: {err}"))?;
+    if read == 0 {
+        return Ok(None);
+    }
+
+    let first_line = first_line.trim_end_matches(['\r', '\n']);
+    if first_line.is_empty() {
+        return Ok(None);
+    }
+
+    if first_line.starts_with('{') {
+        framing.get_or_insert(StdioFraming::Ndjson);
+        return Ok(Some(first_line.to_string()));
+    }
+
+    framing.get_or_insert(StdioFraming::ContentLength);
+    let mut headers = vec![first_line.to_string()];
     loop {
         let mut line = String::new();
-        let read = stdin_lock
+        stdin_lock
             .read_line(&mut line)
             .map_err(|err| format!("failed to read MCP header: {err}"))?;
-        if read == 0 {
-            return Ok(None);
-        }
-        let line = line.trim_end_matches(['\r', '\n']).to_string();
+        let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
             break;
         }
-        headers.push(line);
-    }
-
-    if headers.is_empty() {
-        return Ok(None);
+        headers.push(line.to_string());
     }
 
     let content_length = headers
@@ -224,8 +266,17 @@ fn read_message(stdin: &io::Stdin) -> Result<Option<String>, String> {
         .map(Some)
 }
 
-fn write_message(stdout: &mut io::Stdout, payload: &str) -> Result<(), String> {
-    let frame = format!("Content-Length: {}\r\n\r\n{}", payload.len(), payload);
+fn write_message(
+    stdout: &mut io::Stdout,
+    payload: &str,
+    framing: StdioFraming,
+) -> Result<(), String> {
+    let frame = match framing {
+        StdioFraming::Ndjson => format!("{payload}\n"),
+        StdioFraming::ContentLength => {
+            format!("Content-Length: {}\r\n\r\n{}", payload.len(), payload)
+        }
+    };
     stdout
         .write_all(frame.as_bytes())
         .and_then(|_| stdout.flush())
@@ -269,6 +320,31 @@ mod tests {
             .as_array()
             .expect("required array");
         assert!(required.iter().any(|value| value == "request_uuid"));
+    }
+
+    #[test]
+    fn discovery_stubs_return_empty_lists() {
+        let resources = ok(&json!(1), json!({ "resources": [] }));
+        let prompts = ok(&json!(2), json!({ "prompts": [] }));
+        assert!(resources.contains("\"resources\":[]"));
+        assert!(prompts.contains("\"prompts\":[]"));
+    }
+
+    #[test]
+    fn initialize_negotiates_newer_protocol_version() {
+        let result = initialize_result(&json!({ "protocolVersion": "2025-03-26" }));
+        assert_eq!(result["protocolVersion"], "2025-03-26");
+        assert!(result["capabilities"]["resources"].is_object());
+    }
+
+    #[test]
+    fn ndjson_framing_detects_json_line() {
+        let input = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n";
+        let mut cursor = io::Cursor::new(input);
+        let mut line = String::new();
+        cursor.read_line(&mut line).expect("read");
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        assert!(trimmed.starts_with('{'));
     }
 
     #[test]

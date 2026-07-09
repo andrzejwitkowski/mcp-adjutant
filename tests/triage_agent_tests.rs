@@ -229,6 +229,54 @@ async fn triage_agent_rejects_edit_outside_module_roots() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+#[tokio::test]
+async fn triage_agent_builder_retarget_blocks_shared_test_infra_edits() {
+    let root = temp_root("builder-scope");
+    std::fs::create_dir_all(root.join("tests/common")).expect("dirs");
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"demo\"\n").expect("cargo");
+    let common = root.join("tests/common/mod.rs");
+    std::fs::write(&common, "pub fn helper() {}\n").expect("common");
+    let test_file = root.join("tests/new_integration_test.rs");
+    std::fs::write(&test_file, "#[test]\nfn case() { assert_eq!(1, 2); }\n").expect("test");
+
+    let llm = MockTriageLlm::edit_file(Path::new("tests/common/mod.rs"), 1, "pwned");
+    let runner = MockBuildRunner::new("error[E0425]: broken", "ok");
+
+    let config = Arc::new(AdjutantConfig::default());
+    let agent = TriageAgent::with_build_runner(
+        llm,
+        vec![test_file.clone()],
+        Arc::clone(&config),
+        runner,
+    );
+    agent.retarget(vec![test_file.clone()]).expect("retarget");
+
+    let result = AgentLoopOrchestrator::run(
+        &agent,
+        "Verify tests/new_integration_test.rs:\nTDD RED PHASE: fix compile errors only"
+            .to_string(),
+        1,
+    )
+    .await
+    .expect("triage should continue after rejected edit");
+
+    assert!(
+        result.accumulated_data.contains("Edit rejected:"),
+        "expected blocked edit message, got: {}",
+        result.accumulated_data
+    );
+    assert!(
+        result
+            .accumulated_data
+            .contains("shared test infrastructure"),
+        "expected infra protection message"
+    );
+    let contents = std::fs::read_to_string(&common).expect("read common");
+    assert_eq!(contents, "pub fn helper() {}\n");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
 struct MockDiscoverer {
     command: String,
 }

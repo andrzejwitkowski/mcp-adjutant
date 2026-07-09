@@ -14,6 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("mcp_adjutant=info".parse()?))
         .with_writer(std::io::stderr)
+        // ponytail: ANSI stderr looks like protocol noise to Cursor's MCP client
+        .with_ansi(false)
         .init();
 
     let config_path = std::env::var("MCP_ADJUTANT_CONFIG")

@@ -46,7 +46,11 @@ async fn text_pruner_mock_respects_max_iterations() {
 
     assert_eq!(result.iterations, 2, "loop should stop at max_iterations");
     assert!(
-        !result.is_finished,
-        "output should not be short enough within only 2 iterations"
+        result.is_finished,
+        "orchestrator should hard-stop and mark finished at max_iterations"
+    );
+    assert!(
+        result.accumulated_data.contains("iteration limit"),
+        "hard stop should wrap accumulated observations"
     );
 }

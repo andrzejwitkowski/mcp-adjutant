@@ -95,9 +95,14 @@ impl LlmClient for DeepSeekClient {
             http = http.set("Authorization", &format!("Bearer {api_key}"));
         }
 
-        let response = http
-            .send_json(body)
-            .map_err(|err| format!("deepseek request failed: {err}"))?;
+        let response = match http.send_json(body) {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, response)) => {
+                let detail = response.into_string().unwrap_or_default();
+                return Err(format!("deepseek request failed: status {code}: {detail}"));
+            }
+            Err(err) => return Err(format!("deepseek request failed: {err}")),
+        };
 
         let body: ChatResponse = response
             .into_json()

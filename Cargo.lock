@@ -779,6 +779,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "streaming-iterator",
  "thiserror 2.0.18",
  "tokenizers",

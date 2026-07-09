@@ -20,7 +20,7 @@ impl MockBuilderLlm {
     fn write_red_test(path: &str, content: &str) -> Self {
         Self {
             turn: LlmModelTurn {
-                content: Some("Thought: emit failing RED test".to_string()),
+                content: None,
                 tool_calls: vec![LlmToolCall {
                     name: "write_test_suite".to_string(),
                     arguments: serde_json::json!({
@@ -112,15 +112,19 @@ fn red_phase_case() {
     let result = AgentLoopOrchestrator::run(
         &agent,
         "PHASE_4_BUILDER\nGenerate unit test for src/lib.rs".to_string(),
-        3,
+        1,
     )
     .await
     .expect("builder loop should complete");
 
     assert!(
-        result.is_finished,
-        "builder should finish after TDD RED triage success, got: {}",
+        result.accumulated_data.contains("[RED OK]"),
+        "expected RED milestone marker, got: {}",
         result.accumulated_data
+    );
+    assert!(
+        !result.accumulated_data.contains("[BUILDER GREEN OK]"),
+        "builder must not reach GREEN in RED-only test"
     );
     assert!(
         result.accumulated_data.contains("Launching Triage (red)"),
@@ -231,15 +235,12 @@ async fn builder_agent_red_phase_runs_full_triage_loop_for_compile_fixes() {
     let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
 
     let result =
-        AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 3)
+        AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
             .await
             .expect("builder loop should complete");
 
-    assert!(
-        result.is_finished,
-        "multi-iteration RED triage should finish successfully: {}",
-        result.accumulated_data
-    );
+    assert!(result.accumulated_data.contains("[RED OK]"));
+    assert!(!result.accumulated_data.contains("[BUILDER GREEN OK]"));
     assert!(
         result.accumulated_data.contains("Applied edit_file"),
         "expected compile fix via triage loop"
@@ -285,7 +286,7 @@ fn relative_red_case() {
     let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
 
     let result =
-        AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 3)
+        AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
             .await
             .expect("builder loop should complete");
 
@@ -294,10 +295,8 @@ fn relative_red_case() {
         expected_path.is_file(),
         "test should be written under project root"
     );
-    assert!(
-        result.is_finished,
-        "expected triage success for relative path"
-    );
+    assert!(result.accumulated_data.contains("[RED OK]"));
+    assert!(!result.accumulated_data.contains("[BUILDER GREEN OK]"));
 
     std::fs::remove_dir_all(&project_root).ok();
 }

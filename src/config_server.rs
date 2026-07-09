@@ -7,6 +7,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use socket2::{Domain, Socket, Type};
+use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -30,11 +32,11 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr)
+    let listener = bind_reuse_addr(addr)
         .await
         .map_err(|err| format!("config server bind failed on {addr}: {err}"))?;
 
-    tracing::info!("config UI listening on http://{addr}");
+    tracing::debug!("config UI listening on http://{addr}");
     axum::serve(listener, app)
         .await
         .map_err(|err| format!("config server failed: {err}"))
@@ -109,4 +111,12 @@ pub fn load_or_default(path: &Path) -> AdjutantConfig {
         }
         Err(_) => AdjutantConfig::default(),
     }
+}
+
+async fn bind_reuse_addr(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(128)?;
+    TcpListener::from_std(socket.into())
 }
