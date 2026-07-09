@@ -243,18 +243,13 @@ async fn triage_agent_builder_retarget_blocks_shared_test_infra_edits() {
     let runner = MockBuildRunner::new("error[E0425]: broken", "ok");
 
     let config = Arc::new(AdjutantConfig::default());
-    let agent = TriageAgent::with_build_runner(
-        llm,
-        vec![test_file.clone()],
-        Arc::clone(&config),
-        runner,
-    );
+    let agent =
+        TriageAgent::with_build_runner(llm, vec![test_file.clone()], Arc::clone(&config), runner);
     agent.retarget(vec![test_file.clone()]).expect("retarget");
 
     let result = AgentLoopOrchestrator::run(
         &agent,
-        "Verify tests/new_integration_test.rs:\nTDD RED PHASE: fix compile errors only"
-            .to_string(),
+        "Verify tests/new_integration_test.rs:\nTDD RED PHASE: fix compile errors only".to_string(),
         1,
     )
     .await

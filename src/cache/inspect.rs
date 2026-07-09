@@ -147,8 +147,8 @@ fn evaluation_stats(conn: &Connection) -> Result<(usize, Option<f64>), String> {
         )
         .map_err(|err| format!("failed to read evaluation stats: {err}"))?;
 
-    let total_count = usize::try_from(count)
-        .map_err(|err| format!("invalid evaluation count: {err}"))?;
+    let total_count =
+        usize::try_from(count).map_err(|err| format!("invalid evaluation count: {err}"))?;
     Ok((total_count, avg))
 }
 

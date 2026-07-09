@@ -137,7 +137,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             Ok(self
                 .target_paths
                 .iter()
-                .map(|path| crate::cache::resolve_workspace_path(path))
+                .map(crate::cache::resolve_workspace_path)
                 .collect())
         }
     }
@@ -174,10 +174,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             let anchor = if anchor.is_dir() {
                 anchor
             } else {
-                anchor
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or(anchor)
+                anchor.parent().map(Path::to_path_buf).unwrap_or(anchor)
             };
             if targets.iter().any(|(dir, _)| dir == &anchor) {
                 continue;
@@ -672,7 +669,7 @@ mod tests {
     #[test]
     fn assert_edit_allowed_scopes_builder_edits_to_target_test() {
         let target = PathBuf::from("/repo/tests/new_integration_test.rs");
-        assert!(assert_edit_allowed(&target, &[target.clone()]).is_ok());
+        assert!(assert_edit_allowed(&target, std::slice::from_ref(&target)).is_ok());
 
         let err = assert_edit_allowed(
             Path::new("/repo/tests/other.rs"),

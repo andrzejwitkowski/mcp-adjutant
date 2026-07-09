@@ -247,11 +247,8 @@ mod tests {
 
     #[test]
     fn extract_test_content_prefers_assistant_message() {
-        let content = extract_test_content(
-            Some("```rust\n#[test]\nfn t() {}\n```"),
-            &json!({}),
-        )
-        .expect("content");
+        let content = extract_test_content(Some("```rust\n#[test]\nfn t() {}\n```"), &json!({}))
+            .expect("content");
         assert!(content.contains("#[test]"));
     }
 
@@ -267,11 +264,8 @@ mod tests {
 
     #[test]
     fn extract_test_content_falls_back_to_tool_argument() {
-        let content = extract_test_content(
-            None,
-            &json!({"content": "#[test] fn t() {}"}),
-        )
-        .expect("content");
+        let content =
+            extract_test_content(None, &json!({"content": "#[test] fn t() {}"})).expect("content");
         assert_eq!(content, "#[test] fn t() {}");
     }
 

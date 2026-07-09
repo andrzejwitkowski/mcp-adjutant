@@ -5,7 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
-use mcp_adjutant::cache::{list_evaluations, list_evaluations_page, load_cache_snapshot, open_cache_connection, EVALUATIONS_PAGE_SIZE};
+use mcp_adjutant::cache::{
+    list_evaluations, list_evaluations_page, load_cache_snapshot, open_cache_connection,
+    EVALUATIONS_PAGE_SIZE,
+};
 
 #[test]
 fn list_evaluations_returns_newest_first() {

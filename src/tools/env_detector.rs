@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::domain::AdjutantConfig;
 use crate::cache::mcp_workspace_root;
+use crate::domain::AdjutantConfig;
 
 struct ModuleBoundary {
     marker: &'static str,

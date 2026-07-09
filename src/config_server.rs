@@ -13,8 +13,8 @@ use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cache::{
-    load_cache_snapshot, list_evaluations_page, mcp_workspace_root, open_cache_connection,
-    CacheSnapshot, EVALUATIONS_PAGE_SIZE, EvaluationsPage,
+    list_evaluations_page, load_cache_snapshot, mcp_workspace_root, open_cache_connection,
+    CacheSnapshot, EvaluationsPage, EVALUATIONS_PAGE_SIZE,
 };
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
