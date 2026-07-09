@@ -7,7 +7,9 @@ use std::time::Duration;
 mod common;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
-use mcp_adjutant::agent::{run_scout_with_cache, ScoutAgent, ScoutCacheOutcome, SCOUT_SYSTEM_PROMPT};
+use mcp_adjutant::agent::{
+    run_scout_with_cache, ScoutAgent, ScoutCacheOutcome, SCOUT_SYSTEM_PROMPT,
+};
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
 
 struct ScriptClient(Mutex<VecDeque<LlmModelTurn>>);
@@ -116,15 +118,13 @@ async fn scout_cache_stores_finished_report() {
         panic!("expected fresh scout run");
     };
     assert!(report.contains("alpha marker"));
-    assert!(
-        cache
-            .lock()
-            .expect("cache lock")
-            .try_get_valid_insight(query)
-            .expect("lookup")
-            .expect("stored insight")
-            .contains("alpha marker")
-    );
+    assert!(cache
+        .lock()
+        .expect("cache lock")
+        .try_get_valid_insight(query)
+        .expect("lookup")
+        .expect("stored insight")
+        .contains("alpha marker"));
 
     fs::remove_dir_all(&project_root).ok();
 }
@@ -153,12 +153,10 @@ async fn scout_cache_invalidates_when_dependency_changes() {
     )
     .expect("modify auth source");
 
-    assert!(
-        cache
-            .try_get_valid_insight(paraphrase_query)
-            .expect("lookup after invalidation")
-            .is_none()
-    );
+    assert!(cache
+        .try_get_valid_insight(paraphrase_query)
+        .expect("lookup after invalidation")
+        .is_none());
 
     let outcome = run_scout_with_cache(
         &Arc::new(Mutex::new(cache)),
@@ -225,14 +223,12 @@ async fn scout_cache_skips_store_without_file_dependencies() {
         panic!("expected fresh scout run");
     };
     assert!(report.contains("no deps"));
-    assert!(
-        cache
-            .lock()
-            .expect("cache lock")
-            .try_get_valid_insight(query)
-            .expect("lookup")
-            .is_none()
-    );
+    assert!(cache
+        .lock()
+        .expect("cache lock")
+        .try_get_valid_insight(query)
+        .expect("lookup")
+        .is_none());
 
     fs::remove_dir_all(&project_root).ok();
 }

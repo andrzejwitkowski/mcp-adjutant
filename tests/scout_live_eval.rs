@@ -117,8 +117,7 @@ async fn handler_scout_context_returns_cache_hit_prefix() {
 
     let config_path = PathBuf::from("/Users/andrzej.witkowski/.config/mcp-adjutant/config.json");
     let config = Arc::new(
-        AdjutantConfig::load_from_file(&config_path)
-            .unwrap_or_else(|_| AdjutantConfig::default()),
+        AdjutantConfig::load_from_file(&config_path).unwrap_or_else(|_| AdjutantConfig::default()),
     );
     let registry = JobRegistry::default();
     let request_uuid = "handler-cache-hit-probe";

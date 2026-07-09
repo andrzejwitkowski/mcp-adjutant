@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, run_scout_with_cache, AgentLoopOrchestrator, EvaluatorAgent,
-    ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, run_scout_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent,
+    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -222,17 +222,13 @@ pub async fn handle_scout_context(
         request_uuid,
         SCOUT_CONTEXT_TOOL_NAME,
         move || async move {
-            let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
+            let cache_manager =
+                Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
             let client = create_scout_llm_client(&config)?;
             let agent = ScoutAgent::new(client);
-            match run_scout_with_cache(
-                &cache_manager,
-                &agent,
-                &query,
-                SCOUT_MAX_ITERATIONS,
-                true,
-            )
-            .await? {
+            match run_scout_with_cache(&cache_manager, &agent, &query, SCOUT_MAX_ITERATIONS, true)
+                .await?
+            {
                 ScoutCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
                 ScoutCacheOutcome::Fresh(report) => Ok(report),
             }

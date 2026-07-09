@@ -96,7 +96,10 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
     assert!(result.accumulated_data.contains("alpha marker"));
     assert!(result.accumulated_data.contains("## Scout"));
     assert!(result.agent_completed);
-    assert!(result.touched_files.iter().any(|path| path.ends_with("tests/fixtures/scout/readme.txt")));
+    assert!(result
+        .touched_files
+        .iter()
+        .any(|path| path.ends_with("tests/fixtures/scout/readme.txt")));
     assert!(
         result.input_prompt.contains("PHASE_1_SCOUT"),
         "enriched prompt should contain scout contract"
@@ -114,7 +117,10 @@ async fn scout_agent_parses_ast_calls_action() {
     assert_eq!(result.accumulated_data, "found invoke calls");
     assert_eq!(result.iterations, 2);
     assert!(result.agent_completed);
-    assert!(result.touched_files.iter().any(|path| path.ends_with("tests/fixtures/scout/sample.rs")));
+    assert!(result
+        .touched_files
+        .iter()
+        .any(|path| path.ends_with("tests/fixtures/scout/sample.rs")));
 }
 
 #[tokio::test]
