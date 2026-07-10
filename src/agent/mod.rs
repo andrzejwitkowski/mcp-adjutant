@@ -5,6 +5,7 @@ mod scout;
 mod text_pruner_mock;
 mod traits;
 mod triage;
+mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
 pub use builder::{
@@ -22,3 +23,4 @@ pub use traits::{AgentContext, AutonomousAgent};
 pub use triage::{
     triage_tool_set, BuildCommandRunner, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
+pub use web_fetcher::{WebFetcherAgent, WEB_FETCHER_SYSTEM_PROMPT};

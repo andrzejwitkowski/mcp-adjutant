@@ -20,19 +20,21 @@ pub use agent::{
     builder_tool_set, scout_tool_set, AgentContext, AgentLoopOrchestrator, AutonomousAgent,
     BuildCommandRunner, BuilderAgent, DefaultBuilderAgent, EvaluatorAgent, ScoutAgent,
     ScoutModelTurn, ScoutToolCall, SystemBuildRunner, TextPrunerMock, TriageAgent,
-    BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
+    WebFetcherAgent, BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT,
+    TRIAGE_SYSTEM_PROMPT, WEB_FETCHER_SYSTEM_PROMPT,
 };
 pub use cache::{
     LocalEmbeddingEngine, ProjectCacheManager, EMBEDDING_DIM, SEMANTIC_SIMILARITY_THRESHOLD,
 };
-pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
+pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider, WebFetcherProfile};
 pub use error::AdjutantConfigError;
 pub use jobs::{query_job_status_schema, JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 pub use llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
     create_llm_client_for_phase, create_scout_llm_client, create_triage_llm_client,
-    ConfiguredLlmClient, DeepSeekClient, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall,
-    LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
+    create_web_fetcher_llm_client, ConfiguredLlmClient, DeepSeekClient, LlmClient, LlmModelTurn,
+    LlmRequest, LlmTool, LlmToolCall, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult,
+    ToolParam,
 };
 pub use mcp::{
     evaluate_agent_performance_schema, generate_tests_and_scaffolding_schema,
