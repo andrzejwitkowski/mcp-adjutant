@@ -23,27 +23,24 @@ const BROWSING_SYSTEM_PROMPT: &str = r#"You are a web research assistant with li
 /// Approximate chars-per-token ratio for the v1 character-budget truncation.
 const CHARS_PER_TOKEN: usize = 4;
 
-pub struct WebFetcherAgent<RC: LlmClient, BC: LlmClient + 'static> {
+pub struct WebFetcherAgent<RC: LlmClient> {
     reasoning_client: RC,
     tools: LlmToolSet,
-    _browsing: std::marker::PhantomData<BC>,
 }
 
-impl<RC: LlmClient, BC: LlmClient + 'static> WebFetcherAgent<RC, BC> {
+impl<RC: LlmClient> WebFetcherAgent<RC> {
     /// Build the agent with a reasoning client (drives the loop) and a browsing
     /// client (used inside the `search_web` tool to reach the live web).
-    pub fn new(reasoning_client: RC, browsing_client: BC, profile: WebFetcherProfile) -> Self {
-        let token_budget = profile.token_budget;
-        let tools = web_fetcher_tool_set(browsing_client, token_budget);
+    pub fn new<BC: LlmClient + 'static>(
+        reasoning_client: RC,
+        browsing_client: BC,
+        profile: WebFetcherProfile,
+    ) -> Self {
+        let tools = web_fetcher_tool_set(browsing_client, profile.token_budget);
         Self {
             reasoning_client,
             tools,
-            _browsing: std::marker::PhantomData,
         }
-    }
-
-    pub fn tools(&self) -> &LlmToolSet {
-        &self.tools
     }
 
     fn build_user_message(context: &AgentContext) -> String {
@@ -59,7 +56,7 @@ impl<RC: LlmClient, BC: LlmClient + 'static> WebFetcherAgent<RC, BC> {
 }
 
 #[async_trait]
-impl<RC: LlmClient, BC: LlmClient + 'static> AutonomousAgent for WebFetcherAgent<RC, BC> {
+impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
     fn name(&self) -> &'static str {
         "web_fetcher_agent"
     }
@@ -165,8 +162,11 @@ impl<BC: LlmClient> LlmTool for SearchWebTool<BC> {
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         let query = required_str(arguments, "query")?;
-        let focus = optional_str(arguments, "focus");
-        let user_message = match focus.as_deref() {
+        let focus = arguments
+            .get("focus")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let user_message = match focus {
             Some(focus) => format!("Query: {query}\nFocus: {focus}"),
             None => format!("Query: {query}"),
         };
@@ -235,14 +235,6 @@ fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| format!("tool argument '{key}' must be a string"))
-}
-
-fn optional_str(arguments: &Value, key: &str) -> Option<String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
 }
 
 #[cfg(test)]

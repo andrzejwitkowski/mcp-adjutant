@@ -529,8 +529,7 @@ pub async fn handle_web_fetch(
 
             let reasoning_client = create_web_fetcher_llm_client(&config)?;
             let browsing_client = create_llm_client(web_profile.browsing.clone())?;
-            // ponytail: prefer configured hop count, clamped to a sane [1, 10] range.
-            let max_hops = web_profile.max_search_hops.clamp(1, 10);
+            let max_hops = web_profile.max_search_hops;
 
             let agent = WebFetcherAgent::new(reasoning_client, browsing_client, web_profile);
             let result =
