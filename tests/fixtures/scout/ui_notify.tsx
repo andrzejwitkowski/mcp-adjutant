@@ -1,14 +1,14 @@
 import { emitUiNotify } from './uiLog'
 
 export function demo() {
-subject: {
+  emitUiNotify({
     headline: {
       component: 'demo',
       message: 'hello',
     },
     meta: { tags: ['ui'], correlationId: '1' },
   })
-subject: {
+  emitUiNotify({
     headline: {
       component: 'demo',
       message: 'again',

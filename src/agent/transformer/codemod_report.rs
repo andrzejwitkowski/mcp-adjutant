@@ -299,21 +299,21 @@ fn detect_added_field(line: &str) -> Option<String> {
 }
 
 fn truncate_line(line: &str) -> String {
-    if line.len() <= 120 {
-        line.to_string()
-    } else {
-        format!("{}…", &line[..117])
-    }
+    truncate_chars(line, 120)
 }
 
 fn truncate_snippet(snippet: &str) -> String {
     let lines: Vec<&str> = snippet.lines().take(MAX_SNIPPET_LINES).collect();
-    let mut out = lines.join("\n");
-    if out.len() > MAX_SNIPPET_CHARS {
-        out.truncate(MAX_SNIPPET_CHARS);
-        out.push('…');
+    truncate_chars(&lines.join("\n"), MAX_SNIPPET_CHARS)
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
     }
-    out
 }
 
 #[cfg(test)]

@@ -66,6 +66,9 @@ pub fn try_python_call_codemod(
         }
     }
 
+    if changed && !has_source_module {
+        return None;
+    }
     changed.then(|| out.join("\n"))
 }
 

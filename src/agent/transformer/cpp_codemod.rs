@@ -95,11 +95,7 @@ fn strip_inline_tags_assign(line: &str) -> String {
     };
     let rest = &line[start..];
     let comma = rest.find(',').map(|i| start + i + 1).unwrap_or(start);
-    let mut out = format!("{}{}", &line[..start], &line[comma..]);
-    while out.contains("  ") {
-        out = out.replace("  ", " ");
-    }
-    out.replace(" { ,", " {").replace("{ ,", "{")
+    line[..start].to_string() + &line[comma..].replace(" { ,", " {").replace("{ ,", "{")
 }
 
 #[cfg(test)]

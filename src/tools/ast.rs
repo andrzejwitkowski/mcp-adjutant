@@ -210,17 +210,26 @@ fn type_name_matches(captured: &str, type_name: &str) -> bool {
     captured == type_name || captured.ends_with(&format!("::{type_name}"))
 }
 
-fn enclosing_call_range(mut node: Node) -> LineRange {
-    while let Some(parent) = node.parent() {
+fn enclosing_call_range(node: Node) -> LineRange {
+    let fallback = line_range_for_node(node);
+    let mut current = node;
+    while let Some(parent) = current.parent() {
         if matches!(
             parent.kind(),
-            "call_expression" | "method_invocation" | "call" | "function_call_expression"
+            "call_expression"
+                | "method_invocation"
+                | "call"
+                | "function_call_expression"
+                | "invocation"
         ) {
-            node = parent;
-            break;
+            return line_range_for_node(parent);
         }
-        node = parent;
+        current = parent;
     }
+    fallback
+}
+
+fn line_range_for_node(node: Node) -> LineRange {
     LineRange {
         start: node.start_position().row + 1,
         end: node.end_position().row + 1,
@@ -449,5 +458,12 @@ mod tests {
             err.contains("cannot determine language"),
             "unexpected: {err}"
         );
+    }
+
+    #[test]
+    fn sql_call_ranges_stay_local_without_file_span() {
+        let lines =
+            AstUsageFinder::find_calls_in_file(&fixture("sample.sql"), "invoke").expect("scan");
+        assert_eq!(lines, vec![2, 4]);
     }
 }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::cache::resolve_workspace_path;
+use crate::cache::resolve_workspace_path_bounded;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetLineRange {
@@ -95,7 +95,7 @@ fn parse_refactor_target_item(item: Value) -> Result<RefactorTarget, String> {
     }
 
     Ok(RefactorTarget {
-        file_path: resolve_workspace_path(file_path),
+        file_path: resolve_workspace_path_bounded(file_path)?,
         lines,
         ranges,
     })
@@ -154,5 +154,18 @@ impl serde::Serialize for TargetLineRange {
         state.serialize_field("start", &self.start)?;
         state.serialize_field("end", &self.end)?;
         state.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_path_traversal_in_targets() {
+        let err =
+            parse_refactor_targets_json(r#"[{"file_path":"../../../etc/passwd","lines":[1]}]"#)
+                .expect_err("must reject escape");
+        assert!(err.contains("workspace"), "unexpected: {err}");
     }
 }

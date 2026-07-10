@@ -108,9 +108,18 @@ impl<
     fn build_user_message(context: &AgentContext) -> String {
         const MAX_OBSERVATION_CHARS: usize = 24_000;
         let observations = if context.accumulated_data.len() > MAX_OBSERVATION_CHARS {
+            let mut start = context
+                .accumulated_data
+                .len()
+                .saturating_sub(MAX_OBSERVATION_CHARS);
+            while start < context.accumulated_data.len()
+                && !context.accumulated_data.is_char_boundary(start)
+            {
+                start += 1;
+            }
             format!(
                 "(observation history truncated)\n{}",
-                &context.accumulated_data[context.accumulated_data.len() - MAX_OBSERVATION_CHARS..]
+                &context.accumulated_data[start..]
             )
         } else {
             context.accumulated_data.clone()
