@@ -525,10 +525,7 @@ pub async fn handle_web_fetch(
         request_uuid,
         WEB_FETCH_TOOL_NAME,
         move || async move {
-            let web_profile = config
-                .web_fetcher
-                .clone()
-                .unwrap_or_else(crate::domain::WebFetcherProfile::default);
+            let web_profile = config.web_fetcher.clone().unwrap_or_default();
 
             let reasoning_client = create_web_fetcher_llm_client(&config)?;
             let browsing_client = create_llm_client(web_profile.browsing.clone())?;
@@ -536,7 +533,8 @@ pub async fn handle_web_fetch(
             let max_hops = web_profile.max_search_hops.clamp(1, 10);
 
             let agent = WebFetcherAgent::new(reasoning_client, browsing_client, web_profile);
-            let result = AgentLoopOrchestrator::run(&agent, search_phrase.clone(), max_hops).await?;
+            let result =
+                AgentLoopOrchestrator::run(&agent, search_phrase.clone(), max_hops).await?;
 
             if result.is_finished {
                 return Ok(result.accumulated_data);

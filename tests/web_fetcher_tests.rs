@@ -45,9 +45,10 @@ impl LlmClient for BrowsingEcho {
 }
 
 fn profile_with_budget(token_budget: u32) -> WebFetcherProfile {
-    let mut profile = WebFetcherProfile::default();
-    profile.token_budget = token_budget;
-    profile
+    WebFetcherProfile {
+        token_budget,
+        ..Default::default()
+    }
 }
 
 #[tokio::test]
@@ -145,7 +146,6 @@ async fn web_fetcher_accumulates_search_results_across_hops() {
     // The refined-query grounded response (useEffect) must appear somewhere in
     // the observation history before finalize replaced accumulated_data.
     assert!(
-        result.accumulated_data.contains("useEffect")
-            || result.input_prompt.contains("useEffect")
+        result.accumulated_data.contains("useEffect") || result.input_prompt.contains("useEffect")
     );
 }

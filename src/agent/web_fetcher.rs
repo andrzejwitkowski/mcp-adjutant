@@ -144,7 +144,11 @@ impl<BC: LlmClient> SearchWebTool<BC> {
                 "search_web",
                 "Search the live web via a browsing model and return grounded, cited markdown.",
             )
-            .string_param("query", "Web search query for the documentation topic.", true)
+            .string_param(
+                "query",
+                "Web search query for the documentation topic.",
+                true,
+            )
             .string_param(
                 "focus",
                 "Optional focus to narrow results (e.g. 'official docs', 'API reference').",
