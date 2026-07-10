@@ -1,6 +1,6 @@
 export type Provider = 'deep_seek' | 'open_router' | 'open_ai' | 'custom'
 
-export type AgentPhase = 'scout' | 'triage' | 'builder' | 'evaluator'
+export type AgentPhase = 'scout' | 'triage' | 'builder' | 'evaluator' | 'web_fetcher'
 
 export interface PhaseProfile {
   provider: Provider
@@ -11,11 +11,18 @@ export interface PhaseProfile {
   temperature: number
 }
 
+export interface WebFetcherProfile {
+  browsing: PhaseProfile
+  max_search_hops: number
+  token_budget: number
+}
+
 export interface AdjutantConfig {
   phases: Partial<Record<AgentPhase, PhaseProfile>>
   server_port: number
   storage_path: string
   triage_overrides?: Record<string, string> | null
+  web_fetcher?: WebFetcherProfile | null
 }
 
 export interface AgentEvaluationRow {

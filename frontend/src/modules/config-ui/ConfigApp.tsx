@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LlmClientCatalog } from './LlmClientCatalog'
 import { NavBar } from './NavBar'
-import type { AdjutantConfig, AgentPhase, PhaseProfile } from './types'
+import type { AdjutantConfig, AgentPhase, PhaseProfile, WebFetcherProfile } from './types'
 import './config-ui.css'
 
 const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
@@ -25,6 +25,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     title: 'Evaluator',
     hint: 'QA sub-agent output quality (scores 1–10)',
   },
+  {
+    phase: 'web_fetcher',
+    title: 'Web Fetcher',
+    hint: 'Reasoning model that drives web doc research',
+  },
 ]
 
 const DEFAULT_PROFILE: PhaseProfile = {
@@ -42,6 +47,7 @@ function emptyConfig(): AdjutantConfig {
     server_port: 3000,
     storage_path: '',
     triage_overrides: null,
+    web_fetcher: null,
   }
 }
 
@@ -90,6 +96,17 @@ export function ConfigApp() {
       ...current,
       phases: { ...current.phases, [phase]: profile },
     }))
+  }
+
+  function updateWebFetcher(patch: Partial<WebFetcherProfile>) {
+    setConfig((current) => {
+      const existing = current.web_fetcher ?? {
+        browsing: { ...DEFAULT_PROFILE },
+        max_search_hops: 3,
+        token_budget: 8000,
+      }
+      return { ...current, web_fetcher: { ...existing, ...patch } }
+    })
   }
 
   async function saveConfig() {
@@ -153,6 +170,49 @@ export function ConfigApp() {
           />
         </section>
       ))}
+
+      <section className="agent-panel">
+        <header>
+          <h2>Web Fetcher — browsing model</h2>
+          <p>
+            The browsing-capable model (OpenRouter :online / Perplexity Sonar) that
+            performs live web searches inside the search_web tool.
+          </p>
+        </header>
+        <LlmClientCatalog
+          groupName="web_fetcher_browsing"
+          profile={config.web_fetcher?.browsing ?? { ...DEFAULT_PROFILE }}
+          onChange={(profile) => updateWebFetcher({ browsing: profile })}
+        />
+        <label className="config-app__tunable">
+          Max search hops
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={config.web_fetcher?.max_search_hops ?? 3}
+            onChange={(e) =>
+              updateWebFetcher({
+                max_search_hops: Number(e.target.value),
+              })
+            }
+          />
+        </label>
+        <label className="config-app__tunable">
+          Token budget
+          <input
+            type="number"
+            min={1000}
+            step={1000}
+            value={config.web_fetcher?.token_budget ?? 8000}
+            onChange={(e) =>
+              updateWebFetcher({
+                token_budget: Number(e.target.value),
+              })
+            }
+          />
+        </label>
+      </section>
 
       <footer className="config-app__footer">
         <button type="button" onClick={saveConfig} disabled={status === 'saving'}>
