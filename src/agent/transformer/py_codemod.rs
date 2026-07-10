@@ -80,7 +80,7 @@ mod tests {
         let out = try_python_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add source_module",
-            &PathBuf::from("scripts/sort_demo/bubble_sort.py"),
+            &PathBuf::from("scripts/demo_py/sample.py"),
         )
         .expect("codemod");
 
@@ -89,6 +89,6 @@ mod tests {
         assert!(!out.contains("headline="));
         assert!(!out.contains("message="));
         assert!(!out.contains("tags="));
-        assert!(out.contains("source_module=\"sort_demo.bubble_sort\""));
+        assert!(out.contains("source_module=\"demo_py.sample\""));
     }
 }

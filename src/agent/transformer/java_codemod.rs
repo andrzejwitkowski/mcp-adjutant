@@ -74,7 +74,7 @@ mod tests {
         let out = try_java_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add sourceModule",
-            &PathBuf::from("scripts/sort_demo_java/src/main/java/sortdemo/BubbleSort.java"),
+            &PathBuf::from("scripts/lza_e2e_java/src/main/java/lzademo/BlockLza.java"),
         )
         .expect("codemod");
 
@@ -83,6 +83,6 @@ mod tests {
         assert!(!out.contains(".headline("));
         assert!(!out.contains(".message("));
         assert!(!out.contains(".tags("));
-        assert!(out.contains(".sourceModule(\"sortdemo.BubbleSort\")"));
+        assert!(out.contains(".sourceModule(\"lzademo.BlockLza\")"));
     }
 }

@@ -1,4 +1,6 @@
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+
+use crate::cache::{mcp_workspace_root, resolve_workspace_path};
 
 pub(crate) fn instruction_contains_field_migration(instruction: &str) -> bool {
     let lower = instruction.to_lowercase();
@@ -31,13 +33,21 @@ pub(crate) fn infer_source_module(
         return Some(module);
     }
 
-    let parts = path_components(file_path);
+    let rel = workspace_relative(file_path);
+    let parts = path_components(&rel);
     match style {
-        ModuleIdStyle::Snake => infer_snake_module(&parts, file_path),
-        ModuleIdStyle::RustPath => infer_rust_module(&parts, file_path),
-        ModuleIdStyle::JavaPackage => infer_java_module(&parts, file_path),
-        ModuleIdStyle::TsSlash => infer_ts_module(&parts, file_path),
+        ModuleIdStyle::Snake => infer_snake_module(&parts, &rel),
+        ModuleIdStyle::RustPath => infer_rust_module(&parts, &rel),
+        ModuleIdStyle::JavaPackage => infer_java_module(&parts, &rel),
+        ModuleIdStyle::TsSlash => infer_ts_module(&parts, &rel),
     }
+}
+
+fn workspace_relative(path: &Path) -> PathBuf {
+    let abs = resolve_workspace_path(path);
+    abs.strip_prefix(mcp_workspace_root())
+        .map(Path::to_path_buf)
+        .unwrap_or(abs)
 }
 
 fn explicit_module_from_instruction(instruction: &str) -> Option<String> {
@@ -88,6 +98,11 @@ fn infer_snake_module(parts: &[String], file_path: &Path) -> Option<String> {
             parents.push(parts[idx - 1].clone());
         }
         return Some(join_sep(&parents, stem, "."));
+    }
+
+    if let Some(idx) = parts.iter().position(|part| part == "scripts") {
+        let parents = &parts[idx + 1..parts.len().saturating_sub(1)];
+        return Some(join_sep(parents, stem, "."));
     }
 
     const SKIP: &[&str] = &["scripts", "test", "tests", "benches", "examples"];
@@ -175,6 +190,25 @@ mod tests {
         assert_eq!(
             infer_source_module(&path, "add source_module", ModuleIdStyle::Snake).as_deref(),
             Some("agent.transformer.foo")
+        );
+    }
+
+    #[test]
+    fn snake_from_lza_e2e_scripts() {
+        let path = PathBuf::from("scripts/lza_e2e_py/block_lza.py");
+        assert_eq!(
+            infer_source_module(&path, "add source_module", ModuleIdStyle::Snake).as_deref(),
+            Some("lza_e2e_py.block_lza")
+        );
+    }
+
+    #[test]
+    fn snake_from_absolute_lza_scripts_path() {
+        let root = mcp_workspace_root();
+        let path = root.join("scripts/lza_e2e_py/block_lza.py");
+        assert_eq!(
+            infer_source_module(&path, "add source_module", ModuleIdStyle::Snake).as_deref(),
+            Some("lza_e2e_py.block_lza")
         );
     }
 

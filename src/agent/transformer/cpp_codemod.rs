@@ -30,22 +30,49 @@ pub fn try_cpp_call_codemod(
         let field_indent = format!("{indent}    ");
         let mut rewritten = line.to_string();
 
-        if trimmed.starts_with(".headline =") || trimmed.starts_with(".headline=") {
-            rewritten = rewritten.replacen(".headline", ".subject", 1);
+        if trimmed.contains(".headline =") || trimmed.contains(".headline=") {
+            rewritten = rewritten
+                .replace(".headline =", ".subject =")
+                .replace(".headline=", ".subject=");
             changed = true;
-        } else if trimmed.starts_with(".message =") || trimmed.starts_with(".message=") {
-            rewritten = rewritten.replacen(".message", ".summary", 1);
+        }
+        if trimmed.contains(".message =") || trimmed.contains(".message=") {
+            rewritten = rewritten
+                .replace(".message =", ".summary =")
+                .replace(".message=", ".summary=");
             changed = true;
-        } else if trimmed.starts_with(".source_module =") || trimmed.starts_with(".source_module=") {
+        }
+        if trimmed.contains(".source_module =") || trimmed.contains(".source_module=") {
             rewritten = format!("{field_indent}.source_module = \"{source_module}\",");
             changed = true;
             has_source_module = true;
         }
+        if trimmed.contains(".tags =") || trimmed.contains(".tags=") {
+            rewritten = strip_inline_tags_assign(&rewritten);
+            changed = true;
+        }
 
         if !has_source_module
-            && (trimmed.starts_with(".meta =") || trimmed.contains("SortMeta{"))
+            && (trimmed.starts_with(".meta =") || trimmed.starts_with(".meta="))
+            && rewritten.contains("correlation_id")
         {
-            out.push(line.to_string());
+            if let Some(idx) = rewritten.find(".correlation_id") {
+                rewritten = format!(
+                    "{}{}.source_module = \"{source_module}\", {}",
+                    &rewritten[..idx],
+                    field_indent,
+                    &rewritten[idx..]
+                );
+                has_source_module = true;
+                changed = true;
+            }
+        }
+
+        if !has_source_module
+            && (trimmed.starts_with(".meta =") || trimmed.starts_with(".meta="))
+            && !trimmed.contains("correlation_id")
+        {
+            out.push(rewritten);
             continue;
         }
 
@@ -66,6 +93,19 @@ pub fn try_cpp_call_codemod(
     changed.then(|| out.join("\n"))
 }
 
+fn strip_inline_tags_assign(line: &str) -> String {
+    let Some(start) = line.find(".tags =").or_else(|| line.find(".tags=")) else {
+        return line.to_string();
+    };
+    let rest = &line[start..];
+    let comma = rest.find(',').map(|i| start + i + 1).unwrap_or(start);
+    let mut out = format!("{}{}", &line[..start], &line[comma..]);
+    while out.contains("  ") {
+        out = out.replace("  ", " ");
+    }
+    out.replace(" { ,", " {").replace("{ ,", "{")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,7 +117,7 @@ mod tests {
         let out = try_cpp_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add source_module",
-            &PathBuf::from("scripts/sort_demo_cpp/src/bubble_sort.cpp"),
+            &PathBuf::from("scripts/lza_e2e_cpp/src/block_lza.cpp"),
         )
         .expect("codemod");
 
@@ -85,6 +125,24 @@ mod tests {
         assert!(out.contains(".summary ="));
         assert!(!out.contains(".headline ="));
         assert!(!out.contains(".tags ="));
-        assert!(out.contains(".source_module = \"sort_demo_cpp.bubble_sort\""));
+        assert!(out.contains(".source_module = \"lza_e2e_cpp.block_lza\""));
+    }
+
+    #[test]
+    fn renames_c_compound_literal_inline_fields() {
+        let snippet = "    log_lza_event(&(LzaEvent){\n        .headline = { .component = \"block\", .message = \"buffer compressed\" },\n        .meta = { .tags = \"lza_e2e_c\", .correlation_id = NULL },\n    });";
+        let out = try_cpp_call_codemod(
+            snippet,
+            "rename headline to subject, message to summary, remove tags, add source_module",
+            &PathBuf::from("scripts/lza_e2e_c/src/block_lza.c"),
+        )
+        .expect("codemod");
+
+        assert!(out.contains(".subject ="));
+        assert!(out.contains(".summary ="));
+        assert!(!out.contains(".headline ="));
+        assert!(!out.contains(".message ="));
+        assert!(!out.contains(".tags ="));
+        assert!(out.contains(".source_module = \"lza_e2e_c.block_lza\""));
     }
 }

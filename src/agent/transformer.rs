@@ -2,6 +2,7 @@ mod codemod_report;
 mod cpp_codemod;
 mod field_migration;
 mod java_codemod;
+mod jvm_type_codemod;
 mod py_codemod;
 mod struct_codemod;
 mod tools;
@@ -22,6 +23,7 @@ use crate::tools::{edit_file_line, edit_file_range, read_file_range};
 use codemod_report::{format_change_report, summarize_snippet_diff, verification_passed, verify_field_migration};
 use cpp_codemod::try_cpp_call_codemod;
 use java_codemod::try_java_call_codemod;
+use jvm_type_codemod::{apply_jvm_type_codemod, find_jvm_log_type_files};
 use py_codemod::try_python_call_codemod;
 use struct_codemod::try_rust_struct_literal_codemod;
 use ts_codemod::try_ts_object_literal_codemod;
@@ -340,6 +342,38 @@ impl<
             });
         }
 
+        if instruction_contains_field_migration(transformation_rule) {
+            let scope = self.scope_path.clone().or_else(|| {
+                targets
+                    .first()
+                    .and_then(|t| t.file_path.parent().map(Path::to_path_buf))
+            });
+            if let Some(scope) = scope {
+                for path in find_jvm_log_type_files(&scope) {
+                    if touched.iter().any(|p| p == &path) {
+                        continue;
+                    }
+                    match apply_jvm_type_codemod(&path, transformation_rule) {
+                        Ok(true) => {
+                            touched.push(path.clone());
+                            context.touched_files.push(path.clone());
+                            context.accumulated_data.push_str(&format!(
+                                "Applied JVM type codemod to {}\n",
+                                path.display()
+                            ));
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            errors.push(format!("{}: {err}", path.display()));
+                            context
+                                .accumulated_data
+                                .push_str(&format!("JVM type codemod error: {err}\n"));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(touched)
     }
 
@@ -357,6 +391,7 @@ impl<
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
+        let field_migration = instruction_contains_field_migration(transformation_rule);
         let new_content = match ext {
             "rs" => try_rust_struct_literal_codemod(&snippet, transformation_rule, path),
             "ts" | "tsx" => try_ts_object_literal_codemod(&snippet, transformation_rule, path),
@@ -367,8 +402,20 @@ impl<
             }
             _ => None,
         }
-        .or_else(|| self.codemod_range(path, start, end, transformation_rule).ok())
-        .ok_or_else(|| "codemod produced no replacement".to_string())?;
+        .or_else(|| {
+            if field_migration {
+                None
+            } else {
+                self.codemod_range(path, start, end, transformation_rule).ok()
+            }
+        })
+        .ok_or_else(|| {
+            if field_migration {
+                "field migration codemod produced no replacement".to_string()
+            } else {
+                "codemod produced no replacement".to_string()
+            }
+        })?;
         let changes = summarize_snippet_diff(&snippet, &new_content, start);
         edit_file_range(path, start, end, &new_content)?;
         context.accumulated_data.push_str(&format!(
