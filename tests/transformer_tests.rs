@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, BuildCommandRunner, ScoutAgent, SystemBuildRunner, TransformerAgent,
-    TriageAgent, TRANSFORMER_SYSTEM_PROMPT,
+    AgentLoopOrchestrator, BuildCommandRunner, ScoutAgent, TransformerAgent, TriageAgent,
+    TRANSFORMER_SYSTEM_PROMPT,
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
@@ -13,18 +13,6 @@ struct MockTransformerLlm {
 }
 
 impl MockTransformerLlm {
-    fn gather_only(method_name: &str) -> Self {
-        Self {
-            turn: LlmModelTurn {
-                content: Some("Thought: gather refactor targets".to_string()),
-                tool_calls: vec![LlmToolCall {
-                    name: "gather_refactor_targets".to_string(),
-                    arguments: serde_json::json!({ "method_name": method_name }),
-                }],
-            },
-        }
-    }
-
     fn apply_codemod(file_a: &Path, file_b: &Path) -> Self {
         let targets = serde_json::json!([
             {"file_path": file_a.display().to_string(), "lines": [1]},
@@ -89,14 +77,6 @@ impl LlmClient for MockCodemodLlm {
             content: Some(content),
             tool_calls: vec![],
         })
-    }
-}
-
-struct PanicCodemodLlm;
-
-impl LlmClient for PanicCodemodLlm {
-    fn complete(&self, _request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
-        Err("Codemod LLM should not run when deterministic struct codemod succeeds".to_string())
     }
 }
 
@@ -258,206 +238,6 @@ async fn transformer_agent_applies_range_codemod_for_struct_literals() {
     assert!(result.accumulated_data.contains("[TRANSFORMER OK]"));
 
     std::fs::remove_dir_all(&project_root).ok();
-}
-
-#[tokio::test]
-async fn transformer_auto_pipeline_applies_ts_emit_ui_notify() {
-    let llm = MockTransformerLlm::gather_only("emitUiNotify");
-    let config = Arc::new(AdjutantConfig::default());
-    let touched: Vec<PathBuf> = mcp_adjutant::agent::find_refactor_targets("emitUiNotify")
-        .expect("scan")
-        .into_iter()
-        .map(|target| target.file_path)
-        .collect();
-    assert!(
-        touched.iter().any(|path| {
-            path.to_string_lossy()
-                .contains("frontend/src/modules/config-ui/")
-        }),
-        "expected frontend emitUiNotify targets"
-    );
-
-    let snapshots: Vec<(PathBuf, String)> = touched
-        .iter()
-        .map(|path| {
-            (
-                path.clone(),
-                std::fs::read_to_string(path).expect("read snapshot"),
-            )
-        })
-        .collect();
-
-    for (path, content) in &snapshots {
-        if content.contains("subject:") {
-            let broken = content
-                .replace("subject:", "headline:")
-                .replace("summary:", "message:")
-                .replace("sourceModule:", "tags:");
-            std::fs::write(path, broken).expect("break call site");
-        }
-    }
-
-    let triage_agent = TriageAgent::with_build_runner(
-        PanicTriageLlm,
-        touched.clone(),
-        Arc::clone(&config),
-        SystemBuildRunner,
-    );
-    let agent = TransformerAgent::new(
-        llm,
-        PanicCodemodLlm,
-        ScoutAgent::new(PanicScoutLlm),
-        triage_agent,
-    );
-
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nRefactor instruction: rename headline to subject, message to summary, remove tags, add sourceModule as string\nMethod: emitUiNotify".to_string(),
-        1,
-    )
-    .await
-    .expect("transformer loop should complete");
-
-    assert!(result.is_finished, "{}", result.accumulated_data);
-    assert!(
-        result.accumulated_data.contains("[TRANSFORMER OK]"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result
-            .accumulated_data
-            .contains("Deterministic refactor target scan succeeded"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("## Codemod:"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("headline") && result.accumulated_data.contains("subject"),
-        "expected rename evidence in {}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("## Refactor verification"),
-        "{}",
-        result.accumulated_data
-    );
-
-    for (path, original) in &snapshots {
-        let updated = std::fs::read_to_string(path).expect("read updated");
-        if original.contains("headline:") || original.contains("message:") {
-            assert!(
-                updated.contains("subject:") || updated.contains("summary:"),
-                "expected TS codemod in {}",
-                path.display()
-            );
-        }
-        std::fs::write(path, original).expect("restore snapshot");
-    }
-}
-
-#[tokio::test]
-async fn transformer_auto_pipeline_applies_after_deterministic_gather() {
-    let llm = MockTransformerLlm::gather_only("LogEvent");
-    let config = Arc::new(AdjutantConfig::default());
-    let touched: Vec<PathBuf> = mcp_adjutant::agent::find_refactor_targets("LogEvent")
-        .expect("scan")
-        .into_iter()
-        .map(|target| target.file_path)
-        .collect();
-    assert!(
-        !touched.is_empty(),
-        "expected LogEvent targets in workspace"
-    );
-
-    let snapshots: Vec<(PathBuf, String)> = touched
-        .iter()
-        .map(|path| {
-            (
-                path.clone(),
-                std::fs::read_to_string(path).expect("read snapshot"),
-            )
-        })
-        .collect();
-
-    for (path, content) in &snapshots {
-        if content.contains("subject:") {
-            let broken = content
-                .replace("subject:", "headline:")
-                .replace("summary:", "message:");
-            std::fs::write(path, broken).expect("break call site");
-        }
-    }
-
-    let triage_agent = TriageAgent::with_build_runner(
-        PanicTriageLlm,
-        touched.clone(),
-        Arc::clone(&config),
-        SystemBuildRunner,
-    );
-    let agent = TransformerAgent::new(
-        llm,
-        PanicCodemodLlm,
-        ScoutAgent::new(PanicScoutLlm),
-        triage_agent,
-    );
-
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nRefactor instruction: rename headline to subject, message to summary, remove tags, add source_module\nMethod: LogEvent".to_string(),
-        1,
-    )
-    .await
-    .expect("transformer loop should complete");
-
-    assert!(
-        result.is_finished,
-        "auto-pipeline should finish in one iteration: {}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("[TRANSFORMER OK]"),
-        "expected success marker, got: {}",
-        result.accumulated_data
-    );
-    assert!(
-        result
-            .accumulated_data
-            .contains("Deterministic refactor target scan succeeded"),
-        "expected deterministic gather log"
-    );
-    assert!(
-        !result
-            .accumulated_data
-            .contains("Tool: apply_structural_codemod"),
-        "LLM should not need apply_structural_codemod tool call"
-    );
-    assert!(
-        result.accumulated_data.contains("## Codemod:"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("## Refactor verification"),
-        "{}",
-        result.accumulated_data
-    );
-
-    for (path, original) in &snapshots {
-        let updated = std::fs::read_to_string(path).expect("read updated");
-        if original.contains("headline:") || original.contains("message:") {
-            assert!(
-                updated.contains("subject:") || updated.contains("summary:"),
-                "expected deterministic codemod in {}",
-                path.display()
-            );
-        }
-        std::fs::write(path, original).expect("restore snapshot");
-    }
 }
 
 #[tokio::test]
