@@ -10,4 +10,7 @@ pub use inspect::{
     CacheSnapshot, EvaluationsPage, EVALUATIONS_PAGE_SIZE,
 };
 pub use manager::{ProjectCacheManager, SEMANTIC_SIMILARITY_THRESHOLD};
-pub use project::{mcp_workspace_root, open_cache_connection, resolve_workspace_path};
+pub use project::{
+    mcp_workspace_root, open_cache_connection, resolve_workspace_path,
+    resolve_workspace_path_bounded,
+};

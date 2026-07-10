@@ -1,5 +1,6 @@
 import { LLM_CLIENTS } from './clients'
 import type { PhaseProfile, Provider } from './types'
+import { emitUiNotify } from './uiLog'
 
 interface LlmClientCatalogProps {
   groupName: string
@@ -36,13 +37,23 @@ export function LlmClientCatalog({
                   type="radio"
                   name={`provider-${groupName}`}
                   checked={selected}
-                  onChange={() =>
+                  onChange={() => {
+                    emitUiNotify({
+                      subject: {
+                        component: 'llm-catalog',
+                        summary: `provider selected: ${client.provider}`,
+                      },
+                      meta: {
+                          sourceModule: 'config-ui/LlmClientCatalog',
+                        correlationId: null,
+                      },
+                    })
                     onChange({
                       ...profile,
                       provider: client.provider,
                       ...clientDefaults(client.provider),
                     })
-                  }
+                  }}
                 />
                 <span className="llm-client-card__title">{client.label}</span>
               </label>

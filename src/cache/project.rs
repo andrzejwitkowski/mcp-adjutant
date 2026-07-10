@@ -53,6 +53,44 @@ pub fn mcp_workspace_root() -> PathBuf {
         })
 }
 
+/// Resolve a path under [`mcp_workspace_root`], rejecting `..` escapes.
+pub fn resolve_workspace_path_bounded(path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    use std::path::Component;
+
+    let root = mcp_workspace_root();
+    let path = path.as_ref();
+    let stripped = path
+        .to_string_lossy()
+        .strip_prefix("./")
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let p = Path::new(&stripped);
+
+    if p.is_absolute() {
+        return Ok(p.to_path_buf());
+    }
+
+    let mut out = root.clone();
+    for comp in p.components() {
+        match comp {
+            Component::Normal(part) => out.push(part),
+            Component::ParentDir => {
+                if out == root || !out.pop() {
+                    return Err("file_path must stay within the workspace".to_string());
+                }
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("file_path must stay within the workspace".to_string());
+            }
+        }
+    }
+    if !out.starts_with(&root) {
+        return Err("file_path must stay within the workspace".to_string());
+    }
+    Ok(out)
+}
+
 /// Resolve a relative path against [`mcp_workspace_root`].
 pub fn resolve_workspace_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();

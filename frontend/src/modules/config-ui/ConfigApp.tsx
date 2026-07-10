@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { LlmClientCatalog } from './LlmClientCatalog'
 import { NavBar } from './NavBar'
 import type { AdjutantConfig, AgentPhase, PhaseProfile } from './types'
+import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
 const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
@@ -19,6 +20,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     phase: 'builder',
     title: 'Builder',
     hint: 'Test generation and scaffolding',
+  },
+  {
+    phase: 'transformer',
+    title: 'Transformer',
+    hint: 'Global AST refactors and signature propagation',
   },
   {
     phase: 'evaluator',
@@ -75,6 +81,16 @@ export function ConfigApp() {
         setStatus('ready')
       })
       .catch((error: Error) => {
+        emitUiNotify({
+          subject: {
+            component: 'config-app',
+            summary: `load failed: ${error.message}`,
+          },
+          meta: {
+              sourceModule: 'config-ui/ConfigApp',
+            correlationId: null,
+          },
+        })
         setLoaded(false)
         setStatus('error')
         setMessage(error.message)
@@ -106,6 +122,16 @@ export function ConfigApp() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const saved = (await response.json()) as AdjutantConfig
       setConfig(saved)
+      emitUiNotify({
+        subject: {
+          component: 'config-app',
+          summary: 'configuration saved',
+        },
+        meta: {
+            sourceModule: 'config-ui/ConfigApp',
+          correlationId: null,
+        },
+      })
       setStatus('ready')
       setMessage('Saved')
     } catch (error) {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageShell } from './NavBar'
 import type { CacheSnapshot } from './types'
+import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
 function formatTimestamp(unixSeconds: number) {
@@ -30,6 +31,16 @@ export function ScoutCacheView() {
         setStatus('ready')
       })
       .catch((error: Error) => {
+        emitUiNotify({
+          subject: {
+            component: 'scout-cache',
+            summary: `load failed: ${error.message}`,
+          },
+          meta: {
+              sourceModule: 'config-ui/ScoutCacheView',
+            correlationId: null,
+          },
+        })
         setStatus('error')
         setMessage(error.message)
       })

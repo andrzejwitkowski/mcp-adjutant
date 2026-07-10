@@ -1,6 +1,6 @@
 export type Provider = 'deep_seek' | 'open_router' | 'open_ai' | 'custom'
 
-export type AgentPhase = 'scout' | 'triage' | 'builder' | 'evaluator'
+export type AgentPhase = 'scout' | 'triage' | 'builder' | 'transformer' | 'evaluator'
 
 export interface PhaseProfile {
   provider: Provider
@@ -87,4 +87,19 @@ export interface LlmClientDefinition {
   description: string
   defaultBaseUrl: string
   defaultModel: string
+}
+
+export interface UiNotifyHeadline {
+  component: string
+  summary: string
+}
+
+export interface UiNotifyMeta {
+  sourceModule: string
+  correlationId?: string | null
+}
+
+export interface UiNotifyEvent {
+  subject: UiNotifyHeadline
+  meta: UiNotifyMeta
 }

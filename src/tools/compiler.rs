@@ -76,6 +76,47 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
         .map_err(|err| format!("failed to write {}: {err}", path.display()))
 }
 
+pub fn edit_file_range(
+    path: &Path,
+    start_line: usize,
+    end_line: usize,
+    new_content: &str,
+) -> Result<(), String> {
+    if start_line == 0 || end_line == 0 {
+        return Err("line numbers must be >= 1".to_string());
+    }
+    if end_line < start_line {
+        return Err(format!(
+            "end line {end_line} must be >= start line {start_line}"
+        ));
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let had_trailing_newline = content.ends_with('\n');
+    let uses_crlf = content.contains("\r\n");
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+
+    if end_line > lines.len() {
+        return Err(format!(
+            "end line {end_line} out of range (file has {} lines)",
+            lines.len()
+        ));
+    }
+
+    let replacement: Vec<String> = new_content.lines().map(str::to_string).collect();
+    lines.splice((start_line - 1)..end_line, replacement);
+
+    let separator = if uses_crlf { "\r\n" } else { "\n" };
+    let mut updated = lines.join(separator);
+    if had_trailing_newline {
+        updated.push_str(separator);
+    }
+
+    std::fs::write(path, updated)
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -167,7 +167,13 @@ pub fn load_or_default(path: &Path) -> AdjutantConfig {
             let _ = config.save_to_file(path);
             config
         }
-        Err(_) => AdjutantConfig::default(),
+        Err(err) => {
+            tracing::warn!(
+                "failed to load config from {}: {err}; using built-in defaults",
+                path.display()
+            );
+            AdjutantConfig::default()
+        }
     }
 }
 
