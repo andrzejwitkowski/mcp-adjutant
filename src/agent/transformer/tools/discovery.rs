@@ -152,12 +152,12 @@ fn is_production_src_file(path: &Path) -> bool {
     if normalized.ends_with(".d.ts") {
         return false;
     }
-    if normalized.ends_with(".rs") {
-        if !normalized.contains("/src/main/java/") && !normalized.contains("/src/main/kotlin/") {
-            if normalized.contains("/src/") || normalized.starts_with("src/") {
-                return true;
-            }
-        }
+    if normalized.ends_with(".rs")
+        && !normalized.contains("/src/main/java/")
+        && !normalized.contains("/src/main/kotlin/")
+        && (normalized.contains("/src/") || normalized.starts_with("src/"))
+    {
+        return true;
     }
     if (normalized.contains("/frontend/src/") || normalized.starts_with("frontend/src/"))
         && (normalized.ends_with(".ts") || normalized.ends_with(".tsx"))

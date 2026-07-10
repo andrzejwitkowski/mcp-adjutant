@@ -7,7 +7,6 @@ pub use llm_tools::transformer_tool_set;
 pub use targets::{
     filter_targets_by_scope, format_refactor_targets_block,
     parse_apply_structural_codemod_arguments, parse_method_name, path_under_scope, RefactorTarget,
-    TargetLineRange,
 };
 
 pub fn extract_refactor_instruction(prompt: &str) -> String {
@@ -42,7 +41,7 @@ mod tests {
     use super::*;
     use crate::cache::resolve_workspace_path;
     use serde_json::json;
-    use targets::parse_refactor_targets_json;
+    use targets::{parse_refactor_targets_json, TargetLineRange};
 
     #[test]
     fn transformer_tool_set_registers_all_tools() {
