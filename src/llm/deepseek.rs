@@ -104,7 +104,9 @@ impl LlmClient for DeepSeekClient {
             Ok(response) => response,
             Err(ureq::Error::Status(code, response)) => {
                 let detail = response.into_string().unwrap_or_default();
-                return Err(format!("LLM request failed ({label}): status {code}: {detail}"));
+                return Err(format!(
+                    "LLM request failed ({label}): status {code}: {detail}"
+                ));
             }
             Err(err) => return Err(format!("LLM request failed ({label}): {err}")),
         };

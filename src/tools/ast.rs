@@ -116,12 +116,9 @@ impl AstUsageFinder {
                     continue;
                 }
                 let range = enclosing_call_range(node);
-                if !ranges
-                    .iter()
-                    .any(|existing: &LineRange| {
-                        existing.start == range.start && existing.end == range.end
-                    })
-                {
+                if !ranges.iter().any(|existing: &LineRange| {
+                    existing.start == range.start && existing.end == range.end
+                }) {
                     ranges.push(range);
                 }
             }
@@ -423,9 +420,11 @@ mod tests {
 
     #[test]
     fn finds_rust_struct_literal_ranges() {
-        let ranges =
-            AstUsageFinder::find_construction_sites_in_file(&fixture("struct_literal.rs"), "LogEvent")
-                .expect("scan");
+        let ranges = AstUsageFinder::find_construction_sites_in_file(
+            &fixture("struct_literal.rs"),
+            "LogEvent",
+        )
+        .expect("scan");
 
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].start, 4);
@@ -435,10 +434,9 @@ mod tests {
 
     #[test]
     fn finds_java_method_invocation() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("scripts/sort_demo_java/src/main/java/sortdemo/BubbleSort.java");
+        let path = fixture("sample.java");
         let lines = AstUsageFinder::find_calls_in_file(&path, "logSortEvent").expect("scan");
-        assert_eq!(lines, vec![20]);
+        assert_eq!(lines, vec![5]);
     }
 
     #[test]

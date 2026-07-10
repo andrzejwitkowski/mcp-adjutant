@@ -55,12 +55,7 @@ pub fn format_change_report(
     changes: &[CodemodChange],
     after: &str,
 ) -> String {
-    let mut out = format!(
-        "## Codemod: {} (lines {}-{})\n",
-        path.display(),
-        start,
-        end
-    );
+    let mut out = format!("## Codemod: {} (lines {}-{})\n", path.display(), start, end);
     if changes.is_empty() {
         out.push_str("- (no line-level field diff detected)\n");
     } else {
@@ -101,7 +96,11 @@ pub fn verify_field_migration(paths: &[PathBuf], instruction: &str) -> String {
                 hits += 1;
             }
         }
-        let mark = if hits == total && total > 0 { "✓" } else { "✗" };
+        let mark = if hits == total && total > 0 {
+            "✓"
+        } else {
+            "✗"
+        };
         out.push_str(&format!("{mark} {} {hits}/{total} files\n", rule.label));
     }
 
@@ -190,7 +189,11 @@ impl MigrationRuleCtx<'_> {
         }
         self.rules.push(MigrationRule {
             label: if self.java_style { java_label } else { label },
-            pattern: if self.java_style { java_pattern } else { pattern },
+            pattern: if self.java_style {
+                java_pattern
+            } else {
+                pattern
+            },
             must_be_present,
         });
     }
@@ -199,11 +202,15 @@ impl MigrationRuleCtx<'_> {
 fn content_matches_rule(content: &str, rule: &MigrationRule) -> bool {
     match rule.pattern {
         "subject" => {
-            content.contains("subject:") || content.contains("subject=") || content.contains(".subject(")
+            content.contains("subject:")
+                || content.contains("subject=")
+                || content.contains(".subject(")
                 || content.contains(".subject =")
         }
         "summary" => {
-            content.contains("summary:") || content.contains("summary=") || content.contains(".summary(")
+            content.contains("summary:")
+                || content.contains("summary=")
+                || content.contains(".summary(")
                 || content.contains(".summary =")
         }
         "source_module" => {
@@ -213,7 +220,9 @@ fn content_matches_rule(content: &str, rule: &MigrationRule) -> bool {
         }
         "sourceModule" => content.contains("sourceModule:") || content.contains(".sourceModule("),
         "tags" => {
-            content.contains("tags=") || content.contains("tags:") || content.contains(".tags(")
+            content.contains("tags=")
+                || content.contains("tags:")
+                || content.contains(".tags(")
                 || content.contains(".tags =")
         }
         _ => false,
@@ -316,16 +325,24 @@ mod tests {
         let before = "    log_sort_event(\n        SortEvent(\n            headline=SortHeadline(\n                component=\"bubble\",\n                message=f\"sorted\",\n            ),\n            meta=SortMeta(\n                tags=\"sort_demo.bubble_sort\",\n                correlation_id=None,\n            ),\n        )\n    )";
         let after = "    log_sort_event(\n        SortEvent(\n            subject=SortHeadline(\n                component=\"bubble\",\n                summary=f\"sorted\",\n            ),\n            meta=SortMeta(\n                source_module=\"sort_demo.bubble_sort\",\n                correlation_id=None,\n            ),\n        )\n    )";
         let changes = summarize_snippet_diff(before, after, 11);
-        assert!(changes.iter().any(|c| c.kind == "rename" && c.detail.contains("headline")));
-        assert!(changes.iter().any(|c| c.kind == "rename" && c.detail.contains("message")));
-        assert!(changes.iter().any(|c| c.kind == "add" && c.detail.contains("source_module")));
+        assert!(changes
+            .iter()
+            .any(|c| c.kind == "rename" && c.detail.contains("headline")));
+        assert!(changes
+            .iter()
+            .any(|c| c.kind == "rename" && c.detail.contains("message")));
+        assert!(changes
+            .iter()
+            .any(|c| c.kind == "add" && c.detail.contains("source_module")));
     }
 
     #[test]
     fn verification_passed_rejects_failed_checks() {
         let report = "## Refactor verification\n✓ subject 4/4 files\n✗ tags 3/4 files\n";
         assert!(!verification_passed(report));
-        assert!(verification_passed("## Refactor verification\n✓ subject 4/4 files\n"));
+        assert!(verification_passed(
+            "## Refactor verification\n✓ subject 4/4 files\n"
+        ));
         assert!(verification_passed(""));
     }
 

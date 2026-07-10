@@ -20,7 +20,9 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 use crate::tools::{edit_file_line, edit_file_range, read_file_range};
 
-use codemod_report::{format_change_report, summarize_snippet_diff, verification_passed, verify_field_migration};
+use codemod_report::{
+    format_change_report, summarize_snippet_diff, verification_passed, verify_field_migration,
+};
 use cpp_codemod::try_cpp_call_codemod;
 use java_codemod::try_java_call_codemod;
 use jvm_type_codemod::{apply_jvm_type_codemod, find_jvm_log_type_files};
@@ -206,12 +208,8 @@ impl<
         transformation_rule: &str,
         method_name: Option<&str>,
     ) -> Result<(), String> {
-        let touched = self.apply_codemod_to_targets(
-            context,
-            targets,
-            transformation_rule,
-            method_name,
-        )?;
+        let touched =
+            self.apply_codemod_to_targets(context, targets, transformation_rule, method_name)?;
 
         context.accumulated_data.push_str(
             "\n[TRANSFORMER]: Structural changes applied. Launching Triage to fix compiler side-effects...\n",
@@ -406,7 +404,8 @@ impl<
             if field_migration {
                 None
             } else {
-                self.codemod_range(path, start, end, transformation_rule).ok()
+                self.codemod_range(path, start, end, transformation_rule)
+                    .ok()
             }
         })
         .ok_or_else(|| {
@@ -425,14 +424,22 @@ impl<
             end
         ));
         context.accumulated_data.push_str(&format_change_report(
-            path, start, end, &changes, &new_content,
+            path,
+            start,
+            end,
+            &changes,
+            &new_content,
         ));
         Ok(())
     }
 
     fn codemod_content(&self, user_message: &str, single_line: bool) -> Result<String, String> {
         let empty_tools = LlmToolSet::new();
-        let request = LlmRequest::new(TRANSFORMER_CODEMOD_SYSTEM_PROMPT, user_message, &empty_tools);
+        let request = LlmRequest::new(
+            TRANSFORMER_CODEMOD_SYSTEM_PROMPT,
+            user_message,
+            &empty_tools,
+        );
         let turn = self.codemod_client.complete(request)?;
         let content = turn
             .content
@@ -527,17 +534,11 @@ impl<
                                 .accumulated_data
                                 .push_str(&format!("Observation:\n{output}\n"));
                             let rule = extract_refactor_instruction(&context.input_prompt);
-                            self.apply_and_triage(
-                                context,
-                                &targets,
-                                &rule,
-                                Some(&method_name),
-                            )
-                            .await?;
+                            self.apply_and_triage(context, &targets, &rule, Some(&method_name))
+                                .await?;
                         }
                         _ => {
-                            let output =
-                                self.run_scout_subagent(context, &method_name).await?;
+                            let output = self.run_scout_subagent(context, &method_name).await?;
                             context
                                 .accumulated_data
                                 .push_str(&format!("Observation:\n{output}\n"));
@@ -547,13 +548,8 @@ impl<
                 "apply_structural_codemod" => {
                     let (transformation_rule, targets) =
                         parse_apply_structural_codemod_arguments(&tool_call.arguments)?;
-                    self.apply_and_triage(
-                        context,
-                        &targets,
-                        &transformation_rule,
-                        None,
-                    )
-                    .await?;
+                    self.apply_and_triage(context, &targets, &transformation_rule, None)
+                        .await?;
                 }
                 other => return Err(format!("unsupported transformer tool: {other}")),
             }
@@ -570,14 +566,8 @@ impl<
     }
 }
 
-pub type DefaultTransformerAgent<C, SC, TC, CC> = TransformerAgent<
-    C,
-    SC,
-    TC,
-    CC,
-    super::SystemBuildRunner,
-    super::NoopBuildDiscoverer,
->;
+pub type DefaultTransformerAgent<C, SC, TC, CC> =
+    TransformerAgent<C, SC, TC, CC, super::SystemBuildRunner, super::NoopBuildDiscoverer>;
 
 pub fn default_transformer_agent<C: LlmClient, SC: LlmClient, TC: LlmClient, CC: LlmClient>(
     llm_client: C,

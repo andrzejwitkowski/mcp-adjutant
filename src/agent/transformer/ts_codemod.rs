@@ -33,13 +33,17 @@ pub fn try_ts_object_literal_codemod(
         if trimmed.starts_with("headline:") || trimmed.starts_with("headline :") {
             rewritten = format!(
                 "{indent}subject:{}",
-                trimmed.trim_start_matches("headline").trim_start_matches(':')
+                trimmed
+                    .trim_start_matches("headline")
+                    .trim_start_matches(':')
             );
             changed = true;
         } else if trimmed.starts_with("message:") || trimmed.starts_with("message :") {
             rewritten = format!(
                 "{indent}summary:{}",
-                trimmed.trim_start_matches("message").trim_start_matches(':')
+                trimmed
+                    .trim_start_matches("message")
+                    .trim_start_matches(':')
             );
             changed = true;
         } else if trimmed.starts_with("sourceModule:") || trimmed.starts_with("sourceModule :") {

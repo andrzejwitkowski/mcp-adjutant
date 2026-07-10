@@ -30,10 +30,20 @@ pub fn try_rust_struct_literal_codemod(
         let mut rewritten = line.to_string();
 
         if trimmed.starts_with("headline:") || trimmed.starts_with("headline :") {
-            rewritten = format!("{indent}subject:{}", trimmed.trim_start_matches("headline").trim_start_matches(':'));
+            rewritten = format!(
+                "{indent}subject:{}",
+                trimmed
+                    .trim_start_matches("headline")
+                    .trim_start_matches(':')
+            );
             changed = true;
         } else if trimmed.starts_with("message:") || trimmed.starts_with("message :") {
-            rewritten = format!("{indent}summary:{}", trimmed.trim_start_matches("message").trim_start_matches(':'));
+            rewritten = format!(
+                "{indent}summary:{}",
+                trimmed
+                    .trim_start_matches("message")
+                    .trim_start_matches(':')
+            );
             changed = true;
         } else if trimmed.starts_with("source_module:") || trimmed.starts_with("source_module :") {
             rewritten = format!("{indent}source_module: \"{source_module}\".into(),");

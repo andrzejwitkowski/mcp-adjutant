@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use super::targets::{RefactorTarget, TargetLineRange};
 use crate::cache::{mcp_workspace_root, resolve_workspace_path};
-use crate::tools::{detect_file_language, run_ripgrep_files, AstUsageFinder, LineRange, SourceLanguage};
+use crate::tools::{
+    detect_file_language, run_ripgrep_files, AstUsageFinder, LineRange, SourceLanguage,
+};
 
 pub fn find_refactor_targets(type_name: &str) -> Result<Vec<RefactorTarget>, String> {
     let pattern = format!(r"\b{}\b", regex_escape(type_name));
@@ -23,10 +25,13 @@ pub fn find_refactor_targets(type_name: &str) -> Result<Vec<RefactorTarget>, Str
 
         let mut ranges =
             AstUsageFinder::find_construction_sites_in_file(&path, type_name).unwrap_or_default();
-        let call_ranges =
-            AstUsageFinder::find_call_expression_ranges_in_file(&path, type_name).unwrap_or_default();
+        let call_ranges = AstUsageFinder::find_call_expression_ranges_in_file(&path, type_name)
+            .unwrap_or_default();
         for range in call_ranges {
-            if !ranges.iter().any(|existing| existing.start == range.start && existing.end == range.end) {
+            if !ranges
+                .iter()
+                .any(|existing| existing.start == range.start && existing.end == range.end)
+            {
                 ranges.push(range);
             }
         }
@@ -34,7 +39,10 @@ pub fn find_refactor_targets(type_name: &str) -> Result<Vec<RefactorTarget>, Str
         let call_lines = AstUsageFinder::find_calls_in_file(&path, type_name).unwrap_or_default();
 
         for line in call_lines {
-            if !ranges.iter().any(|range| line >= range.start && line <= range.end) {
+            if !ranges
+                .iter()
+                .any(|range| line >= range.start && line <= range.end)
+            {
                 ranges.push(LineRange {
                     start: line,
                     end: line,
@@ -71,11 +79,13 @@ pub fn find_refactor_targets(type_name: &str) -> Result<Vec<RefactorTarget>, Str
 
         drop_subset_ranges(&mut ranges);
 
-        let entry = by_file.entry(path.clone()).or_insert_with(|| RefactorTarget {
-            file_path: path,
-            lines: Vec::new(),
-            ranges: Vec::new(),
-        });
+        let entry = by_file
+            .entry(path.clone())
+            .or_insert_with(|| RefactorTarget {
+                file_path: path,
+                lines: Vec::new(),
+                ranges: Vec::new(),
+            });
 
         for range in ranges {
             let target_range = TargetLineRange {
@@ -222,12 +232,16 @@ mod tests {
         assert!(is_production_src_file(&PathBuf::from(
             "frontend/src/modules/foo/Bar.tsx"
         )));
-        assert!(is_production_src_file(&PathBuf::from("scripts/demo_pkg/foo.py")));
+        assert!(is_production_src_file(&PathBuf::from(
+            "scripts/demo_pkg/foo.py"
+        )));
         assert!(is_production_src_file(&PathBuf::from(
             "scripts/demo_java/src/main/java/demo/Foo.java"
         )));
         assert!(!is_production_src_file(&PathBuf::from("src/tests/foo.rs")));
-        assert!(!is_production_src_file(&PathBuf::from("scripts/demo/readme.txt")));
+        assert!(!is_production_src_file(&PathBuf::from(
+            "scripts/demo/readme.txt"
+        )));
     }
 
     #[test]

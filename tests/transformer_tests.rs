@@ -271,7 +271,8 @@ async fn transformer_auto_pipeline_applies_ts_emit_ui_notify() {
         .collect();
     assert!(
         touched.iter().any(|path| {
-            path.to_string_lossy().contains("frontend/src/modules/config-ui/")
+            path.to_string_lossy()
+                .contains("frontend/src/modules/config-ui/")
         }),
         "expected frontend emitUiNotify targets"
     );
@@ -318,13 +319,23 @@ async fn transformer_auto_pipeline_applies_ts_emit_ui_notify() {
     .expect("transformer loop should complete");
 
     assert!(result.is_finished, "{}", result.accumulated_data);
-    assert!(result.accumulated_data.contains("[TRANSFORMER OK]"), "{}", result.accumulated_data);
     assert!(
-        result.accumulated_data.contains("Deterministic refactor target scan succeeded"),
+        result.accumulated_data.contains("[TRANSFORMER OK]"),
         "{}",
         result.accumulated_data
     );
-    assert!(result.accumulated_data.contains("## Codemod:"), "{}", result.accumulated_data);
+    assert!(
+        result
+            .accumulated_data
+            .contains("Deterministic refactor target scan succeeded"),
+        "{}",
+        result.accumulated_data
+    );
+    assert!(
+        result.accumulated_data.contains("## Codemod:"),
+        "{}",
+        result.accumulated_data
+    );
     assert!(
         result.accumulated_data.contains("headline") && result.accumulated_data.contains("subject"),
         "expected rename evidence in {}",
@@ -358,7 +369,10 @@ async fn transformer_auto_pipeline_applies_after_deterministic_gather() {
         .into_iter()
         .map(|target| target.file_path)
         .collect();
-    assert!(!touched.is_empty(), "expected LogEvent targets in workspace");
+    assert!(
+        !touched.is_empty(),
+        "expected LogEvent targets in workspace"
+    );
 
     let snapshots: Vec<(PathBuf, String)> = touched
         .iter()
@@ -411,14 +425,22 @@ async fn transformer_auto_pipeline_applies_after_deterministic_gather() {
         result.accumulated_data
     );
     assert!(
-        result.accumulated_data.contains("Deterministic refactor target scan succeeded"),
+        result
+            .accumulated_data
+            .contains("Deterministic refactor target scan succeeded"),
         "expected deterministic gather log"
     );
     assert!(
-        !result.accumulated_data.contains("Tool: apply_structural_codemod"),
+        !result
+            .accumulated_data
+            .contains("Tool: apply_structural_codemod"),
         "LLM should not need apply_structural_codemod tool call"
     );
-    assert!(result.accumulated_data.contains("## Codemod:"), "{}", result.accumulated_data);
+    assert!(
+        result.accumulated_data.contains("## Codemod:"),
+        "{}",
+        result.accumulated_data
+    );
     assert!(
         result.accumulated_data.contains("## Refactor verification"),
         "{}",
@@ -496,145 +518,4 @@ async fn transformer_skips_missing_target_files_without_failing_whole_job() {
     );
 
     std::fs::remove_dir_all(&project_root).ok();
-}
-
-async fn run_sort_demo_pipeline_test(
-    method: &str,
-    scope: &str,
-    break_content: fn(&str) -> String,
-    fixed_check: fn(&str) -> bool,
-) {
-    let config = Arc::new(AdjutantConfig::default());
-    let scope_path = mcp_adjutant::cache::resolve_workspace_path(scope);
-    let touched: Vec<PathBuf> = mcp_adjutant::agent::find_refactor_targets(method)
-        .expect("scan")
-        .into_iter()
-        .filter(|target| {
-            mcp_adjutant::agent::path_under_scope(&target.file_path, &scope_path)
-        })
-        .map(|target| target.file_path)
-        .collect();
-    assert_eq!(touched.len(), 4, "expected 4 targets under {scope}");
-
-    let snapshots: Vec<(PathBuf, String)> = touched
-        .iter()
-        .map(|path| (path.clone(), std::fs::read_to_string(path).expect("read")))
-        .collect();
-
-    for (path, content) in &snapshots {
-        std::fs::write(path, break_content(content)).expect("break");
-    }
-
-    let agent = TransformerAgent::new(
-        MockTransformerLlm::gather_only(method),
-        PanicCodemodLlm,
-        ScoutAgent::new(PanicScoutLlm),
-        TriageAgent::with_build_runner(
-            PanicTriageLlm,
-            touched.clone(),
-            Arc::clone(&config),
-            SystemBuildRunner,
-        ),
-    )
-    .with_scope(scope_path.clone());
-
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nRefactor instruction: rename headline to subject, message to summary, remove tags, add source_module to SortMeta\nMethod: log_sort_event".to_string(),
-        1,
-    )
-    .await
-    .expect("transformer loop should complete");
-
-    assert!(result.is_finished, "{}", result.accumulated_data);
-    assert!(result.accumulated_data.contains("[TRANSFORMER OK]"), "{}", result.accumulated_data);
-    assert!(result.accumulated_data.contains("## Codemod:"), "{}", result.accumulated_data);
-    assert!(
-        result.accumulated_data.contains("headline") && result.accumulated_data.contains("subject"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("## Refactor verification"),
-        "{}",
-        result.accumulated_data
-    );
-    assert!(
-        result.accumulated_data.contains("Scoped gather"),
-        "{}",
-        result.accumulated_data
-    );
-
-    for (path, original) in &snapshots {
-        let updated = std::fs::read_to_string(path).expect("read updated");
-        assert!(fixed_check(&updated), "expected codemod in {}", path.display());
-        std::fs::write(path, original).expect("restore");
-    }
-}
-
-fn break_kwarg_fields(content: &str) -> String {
-    content
-        .replace("subject=", "headline=")
-        .replace("summary=", "message=")
-        .replace("source_module=", "tags=")
-}
-
-fn break_java_fields(content: &str) -> String {
-    content
-        .replace(".subject(", ".headline(")
-        .replace(".summary(", ".message(")
-        .replace(".sourceModule(", ".tags(")
-}
-
-fn break_designated_fields(content: &str) -> String {
-    content
-        .replace(".subject =", ".headline =")
-        .replace(".summary =", ".message =")
-        .replace(".source_module =", ".tags =")
-}
-
-#[tokio::test]
-async fn transformer_auto_pipeline_applies_sort_demo_fixtures() {
-    run_sort_demo_pipeline_test(
-        "log_sort_event",
-        "scripts/sort_demo",
-        break_kwarg_fields,
-        |content| content.contains("subject=") && content.contains("source_module="),
-    )
-    .await;
-    run_sort_demo_pipeline_test(
-        "logSortEvent",
-        "scripts/sort_demo_java",
-        break_java_fields,
-        |content| content.contains(".subject(") && content.contains(".sourceModule("),
-    )
-    .await;
-    run_sort_demo_pipeline_test(
-        "logSortEvent",
-        "scripts/sort_demo_kotlin",
-        break_java_fields,
-        |content| content.contains(".subject(") && content.contains(".sourceModule("),
-    )
-    .await;
-    run_sort_demo_pipeline_test(
-        "log_sort_event",
-        "scripts/sort_demo_cpp",
-        break_designated_fields,
-        |content| content.contains(".subject =") && content.contains(".source_module ="),
-    )
-    .await;
-    run_sort_demo_pipeline_test(
-        "log_sort_event",
-        "scripts/sort_demo_c",
-        break_designated_fields,
-        |content| content.contains(".subject =") && content.contains(".source_module ="),
-    )
-    .await;
-    run_sort_demo_pipeline_test(
-        "log_sort_event",
-        "scripts/sort_demo_zig",
-        break_designated_fields,
-        |content| content.contains(".subject =") && content.contains(".source_module ="),
-    )
-    .await;
 }

@@ -4,11 +4,7 @@ use super::field_migration::{
     infer_source_module, instruction_contains_field_migration, ModuleIdStyle,
 };
 
-pub fn try_java_call_codemod(
-    snippet: &str,
-    instruction: &str,
-    file_path: &Path,
-) -> Option<String> {
+pub fn try_java_call_codemod(snippet: &str, instruction: &str, file_path: &Path) -> Option<String> {
     if !instruction_contains_field_migration(instruction) {
         return None;
     }
@@ -74,7 +70,7 @@ mod tests {
         let out = try_java_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add sourceModule",
-            &PathBuf::from("scripts/lza_e2e_java/src/main/java/lzademo/BlockLza.java"),
+            &PathBuf::from("scripts/demo_java/src/main/java/demo/Widget.java"),
         )
         .expect("codemod");
 
@@ -83,6 +79,6 @@ mod tests {
         assert!(!out.contains(".headline("));
         assert!(!out.contains(".message("));
         assert!(!out.contains(".tags("));
-        assert!(out.contains(".sourceModule(\"lzademo.BlockLza\")"));
+        assert!(out.contains(".sourceModule(\"demo.Widget\")"));
     }
 }

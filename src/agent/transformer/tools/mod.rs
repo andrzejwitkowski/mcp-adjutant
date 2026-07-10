@@ -5,8 +5,9 @@ mod targets;
 pub use discovery::find_refactor_targets;
 pub use llm_tools::transformer_tool_set;
 pub use targets::{
-    filter_targets_by_scope, format_refactor_targets_block, parse_apply_structural_codemod_arguments,
-    parse_method_name, path_under_scope, RefactorTarget, TargetLineRange,
+    filter_targets_by_scope, format_refactor_targets_block,
+    parse_apply_structural_codemod_arguments, parse_method_name, path_under_scope, RefactorTarget,
+    TargetLineRange,
 };
 
 pub fn extract_refactor_instruction(prompt: &str) -> String {
@@ -74,10 +75,8 @@ mod tests {
 
     #[test]
     fn parse_refactor_targets_json_accepts_valid_payload() {
-        let targets = parse_refactor_targets_json(
-            r#"[{"file_path":"src/a.rs","lines":[1,3]}]"#,
-        )
-        .expect("parse");
+        let targets = parse_refactor_targets_json(r#"[{"file_path":"src/a.rs","lines":[1,3]}]"#)
+            .expect("parse");
 
         assert_eq!(targets.len(), 1);
         assert!(targets[0].file_path.ends_with("src/a.rs"));
@@ -92,7 +91,10 @@ mod tests {
         .expect("parse");
 
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].ranges, vec![TargetLineRange { start: 25, end: 32 }]);
+        assert_eq!(
+            targets[0].ranges,
+            vec![TargetLineRange { start: 25, end: 32 }]
+        );
         assert!(targets[0].lines.is_empty());
     }
 

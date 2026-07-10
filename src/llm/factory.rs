@@ -51,7 +51,9 @@ pub fn create_evaluator_llm_client(config: &AdjutantConfig) -> Result<Configured
     create_llm_client_for_phase(config, AgentPhase::Evaluator)
 }
 
-pub fn create_transformer_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+pub fn create_transformer_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
     create_llm_client_for_phase(config, AgentPhase::Transformer)
 }
 

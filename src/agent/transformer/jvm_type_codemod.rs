@@ -30,11 +30,17 @@ fn collect_jvm_log_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn is_jvm_log_type_file(path: &Path) -> bool {
-    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or_default();
+    let ext = path
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default();
     if ext != "java" && ext != "kt" {
         return false;
     }
-    let name = path.file_name().and_then(|v| v.to_str()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default();
     name.ends_with("Log.java") || name.ends_with("Log.kt")
 }
 

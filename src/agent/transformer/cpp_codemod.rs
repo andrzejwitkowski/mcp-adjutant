@@ -4,11 +4,7 @@ use super::field_migration::{
     infer_source_module, instruction_contains_field_migration, ModuleIdStyle,
 };
 
-pub fn try_cpp_call_codemod(
-    snippet: &str,
-    instruction: &str,
-    file_path: &Path,
-) -> Option<String> {
+pub fn try_cpp_call_codemod(snippet: &str, instruction: &str, file_path: &Path) -> Option<String> {
     if !instruction_contains_field_migration(instruction) {
         return None;
     }
@@ -117,7 +113,7 @@ mod tests {
         let out = try_cpp_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add source_module",
-            &PathBuf::from("scripts/lza_e2e_cpp/src/block_lza.cpp"),
+            &PathBuf::from("scripts/demo_cpp/src/widget.cpp"),
         )
         .expect("codemod");
 
@@ -125,16 +121,16 @@ mod tests {
         assert!(out.contains(".summary ="));
         assert!(!out.contains(".headline ="));
         assert!(!out.contains(".tags ="));
-        assert!(out.contains(".source_module = \"lza_e2e_cpp.block_lza\""));
+        assert!(out.contains(".source_module = \"demo_cpp.widget\""));
     }
 
     #[test]
     fn renames_c_compound_literal_inline_fields() {
-        let snippet = "    log_lza_event(&(LzaEvent){\n        .headline = { .component = \"block\", .message = \"buffer compressed\" },\n        .meta = { .tags = \"lza_e2e_c\", .correlation_id = NULL },\n    });";
+        let snippet = "    log_event(&(Event){\n        .headline = { .component = \"block\", .message = \"done\" },\n        .meta = { .tags = \"demo_c\", .correlation_id = NULL },\n    });";
         let out = try_cpp_call_codemod(
             snippet,
             "rename headline to subject, message to summary, remove tags, add source_module",
-            &PathBuf::from("scripts/lza_e2e_c/src/block_lza.c"),
+            &PathBuf::from("scripts/demo_c/src/widget.c"),
         )
         .expect("codemod");
 
@@ -143,6 +139,6 @@ mod tests {
         assert!(!out.contains(".headline ="));
         assert!(!out.contains(".message ="));
         assert!(!out.contains(".tags ="));
-        assert!(out.contains(".source_module = \"lza_e2e_c.block_lza\""));
+        assert!(out.contains(".source_module = \"demo_c.widget\""));
     }
 }

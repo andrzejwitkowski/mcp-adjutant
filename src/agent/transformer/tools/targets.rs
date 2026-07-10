@@ -25,10 +25,7 @@ pub fn parse_refactor_targets_json(raw: &str) -> Result<Vec<RefactorTarget>, Str
     let items: Vec<Value> = serde_json::from_str(raw)
         .map_err(|err| format!("refactor_targets_json must be a JSON array: {err}"))?;
 
-    items
-        .into_iter()
-        .map(parse_refactor_target_item)
-        .collect()
+    items.into_iter().map(parse_refactor_target_item).collect()
 }
 
 pub fn parse_apply_structural_codemod_arguments(
@@ -43,10 +40,7 @@ pub fn parse_apply_structural_codemod_arguments(
     Ok((rule, targets))
 }
 
-pub fn filter_targets_by_scope(
-    targets: Vec<RefactorTarget>,
-    scope: &Path,
-) -> Vec<RefactorTarget> {
+pub fn filter_targets_by_scope(targets: Vec<RefactorTarget>, scope: &Path) -> Vec<RefactorTarget> {
     targets
         .into_iter()
         .filter(|target| path_under_scope(&target.file_path, scope))
@@ -139,10 +133,7 @@ impl serde::Serialize for RefactorTarget {
     {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("RefactorTarget", 3)?;
-        state.serialize_field(
-            "file_path",
-            &self.file_path.to_string_lossy().to_string(),
-        )?;
+        state.serialize_field("file_path", &self.file_path.to_string_lossy().to_string())?;
         if !self.lines.is_empty() {
             state.serialize_field("lines", &self.lines)?;
         }

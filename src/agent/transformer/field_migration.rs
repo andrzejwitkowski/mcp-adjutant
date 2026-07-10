@@ -194,21 +194,21 @@ mod tests {
     }
 
     #[test]
-    fn snake_from_lza_e2e_scripts() {
-        let path = PathBuf::from("scripts/lza_e2e_py/block_lza.py");
+    fn snake_from_scripts_anchor() {
+        let path = PathBuf::from("scripts/demo_py/sample.py");
         assert_eq!(
             infer_source_module(&path, "add source_module", ModuleIdStyle::Snake).as_deref(),
-            Some("lza_e2e_py.block_lza")
+            Some("demo_py.sample")
         );
     }
 
     #[test]
-    fn snake_from_absolute_lza_scripts_path() {
+    fn snake_from_absolute_scripts_path() {
         let root = mcp_workspace_root();
-        let path = root.join("scripts/lza_e2e_py/block_lza.py");
+        let path = root.join("scripts/demo_py/sample.py");
         assert_eq!(
             infer_source_module(&path, "add source_module", ModuleIdStyle::Snake).as_deref(),
-            Some("lza_e2e_py.block_lza")
+            Some("demo_py.sample")
         );
     }
 

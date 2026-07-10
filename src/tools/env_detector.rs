@@ -300,9 +300,8 @@ mod tests {
             "const std = @import(\"std\");\npub fn build(b: *std.Build) void { _ = b; }\n",
         )
         .expect("build.zig");
-        let (dir, cmd) =
-            find_nearest_module_boundary(&root.join("fixture/src/demo.zig"), &config)
-                .expect("zig boundary");
+        let (dir, cmd) = find_nearest_module_boundary(&root.join("fixture/src/demo.zig"), &config)
+            .expect("zig boundary");
         assert_eq!(dir, root.join("fixture"));
         assert_eq!(cmd, "zig build");
         fs::remove_dir_all(&root).ok();
