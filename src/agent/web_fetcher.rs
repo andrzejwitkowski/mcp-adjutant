@@ -1,9 +1,12 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::orchestrator::run_single_tool_turn;
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::WebFetcherProfile;
-use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolSet, ToolDefinition};
+use crate::llm::{
+    required_str, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolSet, ToolDefinition,
+};
 
 pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest, authoritative web content for a given topic. The topic can be anything the user asks about; adapt your search approach to the kind of information it requires.
 
@@ -42,17 +45,6 @@ impl<RC: LlmClient> WebFetcherAgent<RC> {
             tools,
         }
     }
-
-    fn build_user_message(context: &AgentContext) -> String {
-        if context.accumulated_data.is_empty() {
-            context.input_prompt.clone()
-        } else {
-            format!(
-                "{}\n\n---\nObservation history:\n{}",
-                context.input_prompt, context.accumulated_data
-            )
-        }
-    }
 }
 
 #[async_trait]
@@ -70,40 +62,12 @@ impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let user_message = Self::build_user_message(context);
-        let request = LlmRequest::new(WEB_FETCHER_SYSTEM_PROMPT, &user_message, &self.tools);
-        let model_turn = self.reasoning_client.complete(request)?;
-
-        let tool_call = match model_turn.tool_calls.first() {
-            Some(call) => call,
-            None => {
-                let thought = model_turn.content.unwrap_or_default();
-                if thought.is_empty() {
-                    return Err("model response missing tool call".to_string());
-                }
-                let step = format!(
-                    "Thought:\n{thought}\nObservation:\n(model did not call a tool - continue)\n"
-                );
-                context.accumulated_data.push_str(&step);
-                return Ok(());
-            }
-        };
-
-        let invocation = self.tools.invoke(&tool_call.name, &tool_call.arguments)?;
-
-        let thought = model_turn.content.unwrap_or_default();
-        let step = format!(
-            "Thought:\n{thought}\nTool: {}({})\nObservation:\n{}\n",
-            tool_call.name, tool_call.arguments, invocation.output
-        );
-        context.accumulated_data.push_str(&step);
-
-        if invocation.is_terminal {
-            context.accumulated_data = invocation.output;
-            context.is_finished = true;
-            context.agent_completed = true;
-        }
-
+        run_single_tool_turn(
+            &self.reasoning_client,
+            &self.tools,
+            WEB_FETCHER_SYSTEM_PROMPT,
+            context,
+        )?;
         Ok(())
     }
 
@@ -223,14 +187,6 @@ fn truncate_to_token_budget(report: &str, token_budget: u32) -> String {
     }
     let kept: String = report.chars().take(char_budget).collect();
     format!("{kept}\n\n[truncated to fit {token_budget}-token budget]")
-}
-
-fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
 }
 
 #[cfg(test)]

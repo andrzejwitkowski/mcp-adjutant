@@ -12,6 +12,8 @@ pub use factory::{
     create_web_fetcher_llm_client, ConfiguredLlmClient,
 };
 pub use request::LlmRequest;
-pub use tools::{LlmTool, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult, ToolParam};
+pub use tools::{
+    required_str, LlmTool, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
+};
 pub use traits::LlmClient;
 pub use types::{LlmModelTurn, LlmToolCall};

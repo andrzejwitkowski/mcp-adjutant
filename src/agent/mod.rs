@@ -13,7 +13,7 @@ pub use builder::{
     BUILDER_SYSTEM_PROMPT,
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
-pub use orchestrator::AgentLoopOrchestrator;
+pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
     ScoutToolCall, SCOUT_SYSTEM_PROMPT,

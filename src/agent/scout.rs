@@ -4,9 +4,10 @@ mod tools;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::orchestrator::run_single_tool_turn;
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::cache::resolve_workspace_path;
-use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall, LlmToolSet};
+use crate::llm::{LlmClient, LlmModelTurn, LlmToolCall, LlmToolSet};
 
 pub use cache_flow::{run_scout_with_cache, ScoutCacheOutcome};
 pub use tools::scout_tool_set;
@@ -62,17 +63,6 @@ impl<C: LlmClient> ScoutAgent<C> {
         };
         context.touched_files.push(resolve_workspace_path(path));
     }
-
-    fn build_user_message(context: &AgentContext) -> String {
-        if context.accumulated_data.is_empty() {
-            context.input_prompt.clone()
-        } else {
-            format!(
-                "{}\n\n---\nObservation history:\n{}",
-                context.input_prompt, context.accumulated_data
-            )
-        }
-    }
 }
 
 #[async_trait]
@@ -90,41 +80,10 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let user_message = Self::build_user_message(context);
-        let request = LlmRequest::new(SCOUT_SYSTEM_PROMPT, &user_message, &self.tools);
-        let model_turn = self.client.complete(request)?;
-
-        let tool_call = match model_turn.tool_calls.first() {
-            Some(call) => call,
-            None => {
-                let thought = model_turn.content.unwrap_or_default();
-                if thought.is_empty() {
-                    return Err("model response missing tool call".to_string());
-                }
-                let step = format!(
-                    "Thought:\n{thought}\nObservation:\n(model did not call a tool — continue)\n"
-                );
-                context.accumulated_data.push_str(&step);
-                return Ok(());
-            }
-        };
-
-        let invocation = self.tools.invoke(&tool_call.name, &tool_call.arguments)?;
-        Self::record_touched_file(context, &tool_call.name, &tool_call.arguments);
-
-        let thought = model_turn.content.unwrap_or_default();
-        let step = format!(
-            "Thought:\n{thought}\nTool: {}({})\nObservation:\n{}\n",
-            tool_call.name, tool_call.arguments, invocation.output
-        );
-        context.accumulated_data.push_str(&step);
-
-        if invocation.is_terminal {
-            context.accumulated_data = invocation.output;
-            context.is_finished = true;
-            context.agent_completed = true;
+        let called = run_single_tool_turn(&self.client, &self.tools, SCOUT_SYSTEM_PROMPT, context)?;
+        if let Some((tool_name, args)) = called {
+            Self::record_touched_file(context, &tool_name, &args);
         }
-
         Ok(())
     }
 
