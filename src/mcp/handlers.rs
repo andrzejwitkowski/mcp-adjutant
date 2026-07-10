@@ -132,7 +132,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
 pub fn web_fetch_schema() -> Value {
     json!({
         "name": WEB_FETCH_TOOL_NAME,
-        "description": "Fetches the latest web documentation for a search phrase as compacted markdown. The agent searches the live web via a browsing model and returns a condensed report. Returns immediately; fetch the result via query_job_status.",
+        "description": "Fetches the latest authoritative web content for a search phrase as compacted markdown. Works for any topic - documentation, news, specs, comparisons, code examples, or any web research. The agent searches the live web via a browsing model and returns a condensed report. Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {

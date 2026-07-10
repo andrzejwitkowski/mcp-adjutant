@@ -5,20 +5,20 @@ use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::WebFetcherProfile;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolSet, ToolDefinition};
 
-pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest documentation and authoritative web content for a given topic.
+pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest, authoritative web content for a given topic. The topic can be anything - documentation, news, specifications, comparisons, code examples, discussions, product details, events, or any other subject the user asks about. Adapt your search approach to whatever kind of information the topic requires.
 
 Available tools (call exactly one per turn):
-- search_web(query, focus?) — ask a browsing-capable model to search the live web for `query` and return grounded, cited markdown. Use `focus` to narrow (e.g. "official docs", "API reference", "changelog"). Non-terminal: results are added to your observation history.
+- search_web(query, focus?) — ask a browsing-capable model to search the live web for `query` and return grounded, cited markdown. Use `focus` to narrow (e.g. "official source", "recent news", "API reference", "primary source"). Non-terminal: results are added to your observation history.
 - finalize(report) — end research and return your compacted markdown report.
 
 Strategy:
 1. Call search_web with the clearest possible query for the topic.
 2. If the results are incomplete, refine the query (more specific terms, add a year, name the canonical source) and call search_web again. You may search up to the hop limit.
-3. Once you have enough grounded material, call finalize with a single compacted markdown document: keep authoritative facts, drop filler, preserve any source links inline as markdown links.
+3. Once you have enough grounded material, call finalize with a single compacted markdown document: keep the authoritative facts relevant to the topic, drop filler, preserve any source links inline as markdown links.
 
 Efficiency: prefer 1-2 well-targeted searches. Do not repeat the same query. Reply with a short Thought, then call exactly one tool."#;
 
-const BROWSING_SYSTEM_PROMPT: &str = r#"You are a web research assistant with live web access. Search the web for the user's query and return a concise, accurate markdown summary of the most authoritative and up-to-date sources. Include inline markdown links to the sources you cite. Do not invent URLs. Focus on official documentation, canonical references, and recent (latest) information."#;
+const BROWSING_SYSTEM_PROMPT: &str = r#"You are a web research assistant with live web access. Search the web for the user's query and return a concise, accurate markdown summary of the most authoritative and up-to-date sources for the topic. Include inline markdown links to the sources you cite. Do not invent URLs. Prefer authoritative and primary sources; prioritize the most recent information when recency matters."#;
 
 /// Approximate chars-per-token ratio for the v1 character-budget truncation.
 const CHARS_PER_TOKEN: usize = 4;
