@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageShell } from './NavBar'
 import type { AgentEvaluationRow, EvaluationsPage } from './types'
+import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
 const PAGE_SIZE = 20
@@ -37,6 +38,16 @@ export function EvaluationsView() {
         setStatus('ready')
       })
       .catch((error: Error) => {
+        emitUiNotify({
+          subject: {
+            component: 'evaluations',
+            summary: `load failed: ${error.message}`,
+          },
+          meta: {
+              sourceModule: 'config-ui/EvaluationsView',
+            correlationId: null,
+          },
+        })
         setStatus('error')
         setMessage(error.message)
       })

@@ -15,6 +15,10 @@ impl DeepSeekClient {
     pub fn new(profile: PhaseProfile) -> Self {
         Self { profile }
     }
+
+    fn request_label(&self) -> String {
+        format!("{} @ {}", self.profile.model_name, self.profile.base_url)
+    }
 }
 
 #[derive(Serialize)]
@@ -95,25 +99,26 @@ impl LlmClient for DeepSeekClient {
             http = http.set("Authorization", &format!("Bearer {api_key}"));
         }
 
+        let label = self.request_label();
         let response = match http.send_json(body) {
             Ok(response) => response,
             Err(ureq::Error::Status(code, response)) => {
                 let detail = response.into_string().unwrap_or_default();
-                return Err(format!("deepseek request failed: status {code}: {detail}"));
+                return Err(format!("LLM request failed ({label}): status {code}: {detail}"));
             }
-            Err(err) => return Err(format!("deepseek request failed: {err}")),
+            Err(err) => return Err(format!("LLM request failed ({label}): {err}")),
         };
 
         let body: ChatResponse = response
             .into_json()
-            .map_err(|err| format!("deepseek response parse failed: {err}"))?;
+            .map_err(|err| format!("LLM response parse failed ({label}): {err}"))?;
 
         let message = body
             .choices
             .into_iter()
             .next()
             .map(|choice| choice.message)
-            .ok_or_else(|| "deepseek returned no choices".to_string())?;
+            .ok_or_else(|| format!("LLM returned no choices ({label})"))?;
 
         let tool_calls = message
             .tool_calls

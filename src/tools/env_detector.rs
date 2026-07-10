@@ -12,6 +12,10 @@ struct ModuleBoundary {
 // ponytail: ordered table of known manifests; niche stacks (CUDA, Bazel, …) use triage_overrides
 const MODULE_BOUNDARIES: &[ModuleBoundary] = &[
     ModuleBoundary {
+        marker: "build.zig",
+        command: "zig build",
+    },
+    ModuleBoundary {
         marker: "Cargo.toml",
         command: "cargo check --message-format=json",
     },
@@ -21,19 +25,19 @@ const MODULE_BOUNDARIES: &[ModuleBoundary] = &[
     },
     ModuleBoundary {
         marker: "pyproject.toml",
-        command: "python -m compileall -q .",
+        command: "python3 -m compileall -q .",
     },
     ModuleBoundary {
         marker: "requirements.txt",
-        command: "python -m compileall -q .",
+        command: "python3 -m compileall -q .",
     },
     ModuleBoundary {
         marker: "setup.py",
-        command: "python -m compileall -q .",
+        command: "python3 -m compileall -q .",
     },
     ModuleBoundary {
         marker: "Pipfile",
-        command: "python -m compileall -q .",
+        command: "python3 -m compileall -q .",
     },
     ModuleBoundary {
         marker: "pom.xml",
@@ -95,11 +99,34 @@ fn detect_builtin_boundary(dir: &Path) -> Option<String> {
 
     for boundary in MODULE_BOUNDARIES {
         if dir.join(boundary.marker).is_file() {
-            return Some(boundary.command.to_string());
+            return Some(resolve_boundary_command(boundary));
         }
     }
 
     None
+}
+
+fn resolve_boundary_command(boundary: &ModuleBoundary) -> String {
+    if matches!(
+        boundary.marker,
+        "pyproject.toml" | "requirements.txt" | "setup.py" | "Pipfile"
+    ) {
+        return python_compileall_command();
+    }
+    boundary.command.to_string()
+}
+
+fn python_compileall_command() -> String {
+    for cmd in ["python3", "python"] {
+        if Command::new(cmd)
+            .args(["-c", "import sys"])
+            .output()
+            .is_ok_and(|out| out.status.success())
+        {
+            return format!("{cmd} -m compileall -q .");
+        }
+    }
+    "python3 -m compileall -q .".to_string()
 }
 
 fn gradle_check_command(dir: &Path) -> String {
@@ -241,7 +268,7 @@ mod tests {
         let (dir, cmd) = find_nearest_module_boundary(&root.join("service/app.py"), &config)
             .expect("python boundary");
         assert_eq!(dir, root.join("service"));
-        assert_eq!(cmd, "python -m compileall -q .");
+        assert_eq!(cmd, python_compileall_command());
         fs::remove_dir_all(&root).ok();
 
         let root = temp_root("java");
@@ -264,6 +291,20 @@ mod tests {
             .expect("kotlin boundary");
         assert_eq!(dir, root.join("mobile"));
         assert_eq!(cmd, "gradle check");
+        fs::remove_dir_all(&root).ok();
+
+        let root = temp_root("zig");
+        fs::create_dir_all(root.join("fixture/src")).expect("dirs");
+        fs::write(
+            root.join("fixture/build.zig"),
+            "const std = @import(\"std\");\npub fn build(b: *std.Build) void { _ = b; }\n",
+        )
+        .expect("build.zig");
+        let (dir, cmd) =
+            find_nearest_module_boundary(&root.join("fixture/src/demo.zig"), &config)
+                .expect("zig boundary");
+        assert_eq!(dir, root.join("fixture"));
+        assert_eq!(cmd, "zig build");
         fs::remove_dir_all(&root).ok();
 
         let root = temp_root("cpp");
