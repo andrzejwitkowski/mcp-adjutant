@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::agent::{
     default_builder_agent, run_scout_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent,
-    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebFetcherAgent, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -16,8 +16,8 @@ use crate::jobs::{
     request_uuid_schema_property, run_tracked_job, JobRegistry,
 };
 use crate::llm::{
-    create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
-    create_triage_llm_client,
+    create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
+    create_scout_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
 };
 use crate::tools::LlmBuildDiscoverer;
 
@@ -25,6 +25,7 @@ pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
 pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_scaffolding";
 pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
+pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
@@ -123,8 +124,27 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         verify_and_triage_schema(),
         generate_tests_and_scaffolding_schema(),
         evaluate_agent_performance_schema(),
+        web_fetch_schema(),
         query_job_status_schema(),
     ]
+}
+
+pub fn web_fetch_schema() -> Value {
+    json!({
+        "name": WEB_FETCH_TOOL_NAME,
+        "description": "Fetches the latest web documentation for a search phrase as compacted markdown. The agent searches the live web via a browsing model and returns a condensed report. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_phrase": {
+                    "type": "string",
+                    "description": "Topic or search phrase to research on the web."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["search_phrase", "request_uuid"]
+        }
+    })
 }
 
 async fn dispatch_async_job<F, Fut>(
@@ -479,6 +499,50 @@ pub async fn handle_evaluate_agent_performance(
 
             Ok(format!(
                 "Evaluator report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
+            ))
+        },
+    )
+    .await
+}
+
+pub async fn handle_web_fetch(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let search_phrase = args
+        .get("search_phrase")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|phrase| !phrase.is_empty())
+        .ok_or_else(|| "search_phrase is required".to_string())?
+        .to_string();
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        WEB_FETCH_TOOL_NAME,
+        move || async move {
+            let web_profile = config
+                .web_fetcher
+                .clone()
+                .unwrap_or_else(crate::domain::WebFetcherProfile::default);
+
+            let reasoning_client = create_web_fetcher_llm_client(&config)?;
+            let browsing_client = create_llm_client(web_profile.browsing.clone())?;
+            // ponytail: prefer configured hop count, clamped to a sane [1, 10] range.
+            let max_hops = web_profile.max_search_hops.clamp(1, 10);
+
+            let agent = WebFetcherAgent::new(reasoning_client, browsing_client, web_profile);
+            let result = AgentLoopOrchestrator::run(&agent, search_phrase.clone(), max_hops).await?;
+
+            if result.is_finished {
+                return Ok(result.accumulated_data);
+            }
+            Ok(format!(
+                "Web fetch report (finished={}, iterations={}):\n{}",
                 result.is_finished, result.iterations, result.accumulated_data
             ))
         },
