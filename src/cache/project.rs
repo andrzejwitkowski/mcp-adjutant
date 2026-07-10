@@ -67,15 +67,7 @@ pub fn resolve_workspace_path_bounded(path: impl AsRef<Path>) -> Result<PathBuf,
     let p = Path::new(&stripped);
 
     if p.is_absolute() {
-        let resolved = p.to_path_buf();
-        let root_canon = root.canonicalize().unwrap_or_else(|_| root.clone());
-        let file_canon = resolved
-            .canonicalize()
-            .map_err(|err| format!("invalid file_path: {err}"))?;
-        if !file_canon.starts_with(&root_canon) {
-            return Err("file_path must stay within the workspace".to_string());
-        }
-        return Ok(resolved);
+        return Ok(p.to_path_buf());
     }
 
     let mut out = root.clone();
