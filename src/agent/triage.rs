@@ -244,7 +244,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         if all_ok {
             context.is_finished = true;
-            context.input_prompt = "All builds/tests completed successfully.".to_string();
+            context.input_prompt = crate::agent::TRIAGE_PASS_MARKER.to_string();
         } else if !combined_errors.is_empty() {
             context
                 .accumulated_data

@@ -5,7 +5,7 @@ use crate::domain::PhaseProfile;
 
 use super::request::LlmRequest;
 use super::traits::LlmClient;
-use super::types::{LlmModelTurn, LlmToolCall};
+use super::types::{LlmModelTurn, LlmToolCall, LlmUsage};
 
 pub struct DeepSeekClient {
     profile: PhaseProfile,
@@ -40,6 +40,20 @@ struct ChatMessage<'a> {
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+    usage: Option<ChatUsage>,
+}
+
+#[derive(Deserialize)]
+struct ChatUsage {
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct PromptTokensDetails {
+    cached_tokens: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +153,58 @@ impl LlmClient for DeepSeekClient {
         Ok(LlmModelTurn {
             content: message.content,
             tool_calls,
+            usage: body.usage.map(map_chat_usage),
         })
+    }
+}
+
+fn map_chat_usage(usage: ChatUsage) -> LlmUsage {
+    let prompt_tokens = usage.prompt_tokens.unwrap_or(0);
+    let completion_tokens = usage.completion_tokens.unwrap_or(0);
+    let total_tokens = usage
+        .total_tokens
+        .unwrap_or(prompt_tokens + completion_tokens);
+    let cached_tokens = usage
+        .prompt_tokens_details
+        .and_then(|details| details.cached_tokens)
+        .unwrap_or(0);
+    LlmUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cached_tokens,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_chat_usage_parses_openai_shape() {
+        let usage = map_chat_usage(ChatUsage {
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            total_tokens: Some(150),
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: Some(40),
+            }),
+        });
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+        assert_eq!(usage.cached_tokens, 40);
+    }
+
+    #[test]
+    fn map_chat_usage_defaults_missing_fields() {
+        let usage = map_chat_usage(ChatUsage {
+            prompt_tokens: Some(10),
+            completion_tokens: Some(5),
+            total_tokens: None,
+            prompt_tokens_details: None,
+        });
+        assert_eq!(usage.total_tokens, 15);
+        assert_eq!(usage.cached_tokens, 0);
     }
 }

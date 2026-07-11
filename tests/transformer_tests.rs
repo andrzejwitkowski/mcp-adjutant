@@ -28,6 +28,7 @@ impl MockTransformerLlm {
                         "refactor_targets_json": targets.to_string(),
                     }),
                 }],
+                ..Default::default()
             },
         }
     }
@@ -47,6 +48,7 @@ impl MockTransformerLlm {
                         "refactor_targets_json": targets.to_string(),
                     }),
                 }],
+                ..Default::default()
             },
         }
     }
@@ -76,6 +78,7 @@ impl LlmClient for MockCodemodLlm {
         Ok(LlmModelTurn {
             content: Some(content),
             tool_calls: vec![],
+            ..Default::default()
         })
     }
 }
@@ -260,6 +263,7 @@ async fn transformer_skips_missing_target_files_without_failing_whole_job() {
                     "refactor_targets_json": targets.to_string(),
                 }),
             }],
+            ..Default::default()
         },
     };
 

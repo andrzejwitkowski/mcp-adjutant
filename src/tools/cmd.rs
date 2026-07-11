@@ -2,6 +2,8 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn run_ripgrep(pattern: &str, root: &Path) -> Result<String, String> {
+    const MAX_OUTPUT_BYTES: usize = 8 * 1024;
+
     let output = Command::new("rg")
         .current_dir(root)
         .arg("-e")
@@ -22,7 +24,23 @@ pub fn run_ripgrep(pattern: &str, root: &Path) -> Result<String, String> {
         ));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if stdout.trim().is_empty() {
+        return Ok(format!(
+            "(no matches for pattern `{pattern}` under {})\nHint: try symbol names (e.g. LlmUsage, record_llm_call, metrics) or use detect_language scope=project first.",
+            root.display()
+        ));
+    }
+
+    if stdout.len() > MAX_OUTPUT_BYTES {
+        let mut end = MAX_OUTPUT_BYTES.min(stdout.len());
+        while end > 0 && !stdout.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(format!("{}\n...(truncated)", &stdout[..end]))
+    } else {
+        Ok(stdout)
+    }
 }
 
 pub fn run_ripgrep_matching_files(pattern: &str, root: &Path) -> Result<Vec<String>, String> {

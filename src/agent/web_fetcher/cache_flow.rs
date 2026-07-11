@@ -31,9 +31,13 @@ pub async fn run_web_fetch_with_cache<RC: LlmClient>(
             guard.lookup_web_report_cache(search_phrase, ttl_seconds, cache_threshold)?
         };
         match lookup {
-            WebReportCacheLookup::Fresh(cached) => return Ok(WebCacheOutcome::Hit(cached)),
+            WebReportCacheLookup::Fresh(cached) => {
+                crate::metrics::record_cache_hit(crate::domain::AgentPhase::WebFetcher);
+                return Ok(WebCacheOutcome::Hit(cached));
+            }
             WebReportCacheLookup::Stale(pending) => {
                 if crate::tools::web_fetch::web_sources_still_valid(&pending.sources) {
+                    crate::metrics::record_cache_hit(crate::domain::AgentPhase::WebFetcher);
                     return Ok(WebCacheOutcome::Hit(pending.report_content));
                 }
                 cache

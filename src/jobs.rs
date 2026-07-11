@@ -242,8 +242,12 @@ pub fn query_job_status_schema() -> Value {
     })
 }
 
-pub async fn run_tracked_job<F, Fut>(registry: JobRegistry, request_uuid: String, work: F)
-where
+pub async fn run_tracked_job<F, Fut>(
+    registry: JobRegistry,
+    request_uuid: String,
+    tool_name: String,
+    work: F,
+) where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
 {
@@ -251,12 +255,23 @@ where
     registry.heartbeat(&request_uuid);
     let _heartbeat = HeartbeatHandle::start(registry.clone(), request_uuid.clone());
 
-    let work_handle = tokio::spawn(work());
+    let ctx = crate::metrics::JobContext {
+        request_uuid: Some(request_uuid.clone()),
+        mcp_tool: Some(tool_name.clone()),
+    };
+
+    let work_handle = tokio::spawn(crate::metrics::with_job_context_async(ctx, work));
     let join_result = work_handle.await;
 
     match join_result {
-        Ok(Ok(result)) => registry.complete(&request_uuid, result),
-        Ok(Err(error)) => registry.fail(&request_uuid, error),
+        Ok(Ok(result)) => {
+            crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
+            registry.complete(&request_uuid, result)
+        }
+        Ok(Err(error)) => {
+            crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
+            registry.fail(&request_uuid, error)
+        }
         Err(join_error) if join_error.is_panic() => {
             registry.fail(&request_uuid, "Job panicked during execution".to_string());
         }
@@ -359,9 +374,14 @@ mod tests {
             .register("job-1", "scout_context")
             .expect("register");
 
-        run_tracked_job(registry.clone(), "job-1".to_string(), || async {
-            panic!("boom");
-        })
+        run_tracked_job(
+            registry.clone(),
+            "job-1".to_string(),
+            "scout_context".to_string(),
+            || async {
+                panic!("boom");
+            },
+        )
         .await;
 
         let status = registry.query("job-1").expect("query");

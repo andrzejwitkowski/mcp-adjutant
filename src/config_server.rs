@@ -18,12 +18,14 @@ use crate::cache::{
 };
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
+use crate::metrics::{query_daily, query_summary, query_timeline, session_id, MetricsStore};
 
 #[derive(Clone)]
 pub struct ConfigServerState {
     pub config: Arc<RwLock<AdjutantConfig>>,
     pub config_path: PathBuf,
     pub static_root: PathBuf,
+    pub metrics: Arc<std::sync::Mutex<MetricsStore>>,
 }
 
 pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
@@ -35,6 +37,9 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
         .route("/api/evaluations", get(get_evaluations))
         .route("/api/cache/scout", get(get_scout_cache))
         .route("/api/cache/web", get(get_web_cache))
+        .route("/api/metrics/summary", get(get_metrics_summary))
+        .route("/api/metrics/daily", get(get_metrics_daily))
+        .route("/api/metrics/timeline", get(get_metrics_timeline))
         .fallback_service(serve_dir)
         .with_state(state);
 
@@ -155,6 +160,54 @@ async fn web_cache_ttl(state: &ConfigServerState) -> i64 {
         .as_ref()
         .map(|profile| profile.cache_ttl_seconds as i64)
         .unwrap_or(604_800)
+}
+
+fn query_metrics<F, R>(state: &ConfigServerState, query: F) -> Result<R, String>
+where
+    F: FnOnce(&rusqlite::Connection) -> Result<R, String>,
+{
+    let store = state
+        .metrics
+        .lock()
+        .map_err(|_| "metrics store lock poisoned".to_string())?;
+    query(store.connection())
+}
+
+async fn get_metrics_summary(
+    State(state): State<ConfigServerState>,
+) -> Result<Json<crate::metrics::MetricsSummary>, CacheApiError> {
+    let summary = query_metrics(&state, |conn| query_summary(conn, session_id()))
+        .map_err(CacheApiError::from)?;
+    Ok(Json(summary))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MetricsDailyQuery {
+    from: String,
+    to: String,
+}
+
+async fn get_metrics_daily(
+    State(state): State<ConfigServerState>,
+    Query(query): Query<MetricsDailyQuery>,
+) -> Result<Json<Vec<crate::metrics::DailyMetricsRow>>, CacheApiError> {
+    let rows = query_metrics(&state, |conn| query_daily(conn, &query.from, &query.to))
+        .map_err(CacheApiError::from)?;
+    Ok(Json(rows))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MetricsTimelineQuery {
+    date: String,
+}
+
+async fn get_metrics_timeline(
+    State(state): State<ConfigServerState>,
+    Query(query): Query<MetricsTimelineQuery>,
+) -> Result<Json<Vec<crate::metrics::TimelineBucket>>, CacheApiError> {
+    let rows = query_metrics(&state, |conn| query_timeline(conn, &query.date))
+        .map_err(CacheApiError::from)?;
+    Ok(Json(rows))
 }
 
 #[derive(Debug)]

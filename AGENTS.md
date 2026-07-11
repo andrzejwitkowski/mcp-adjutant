@@ -49,3 +49,7 @@ CXX=g++ cargo test --all-targets
 ```
 
 Native build tools (`build-essential`, `g++`, `fd-find`, `ripgrep`) are required for tests that invoke `fd`/`rg` or link C++ (tree-sitter, tokenizers).
+
+### Agent delegation (Cursor)
+
+This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](.cursor/skills/mcp-adjutant-delegation/SKILL.md). Premium agents must route scouting, triage, test generation, web research, and refactors through MCP tools before native Grep/Read/WebSearch/manual builds. `MCP_ADJUTANT_REQUIRE_BUILDER=true` in [`.cursor/mcp.json`](.cursor/mcp.json).

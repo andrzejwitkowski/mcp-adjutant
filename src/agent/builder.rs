@@ -146,7 +146,7 @@ impl<
             "red" => triage_ctx
                 .input_prompt
                 .contains("compile succeeded, tests failing assertions"),
-            _ => triage_ctx.input_prompt.contains("completed successfully"),
+            _ => crate::agent::triage_passed(triage_ctx),
         }
     }
 

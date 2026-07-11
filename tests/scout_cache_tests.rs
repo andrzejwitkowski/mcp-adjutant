@@ -108,6 +108,7 @@ async fn scout_cache_stores_finished_report() {
                         "end": 1
                     }),
                 }],
+                ..Default::default()
             },
             LlmModelTurn {
                 content: Some("Done.".to_string()),
@@ -115,6 +116,7 @@ async fn scout_cache_stores_finished_report() {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
                 }],
+                ..Default::default()
             },
         ])))),
         query,
@@ -181,6 +183,7 @@ async fn scout_cache_invalidates_when_dependency_changes() {
                         "end": 1
                     }),
                 }],
+                ..Default::default()
             },
             LlmModelTurn {
                 content: Some("Refreshed.".to_string()),
@@ -188,6 +191,7 @@ async fn scout_cache_invalidates_when_dependency_changes() {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "## Scout\n- refreshed insight" }),
                 }],
+                ..Default::default()
             },
         ])))),
         paraphrase_query,
@@ -221,6 +225,7 @@ async fn scout_cache_skips_store_without_file_dependencies() {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": "## Scout\n- no deps" }),
             }],
+            ..Default::default()
         }])))),
         query,
         5,
@@ -268,6 +273,7 @@ async fn scout_cache_returns_report_when_store_fails() {
                         "end": 1
                     }),
                 }],
+                ..Default::default()
             },
             LlmModelTurn {
                 content: Some("Done.".to_string()),
@@ -275,6 +281,7 @@ async fn scout_cache_returns_report_when_store_fails() {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "## Scout\n- outside ok" }),
                 }],
+                ..Default::default()
             },
         ])))),
         "outside dependency query",
@@ -319,6 +326,7 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
                     name: "ripgrep".to_string(),
                     arguments: serde_json::json!({ "pattern": "alpha_marker" }),
                 }],
+                ..Default::default()
             },
             LlmModelTurn {
                 content: Some("Done.".to_string()),
@@ -326,6 +334,7 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "## Scout\n- alpha_marker in src/marker.rs" }),
                 }],
+                ..Default::default()
             },
         ])))),
         query,
@@ -373,6 +382,7 @@ async fn scout_cache_stores_when_read_cache_disabled() {
                         "end": 1
                     }),
                 }],
+                ..Default::default()
             },
             LlmModelTurn {
                 content: Some("Done.".to_string()),
@@ -380,6 +390,7 @@ async fn scout_cache_stores_when_read_cache_disabled() {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
                 }],
+                ..Default::default()
             },
         ])))),
         query,

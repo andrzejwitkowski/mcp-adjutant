@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+---
+
+# Codebase exploration in mcp-adjutant
+
+**Overrides the global `fastcontext.mdc` rule in this workspace.**
+
+This repo *is* mcp-adjutant. When the `mcp-adjutant` MCP server is connected, follow [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](../skills/mcp-adjutant-delegation/SKILL.md) at **hard** level (`MCP_ADJUTANT_DELEGATION_LEVEL=hard`).
+
+## MCP-first — use adjutant before native tools
+
+When adjutant MCP tools are available, **do not** substitute native tools for matching work:
+
+| Task | MCP tool | Do NOT use instead |
+| --- | --- | --- |
+| Repo context, tracing, impact analysis | `scout_context` | fastcontext, Grep chains, Task explore |
+| After code changes | `verify_and_triage` | manual cargo/npm, ReadLints only |
+| Tests for new/changed `src/` logic | `generate_tests_and_scaffolding` | hand-written test files |
+| External docs, API specs, library behavior | `web_fetch` | WebSearch, WebFetch |
+| Rename/signature across files | `execute_global_refactor` | manual multi-file edits |
+| Every sub-agent result before use | `evaluate_agent_performance` | trusting output unchecked |
+
+Poll `query_job_status` until `terminal=true` for every async tool. Read the delegation skill for retry/evaluator loops and the session checklist.
+
+When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping builder after `src/` edits is a rule violation.
+
+## When FastContext CLI is allowed (fallback only)
+
+Use `fastcontext -q "<question; file:line evidence>" --max-turns 8` only when:
+
+- mcp-adjutant MCP is **not** connected, or
+- `scout_context` failed after skill-appropriate retries, or
+- **Single obvious file** / trivial symbol lookup (`rg` / `Read` is fine too)
+
+Endpoint: `http://127.0.0.1:8080/v1`, model `fastcontext`, 32k context.
+If down: `launchctl kickstart -k gui/$(id -u)/com.andrzej.fastcontext.llama-server`.
+
+FastContext remains read-only evidence gathering — never a substitute for adjutant scout, triage, builder, web_fetch, or evaluation when MCP is up.

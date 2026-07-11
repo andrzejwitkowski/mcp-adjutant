@@ -1,6 +1,6 @@
 ---
 name: mcp-adjutant-delegation
-description: Use when the mcp-adjutant MCP server is connected and the agent can delegate scouting, triage, test generation, or QA to cost-effective sub-agents. Activates for codebase exploration, compile fixes, test scaffolding, or when the user sets delegation level low, medium, or hard.
+description: MCP-FIRST when mcp-adjutant is connected. Route repo scouting, compile fix, test generation, web research, global refactor, and sub-agent QA through adjutant tools before Grep/Read/WebSearch/manual builds. Activates for any task matching an MCP tool; hard mode is default in this repo.
 metadata:
   delegation-levels: low, medium, hard
   default-delegation-level: medium
@@ -8,17 +8,46 @@ metadata:
 
 # mcp-adjutant delegation
 
-Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage, Builder, Evaluator). They run on cost-effective models configured in the mcp-adjutant config UI. You stay on the premium model for judgment, integration, and user-facing decisions.
+Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage, Builder, Transformer, WebFetcher, Evaluator). They run on cost-effective models configured in the mcp-adjutant config UI. You stay on the premium model for judgment, integration, and user-facing decisions.
 
 **Prerequisite:** `mcp-adjutant` MCP must be connected with these tools available:
 
 | Tool | Sub-agent | Delegate when |
 | --- | --- | --- |
-| `scout_context` | Scout | Need repo context without loading files into your window |
+| `scout_context` | Scout | Repo layout, tracing, impact analysis, “where is X” |
 | `verify_and_triage` | Triage | After code changes — compile, type-check, trivial fixes |
-| `generate_tests_and_scaffolding` | Builder | Unit/integration/factory tests for a specific file |
+| `generate_tests_and_scaffolding` | Builder | Unit/integration/factory tests for a source file |
+| `web_fetch` | WebFetcher | External docs, API specs, library behavior, comparisons |
+| `execute_global_refactor` | Transformer | Rename method/struct; propagate signature changes |
 | `evaluate_agent_performance` | Evaluator | QA a sub-agent result before trusting or re-delegating |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
+
+---
+
+## MCP-first rule (always when connected)
+
+**Before** Grep/Read chains, `WebSearch`, `WebFetch`, `Task`/explore, `fastcontext`, manual `cargo`/`npm`, or hand-writing tests:
+
+1. Check the [tool router](#tool-router) — if a row matches, call the MCP tool **first**.
+2. Poll `query_job_status` until `terminal=true`.
+3. Run `evaluate_agent_performance` on every sub-agent result (medium/hard).
+4. Only self-serve what MCP did not cover.
+
+When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping `generate_tests_and_scaffolding` after editing `src/` logic is a **rule violation** — call builder or document N/A in the [session checklist](#session-checklist-hard--medium).
+
+### Tool router
+
+| User intent / trigger | MCP tool (required) | Never substitute with |
+| --- | --- | --- |
+| Repo layout, tracing, impact, “where is X” | `scout_context` | fastcontext, Grep chains, Task explore |
+| After any code edit | `verify_and_triage` | cargo/npm manually, ReadLints only |
+| New/changed logic in `src/` without tests | `generate_tests_and_scaffolding` | Hand-written test files |
+| External docs, API specs, library usage | `web_fetch` | WebSearch, WebFetch, guessing |
+| Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
+| QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
+| Poll async jobs | `query_job_status` | Guessing timeouts |
+
+---
 
 ## Set delegation level
 
@@ -43,6 +72,8 @@ Delegate **only** when you are confident the sub-agent can complete the task wit
 | Broad repo search across many files | `scout_context` |
 | Mechanical compile/type errors (imports, typos, missing semicolons) | `verify_and_triage` |
 | Boilerplate test files for an existing function/module | `generate_tests_and_scaffolding` |
+| Need authoritative external doc snippet | `web_fetch` |
+| Mechanical rename across known call sites | `execute_global_refactor` |
 
 ### Do NOT delegate (low)
 
@@ -93,29 +124,55 @@ Poll until `terminal=true`. Parse the JSON score and critique.
 | **5–7** | **Retry 2–3 times** with progressively tighter prompts; verify key facts yourself |
 | **1–4** | **Retry 2 times** with heavily narrowed scope and explicit gaps from the critique; only then self-serve |
 
-Track mentally per category: **scout**, **triage**, **builder**.
+Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**, **transformer**.
 
 ### Medium-specific rules
 
 - **Scout** → delegate when exploration spans 5+ files or unknown layout; otherwise use local search/read.
 - **Triage** → delegate after every substantive edit batch; skip for comment-only or doc-only changes.
-- **Builder** → delegate one file at a time; review generated tests before committing.
+- **Builder** → delegate one file at a time after logic changes; review generated tests before committing.
+- **Web fetch** → delegate before citing library/API behavior you did not verify in-repo.
 - **Weak first result** → refine prompt and re-delegate; do not abandon after one try.
 - Re-evaluate after **two consecutive scores below 6** on the **same task after retries** → switch that task to self-serve; do not blacklist the whole category from one bad first attempt.
 
 ---
 
-## HARD — always delegate when tools apply
+## HARD — MCP is the default toolbelt
 
-Prefer mcp-adjutant over doing the work yourself whenever a matching tool exists.
+**Do not** use native exploration/build/test tools when an MCP row matches. Hard mode is mandatory in this repo (`MCP_ADJUTANT_DELEGATION_LEVEL=hard`).
 
-### Hard rules
+### Mandatory pipelines
+
+**Feature / bugfix session:**
+
+1. `scout_context` — map affected modules (if >2 files or layout unknown)
+2. [premium implements]
+3. `generate_tests_and_scaffolding` — **every** touched `src/` file with new/changed logic (one file per call)
+4. `verify_and_triage` — always before handoff
+5. `evaluate_agent_performance` — on scout, builder, and triage outputs (score ≥ 7)
+
+**External research session:**
+
+1. `web_fetch` — before citing library/API behavior
+2. `scout_context` — map where the repo integrates it
+3. `evaluate_agent_performance` — on both outputs
+
+**Global rename / signature change:**
+
+1. `scout_context` — list call sites (optional if scope is narrow)
+2. `execute_global_refactor` — with `scope_path` when possible
+3. `verify_and_triage`
+4. `evaluate_agent_performance`
+
+### Hard rules (non-negotiable)
 
 | Trigger | Required action |
 | --- | --- |
 | Any non-trivial task needing repo context | `scout_context` first |
 | Any code change (including small edits) | `verify_and_triage` before commit or handoff |
-| New or modified source file without tests | `generate_tests_and_scaffolding` |
+| New or changed logic in `src/` | `generate_tests_and_scaffolding` per affected file |
+| Citing external library/API behavior | `web_fetch` first |
+| Propagating rename/signature across files | `execute_global_refactor` |
 | Every sub-agent result before use | `evaluate_agent_performance` |
 
 ### Hard workflow
@@ -125,13 +182,27 @@ Prefer mcp-adjutant over doing the work yourself whenever a matching tool exists
 3. On `terminal=true` with `status=completed`, run `evaluate_agent_performance`.
 4. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
 5. Integrate verified results into your response; cite what the sub-agent found/changed.
-6. Optional polish pass: one final sub-agent call to tighten output (e.g. scout missing edge case, builder add one more test).
+6. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
 
 ### Hard exceptions (still do yourself)
 
 - Direct user chat, clarifying questions, and final summaries
 - Choosing between architectural alternatives (sub-agents inform, you decide)
 - When mcp-adjutant tools are unavailable — fall back gracefully and tell the user
+
+### Session checklist (hard / medium)
+
+Before handoff on substantive work, include in your response (or internal trace):
+
+```markdown
+### Adjutant checklist
+- [ ] scout_context — Y/N (query: …)
+- [ ] generate_tests_and_scaffolding — Y/N (files: …)
+- [ ] verify_and_triage — Y/N
+- [ ] web_fetch — Y/N or N/A
+- [ ] execute_global_refactor — Y/N or N/A
+- [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …
+```
 
 ---
 
@@ -189,6 +260,15 @@ Attempt 3: "Found jwt.rs but missed session refresh. Trace refresh flow from
 login handler to token store; include call graph for refresh_token()."
 ```
 
+### Query hygiene (scout + triage)
+
+Write scout queries with **symbol names and module paths**, not vague natural-language phrases:
+
+- Good: `"Where is LlmUsage defined and recorded? List file:line for src/metrics/ and src/llm/factory.rs"`
+- Bad: `"token metrics implementation state"`
+
+Triage results include structured evidence after a pass: modules checked, commands run, exit status, and build log excerpts — not a generic one-liner. Use that evidence in your integration step and when pasting into `evaluate_agent_performance`.
+
 ### Same agent, same task — polish iteratively
 
 You may call the **same tool multiple times** on one task. Treat it as refinement, not duplication:
@@ -198,6 +278,8 @@ You may call the **same tool multiple times** on one task. Treat it as refinemen
 | `scout_context` | Broad map → drill into gaps → verify edge cases / call sites |
 | `verify_and_triage` | Fix batch → re-run on remaining errors → final clean pass |
 | `generate_tests_and_scaffolding` | Scaffold → add edge cases → tighten assertions |
+| `web_fetch` | Broad topic → narrow to API surface → verify against repo usage |
+| `execute_global_refactor` | Narrow scope_path → verify call sites → re-run triage |
 | `evaluate_agent_performance` | Score draft → retry sub-agent → re-evaluate polished output |
 
 Use a **new `request_uuid` per attempt**. Keep a short mental log: `attempt N / tool / prompt summary / outcome`.
@@ -220,8 +302,10 @@ Stop iterating only when **one** of these is true:
 **scout_context**
 
 ```json
-{ "query": "Where is X implemented and how does Y interact?", "request_uuid": "<uuid>" }
+{ "query": "Where is LlmUsage defined? List file:line under src/metrics/ and src/llm/", "request_uuid": "<uuid>" }
 ```
+
+Prefer symbol/module paths over natural-language phrases (e.g. `LlmUsage`, `record_llm_call`, not "token metrics state").
 
 **verify_and_triage**
 
@@ -241,7 +325,29 @@ Omit `target_paths` or pass `[]` to use git dirty files.
 }
 ```
 
-`test_type`: `unit` | `integration` | `factory`
+`test_type`: `unit` | `integration` | `factory`. Call **once per source file** with new/changed logic.
+
+**web_fetch**
+
+```json
+{
+  "search_phrase": "Chart.js stacked bar chart API 2024",
+  "request_uuid": "<uuid>"
+}
+```
+
+Use for library docs, API specs, release notes — not for in-repo code (use scout).
+
+**execute_global_refactor**
+
+```json
+{
+  "method_name": "record_llm_call",
+  "refactor_instruction": "Add model_name: &str parameter after phase",
+  "scope_path": "src/metrics",
+  "request_uuid": "<uuid>"
+}
+```
 
 **evaluate_agent_performance**
 
@@ -254,30 +360,25 @@ Omit `target_paths` or pass `[]` to use git dirty files.
 }
 ```
 
+`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `WebFetcher`, `Phase_3_Transformer`.
+
 ---
 
 ## Decision flowchart
 
 ```mermaid
 flowchart TD
-    A[Task needs repo work?] --> B{Level?}
-    B -->|hard| C[Delegate matching tool]
-    B -->|medium| D{Clearly cost-effective OR prior score >= 8?}
-    B -->|low| E{Clearly cost-effective?}
-    D -->|yes| C
-    D -->|no| F[Do yourself]
-    E -->|yes| C
-    E -->|no| F
+    A[Task started] --> R{MCP tool matches router?}
+    R -->|yes| C[Call MCP tool first]
+    R -->|no| F[Premium agent work]
+    F --> R2{Edited src/ or need verify?}
+    R2 -->|yes| C
     C --> G[Poll query_job_status]
-    G --> H{Level medium or hard?}
-    H -->|yes| I[evaluate_agent_performance]
-    H -->|no| J[Spot-check and use]
+    G --> I[evaluate_agent_performance]
     I --> K{Score >= 7?}
-    K -->|yes| J
-    K -->|no| M{Retries left?}
-    M -->|yes| N[Refine prompt from critique + prior output]
+    K -->|yes| J[Integrate result]
+    K -->|no| N[Refine + retry MCP]
     N --> C
-    M -->|no| L[Self-serve remainder or escalate]
 ```
 
 ---
@@ -285,6 +386,10 @@ flowchart TD
 ## Anti-patterns
 
 - Reading dozens of files into context when `scout_context` would suffice (**hard** and often **medium**)
+- **Scout + triage + evaluate only** — skipping builder, web_fetch, and refactor when triggers match
+- Implementing features and **never calling `generate_tests_and_scaffolding`** (hard violation when `MCP_ADJUTANT_REQUIRE_BUILDER=true`)
+- Using **WebSearch** or **WebFetch** when `web_fetch` MCP is available
+- Using **Task/explore** or **fastcontext** when `scout_context` applies
 - Committing after edits without `verify_and_triage` (**hard** always; **medium** after substantive edits)
 - Ignoring `evaluate_agent_performance` in **medium**/**hard** and trusting unverified sub-agent output
 - Delegating ambiguous architecture work in **low** mode

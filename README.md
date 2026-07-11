@@ -4,13 +4,15 @@ An advanced [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ser
 
 ## What it does
 
-mcp-adjutant exposes five MCP tools. Four run long-lived agent jobs asynchronously; the fifth polls job status.
+mcp-adjutant exposes seven MCP tools. Six run long-lived agent jobs asynchronously; the seventh polls job status.
 
 | Tool | Purpose |
 | --- | --- |
 | `scout_context` | Autonomous code scouting — returns condensed markdown context for a query |
 | `verify_and_triage` | Compile/type-check changed code and auto-fix trivial issues |
 | `generate_tests_and_scaffolding` | Generate unit, integration, or factory tests for a source file |
+| `web_fetch` | Fetch and condense authoritative web content for a search phrase |
+| `execute_global_refactor` | Propagate rename/signature changes across files (scout + codemod + triage) |
 | `evaluate_agent_performance` | QA another agent's output against the original task |
 | `query_job_status` | Poll async jobs by `request_uuid` until `terminal=true` |
 
@@ -26,7 +28,7 @@ Instructs premium agents when and how to delegate work to mcp-adjutant sub-agent
 | --- | --- |
 | **low** | Delegate only when clearly cost-effective (broad scout, mechanical triage, boilerplate tests) |
 | **medium** (default) | Start selective; use `evaluate_agent_performance` to adapt — delegate more when scores are high, self-serve when low |
-| **hard** | Always delegate matching work (scout before context-heavy tasks, triage after edits, evaluate every result) |
+| **hard** | MCP-first: scout, builder, triage, web_fetch, refactor as applicable; evaluate every sub-agent result |
 
 Set the level via user instruction, or `MCP_ADJUTANT_DELEGATION_LEVEL=low|medium|hard`.
 
@@ -167,7 +169,7 @@ Add this to `mcp.json`:
 1. Create or edit `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project).
 2. Paste the configuration above with your real paths.
 3. Reload Cursor: **Command Palette → Developer: Reload Window**.
-4. Open **Settings → Tools & MCP** and confirm `mcp-adjutant` is connected with five tools.
+4. Open **Settings → Tools & MCP** and confirm `mcp-adjutant` is connected with seven tools.
 5. Open **http://127.0.0.1:3000** to enter API keys if you have not already.
 
 Use `${workspaceFolder}` in paths for project-scoped config:
@@ -279,7 +281,7 @@ MCP_ADJUTANT_CONFIG = "/home/you/.config/mcp-adjutant/config.json"
 
 1. Install [Codex CLI](https://developers.openai.com/codex) (CLI and IDE extension share this config).
 2. Add the server via `codex mcp add` or edit `~/.codex/config.toml`.
-3. Start Codex and run `/mcp` — `mcp-adjutant` should list five tools.
+3. Start Codex and run `/mcp` — `mcp-adjutant` should list seven tools.
 4. Set API keys in the config UI at **http://127.0.0.1:3000**.
 
 Increase `tool_timeout_sec` if scout or builder jobs run longer than five minutes.

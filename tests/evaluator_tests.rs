@@ -21,6 +21,7 @@ impl LlmClient for MockEvaluatorLlm {
                 r#"{"score": 6, "critique": "Too many comments in the code."}"#.to_string(),
             ),
             tool_calls: vec![],
+            ..Default::default()
         })
     }
 }

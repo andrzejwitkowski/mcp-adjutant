@@ -4,6 +4,7 @@ const LINKS = [
   { hash: '#/', label: 'Configuration' },
   { hash: '#/evaluations', label: 'Evaluations' },
   { hash: '#/cache', label: 'Scout cache' },
+  { hash: '#/usage', label: 'Usage' },
   { hash: '#/web-cache', label: 'Web cache' },
 ] as const
 

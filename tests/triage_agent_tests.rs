@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, TriageAgent,
+    triage_passed, AgentLoopOrchestrator, BuildCommandDiscoverer, BuildCommandRunner, TriageAgent,
     TRIAGE_SYSTEM_PROMPT,
 };
 use mcp_adjutant::domain::AdjutantConfig;
@@ -54,6 +54,7 @@ impl MockTriageLlm {
                         "content": content,
                     }),
                 }],
+                ..Default::default()
             }),
         }
     }
@@ -152,11 +153,13 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
         "orchestrator should finish successfully"
     );
     assert!(
-        result
-            .input_prompt
-            .contains("All builds/tests completed successfully."),
+        triage_passed(&result),
         "success message expected, got: {}",
         result.input_prompt
+    );
+    assert!(
+        result.accumulated_data.contains("Build OK"),
+        "build evidence expected in accumulated_data"
     );
     assert!(
         result.iterations >= 1,
@@ -191,9 +194,8 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
         result.is_finished,
         "fix should be verified on the same iteration"
     );
-    assert!(result
-        .input_prompt
-        .contains("All builds/tests completed successfully."));
+    assert!(triage_passed(&result));
+    assert!(result.accumulated_data.contains("Build OK"));
 
     std::fs::remove_dir_all(&root).ok();
 }

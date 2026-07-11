@@ -18,6 +18,12 @@ Return ONE valid JSON object (no markdown fence) with this shape:
   "score": [rating from 1 to 10],
   "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]"
 }
+
+Scoring guide:
+- 8–10: Output contains verifiable evidence (commands run, exit status, file:line paths, log excerpts).
+- 5–7: Correct conclusion but thin or incomplete evidence.
+- 1–4: Generic success/failure sentence with no supporting detail.
+
 Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
 #[derive(Debug, Deserialize)]
