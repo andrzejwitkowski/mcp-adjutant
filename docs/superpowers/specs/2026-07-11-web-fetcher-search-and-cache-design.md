@@ -7,13 +7,13 @@
 
 ## Purpose
 
-Upgrade the `web_fetcher` agent's `search_web` tool from a browsing-LLM wrapper to a **real server-side web search** (DuckDuckGo HTML scrape → fetch top pages → convert to markdown), and add a **vector-backed semantic cache** (search phrase → compacted report) with TTL + content-hash hybrid invalidation, a UI view, and source tracking.
+Upgrade the `web_fetcher` agent's `search_web` tool from a browsing-LLM wrapper to a **real server-side web search** (Brave Search API by default → fetch top pages → convert to markdown), and add a **vector-backed semantic cache** (search phrase → compacted report) with TTL + content-hash hybrid invalidation, a UI view, and source tracking.
 
 ## Scope decisions (locked in brainstorm)
 
 | Decision | Choice |
 |---|---|
-| Search backend | DuckDuckGo HTML scrape (no API key, no cost) |
+| Search backend | Brave Search API (requires `web_fetcher.brave_api_key` or `MCP_ADJUTANT_BRAVE_API_KEY`; DuckDuckGo HTML scrape available for tests via `MCP_ADJUTANT_DDG_HTML_URL`) |
 | DB location | Same `.adjutant/cache.db`, new tables via `MIGRATIONS` |
 | Cache shape | Phrase → report (mirrors scout's query → insight) |
 | Invalidation | TTL + content-hash hybrid (fast path within TTL, re-fetch + hash-check past TTL) |
@@ -33,10 +33,11 @@ Upgrade the `web_fetcher` agent's `search_web` tool from a browsing-LLM wrapper 
 ```
 search_web(query)
    │
-   ├─► DuckDuckGo HTML scrape (ureq GET https://html.duckduckgo.com/html/?q=...)
+   ├─► Brave Search API (ureq GET https://api.search.brave.com/res/v1/web/search, X-Subscription-Token)
    │       → parse top-N result links + titles + snippets
+   │       (tests/fallback: DuckDuckGo HTML scrape when MCP_ADJUTANT_DDG_HTML_URL is set)
    │
-   └─► for each top URL: HTTP GET (ureq) → HTML→markdown (new crate) → truncate
+   └─► for each top URL: HTTP GET (ureq, manual redirect validation + DNS pinning) → HTML→markdown (htmd) → truncate
                                                        │
    returns: assembled grounded markdown (sources + content) ▼
                                             appended to accumulated_data

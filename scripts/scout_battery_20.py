@@ -116,7 +116,7 @@ def main():
         [str(BIN)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
         cwd=REPO_ROOT,
     )

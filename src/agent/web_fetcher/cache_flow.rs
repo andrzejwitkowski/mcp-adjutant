@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 
 use crate::agent::AgentLoopOrchestrator;
-use crate::cache::{current_unix_timestamp, ProjectCacheManager, WebSourceSnapshot};
+use crate::cache::{
+    current_unix_timestamp, ProjectCacheManager, WebReportCacheLookup, WebSourceSnapshot,
+};
 use crate::llm::LlmClient;
 use crate::tools::web_fetch::FetchedPage;
 
@@ -22,12 +24,24 @@ pub async fn run_web_fetch_with_cache<RC: LlmClient>(
     read_cache: bool,
 ) -> Result<WebCacheOutcome, String> {
     if read_cache {
-        if let Some(cached) = cache
-            .lock()
-            .map_err(|_| "cache manager lock poisoned".to_string())?
-            .try_get_valid_web_report(search_phrase, ttl_seconds, cache_threshold)?
-        {
-            return Ok(WebCacheOutcome::Hit(cached));
+        let lookup = {
+            let guard = cache
+                .lock()
+                .map_err(|_| "cache manager lock poisoned".to_string())?;
+            guard.lookup_web_report_cache(search_phrase, ttl_seconds, cache_threshold)?
+        };
+        match lookup {
+            WebReportCacheLookup::Fresh(cached) => return Ok(WebCacheOutcome::Hit(cached)),
+            WebReportCacheLookup::Stale(pending) => {
+                if crate::tools::web_fetch::web_sources_still_valid(&pending.sources) {
+                    return Ok(WebCacheOutcome::Hit(pending.report_content));
+                }
+                cache
+                    .lock()
+                    .map_err(|_| "cache manager lock poisoned".to_string())?
+                    .invalidate_stale_web_report(&pending.query_id)?;
+            }
+            WebReportCacheLookup::Miss => {}
         }
     }
 

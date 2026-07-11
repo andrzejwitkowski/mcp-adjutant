@@ -12,6 +12,16 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
 
+struct EnvGuard {
+    key: &'static str,
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        std::env::remove_var(self.key);
+    }
+}
+
 struct ScriptClient(Mutex<VecDeque<LlmModelTurn>>);
 
 impl LlmClient for ScriptClient {
@@ -295,6 +305,9 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
     .expect("write");
 
     std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", &project_root);
+    let _env_guard = EnvGuard {
+        key: "MCP_ADJUTANT_PROJECT_ROOT",
+    };
     let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
     let query = "Where is alpha_marker defined";
     let outcome = run_scout_with_cache(
@@ -334,7 +347,6 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
         .expect("stored insight")
         .contains("alpha_marker"));
 
-    std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
     fs::remove_dir_all(&project_root).ok();
 }
 

@@ -40,7 +40,7 @@ pub struct PhaseProfile {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebFetcherProfile {
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub brave_api_key: Option<String>,
     #[serde(default = "default_max_search_hops")]
     pub max_search_hops: u32,
