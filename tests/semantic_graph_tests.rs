@@ -111,7 +111,11 @@ fn semantic_lookup_stays_under_budget_after_warmup() {
     samples_ms.sort_by(|left, right| left.partial_cmp(right).expect("finite durations"));
     let median_ms = samples_ms[2];
     // ponytail: 20ms on dev hardware; GHA median ~35ms — 50ms catches real regressions
-    let budget_ms = if std::env::var("CI").is_ok() { 50.0 } else { 20.0 };
+    let budget_ms = if std::env::var("CI").is_ok() {
+        50.0
+    } else {
+        20.0
+    };
 
     assert!(
         median_ms < budget_ms,
