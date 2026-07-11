@@ -1,6 +1,17 @@
-use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::net::{IpAddr, ToSocketAddrs};
+use std::time::Duration;
 
-/// A single search result extracted from DuckDuckGo's HTML.
+use serde_json::Value;
+
+use crate::cache::project::hash_query_text;
+
+const USER_AGENT: &str = "mcp-adjutant/1.0 (web fetcher)";
+const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REDIRECTS: u32 = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
     pub url: String,
@@ -8,7 +19,6 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
-/// A fetched source page ready for caching.
 #[derive(Debug, Clone)]
 pub struct FetchedPage {
     pub url: String,
@@ -16,8 +26,46 @@ pub struct FetchedPage {
     pub content_sha256: String,
 }
 
-/// Parse DuckDuckGo lite-HTML result links from raw HTML.
-/// Extracts result URLs, titles, and snippets from `<div class="result">` blocks.
+pub fn parse_brave_results(json: &str) -> Result<Vec<SearchResult>, String> {
+    let root: Value =
+        serde_json::from_str(json).map_err(|err| format!("Brave Search JSON parse failed: {err}"))?;
+    let results = root
+        .pointer("/web/results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Brave Search response missing web.results".to_string())?;
+
+    let mut out = Vec::new();
+    for item in results {
+        let url = item
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if url.is_empty() {
+            continue;
+        }
+        let title = item
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let snippet = item
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        out.push(SearchResult {
+            url,
+            title,
+            snippet,
+        });
+    }
+    Ok(out)
+}
+
 pub fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
     html.split(r#"<div class="result">"#)
         .skip(1)
@@ -38,26 +86,75 @@ pub fn parse_ddg_results(html: &str) -> Vec<SearchResult> {
         .collect()
 }
 
-/// Convert raw HTML to markdown using htmd. Falls back to the raw HTML on error.
 pub fn html_to_markdown(html: &str) -> String {
     htmd::convert(html).unwrap_or_else(|_| html.to_string())
 }
 
-/// Fetch a URL and return its content as markdown + SHA-256 hash.
+fn url_authority(url: &str) -> Result<&str, String> {
+    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| {
+            if allow_local {
+                url.strip_prefix("http://")
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("only HTTPS URLs are allowed: {url}"))?;
+    if rest.is_empty() {
+        return Err(format!("missing host in URL: {url}"));
+    }
+    Ok(rest.split(&['/', '?', '#'][..]).next().unwrap_or(rest))
+}
+
+pub fn validate_fetch_url(url: &str) -> Result<(), String> {
+    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
+    let authority = url_authority(url)?;
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or(authority)
+        .split(':')
+        .next()
+        .unwrap_or(authority)
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+
+    if host.is_empty() || (!allow_local && host.eq_ignore_ascii_case("localhost")) {
+        return Err(format!("blocked host: {host}"));
+    }
+    if allow_local && (host.starts_with("127.0.0.1") || host.eq_ignore_ascii_case("localhost")) {
+        return Ok(());
+    }
+    if host.ends_with(".local") || host.ends_with(".internal") {
+        return Err(format!("blocked host: {host}"));
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_blocked_ip(ip) {
+            return Err(format!("blocked IP: {ip}"));
+        }
+        return Ok(());
+    }
+
+    Ok(())
+}
+
 pub fn fetch_page_as_markdown(url: &str) -> Result<FetchedPage, String> {
-    let agent = ureq::AgentBuilder::new().build();
-    let response = agent
+    validate_fetch_url(url)?;
+    resolve_public_host(url)?;
+
+    let response = http_agent()
         .get(url)
-        .set("User-Agent", "mcp-adjutant/1.0 (web fetcher)")
+        .set("User-Agent", USER_AGENT)
         .call()
         .map_err(|err| format!("failed to fetch {url}: {err}"))?;
 
-    let html: String = response
-        .into_string()
-        .map_err(|err| format!("failed to read body from {url}: {err}"))?;
-
+    let html = read_limited_string(response.into_reader())?;
     let markdown = html_to_markdown(&html);
-    let content_sha256 = hash_content(&markdown);
+    let content_sha256 = hash_query_text(&markdown);
 
     Ok(FetchedPage {
         url: url.to_string(),
@@ -66,44 +163,125 @@ pub fn fetch_page_as_markdown(url: &str) -> Result<FetchedPage, String> {
     })
 }
 
-/// Scrape DuckDuckGo for a query, fetch the top-N result pages, return
-/// assembled grounded markdown + the list of fetched sources.
-pub fn search_and_fetch(query: &str, max_pages: usize) -> Result<(String, Vec<FetchedPage>), String> {
-    let encoded = url_encode(query);
-    let ddg_url = format!("https://html.duckduckgo.com/html/?q={encoded}");
+pub fn search_and_fetch(
+    query: &str,
+    max_pages: usize,
+    brave_api_key: Option<&str>,
+) -> Result<(String, Vec<FetchedPage>), String> {
+    let results = if std::env::var("MCP_ADJUTANT_DDG_HTML_URL").is_ok() {
+        search_ddg(query)?
+    } else {
+        search_brave(query, max_pages, brave_api_key)?
+    };
 
-    let agent = ureq::AgentBuilder::new().build();
-    let response = agent
+    assemble_search_report(query, results.into_iter().take(max_pages))
+}
+
+fn search_brave(
+    query: &str,
+    max_pages: usize,
+    brave_api_key: Option<&str>,
+) -> Result<Vec<SearchResult>, String> {
+    let api_key = brave_api_key
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("MCP_ADJUTANT_BRAVE_API_KEY")
+                .ok()
+                .filter(|key| !key.is_empty())
+        })
+        .ok_or_else(|| {
+            "Brave Search API key not configured (set web_fetcher.brave_api_key in config)".to_string()
+        })?;
+
+    let encoded = url_encode(query);
+    let count = max_pages.clamp(1, 20);
+    let search_url = std::env::var("MCP_ADJUTANT_BRAVE_SEARCH_URL")
+        .map(|template| {
+            template
+                .replace("{query}", &encoded)
+                .replace("{count}", &count.to_string())
+        })
+        .unwrap_or_else(|_| format!("{BRAVE_SEARCH_URL}?q={encoded}&count={count}"));
+
+    let response = http_agent()
+        .get(&search_url)
+        .set("User-Agent", USER_AGENT)
+        .set("Accept", "application/json")
+        .set("X-Subscription-Token", api_key.as_str())
+        .call()
+        .map_err(|err| format!("Brave Search request failed: {err}"))?;
+
+    let status = response.status();
+    let body = read_limited_string(response.into_reader())?;
+    if status == 401 || status == 403 {
+        return Err("Brave Search API key invalid or unauthorized".to_string());
+    }
+    if status == 429 {
+        return Err("Brave Search rate limit exceeded".to_string());
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!("Brave Search returned HTTP {status}: {body}"));
+    }
+
+    let results = parse_brave_results(&body)?;
+    if results.is_empty() {
+        return Err(format!("Brave Search returned no results for query: {query}"));
+    }
+    Ok(results)
+}
+
+fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
+    let encoded = url_encode(query);
+    let ddg_url = std::env::var("MCP_ADJUTANT_DDG_HTML_URL")
+        .map(|template| template.replace("{query}", &encoded))
+        .unwrap_or_else(|_| format!("https://html.duckduckgo.com/html/?q={encoded}"));
+
+    let response = http_agent()
         .get(&ddg_url)
-        .set("User-Agent", "mcp-adjutant/1.0 (web fetcher)")
+        .set("User-Agent", USER_AGENT)
         .call()
         .map_err(|err| format!("DuckDuckGo request failed: {err}"))?;
 
-    let html: String = response
-        .into_string()
-        .map_err(|err| format!("failed to read DDG response: {err}"))?;
-
+    let html = read_limited_string(response.into_reader())?;
+    if html.contains("Unfortunately, bots use DuckDuckGo too.") {
+        return Err("DuckDuckGo blocked the request (bot challenge); use Brave Search instead".to_string());
+    }
     let results = parse_ddg_results(&html);
-    let top = results.into_iter().take(max_pages);
+    if results.is_empty() {
+        return Err(format!("no results found for query: {query}"));
+    }
+    Ok(results)
+}
 
+fn assemble_search_report(
+    query: &str,
+    results: impl Iterator<Item = SearchResult>,
+) -> Result<(String, Vec<FetchedPage>), String> {
     let mut pages = Vec::new();
     let mut sections = Vec::new();
 
-    for result in top {
+    for result in results {
+        let snippet_block = if result.snippet.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n\n", result.snippet)
+        };
         match fetch_page_as_markdown(&result.url) {
             Ok(page) => {
                 sections.push(format!(
-                    "## [{}]({})\n\n{}\n",
+                    "## [{}]({})\n\n{}{}",
                     result.title,
                     result.url,
+                    snippet_block,
                     truncate_markdown(&page.markdown, 4_000)
                 ));
                 pages.push(page);
             }
             Err(err) => {
                 sections.push(format!(
-                    "## [{}]({})\n\n*(could not fetch: {err})*\n",
-                    result.title, result.url
+                    "## [{}]({})\n\n{}*(could not fetch: {err})*\n",
+                    result.title, result.url, snippet_block
                 ));
             }
         }
@@ -121,15 +299,84 @@ pub fn search_and_fetch(query: &str, max_pages: usize) -> Result<(String, Vec<Fe
     Ok((markdown, pages))
 }
 
-fn hash_content(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    digest
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            use std::fmt::Write as _;
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+pub fn resolve_public_host(url: &str) -> Result<(), String> {
+    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
+    let host = fetch_host(url)?;
+    if allow_local && (host.starts_with("127.0.0.1") || host.eq_ignore_ascii_case("localhost")) {
+        return Ok(());
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+
+    for addr in (host.as_str(), 443)
+        .to_socket_addrs()
+        .map_err(|err| format!("failed to resolve {host}: {err}"))?
+    {
+        if is_blocked_ip(addr.ip()) {
+            return Err(format!("blocked IP for {host}: {}", addr.ip()));
+        }
+    }
+
+    Ok(())
+}
+
+fn fetch_host(url: &str) -> Result<String, String> {
+    let authority = url_authority(url)?;
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or(authority)
+        .split(':')
+        .next()
+        .unwrap_or(authority)
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    if host.is_empty() {
+        return Err(format!("missing host in URL: {url}"));
+    }
+    Ok(host)
+}
+
+fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(FETCH_TIMEOUT)
+        .timeout_read(FETCH_TIMEOUT)
+        .redirects(MAX_REDIRECTS)
+        .build()
+}
+
+fn read_limited_string(reader: impl Read) -> Result<String, String> {
+    let mut buf = Vec::new();
+    reader
+        .take((MAX_RESPONSE_BYTES as u64).saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(|err| format!("failed to read response body: {err}"))?;
+    if buf.len() > MAX_RESPONSE_BYTES {
+        return Err(format!("response exceeds {MAX_RESPONSE_BYTES} byte limit"));
+    }
+    String::from_utf8(buf).map_err(|err| format!("response body is not valid UTF-8: {err}"))
+}
+
+fn is_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.octets()[0] >= 224
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn truncate_markdown(markdown: &str, max_chars: usize) -> String {
@@ -158,9 +405,10 @@ fn extract_href(block: &str) -> Option<String> {
     let after_href = &block[href_start + 6..];
     let end = after_href.find('"')?;
     let raw = &after_href[..end];
-    // DDG sometimes wraps URLs in a redirect prefix; strip it.
     let cleaned = raw
-        .strip_prefix("https://duckduckgo.com/l/?uddg=")
+        .strip_prefix("//duckduckgo.com/l/?uddg=")
+        .or_else(|| raw.strip_prefix("https://duckduckgo.com/l/?uddg="))
+        .or_else(|| raw.strip_prefix("http://duckduckgo.com/l/?uddg="))
         .and_then(|s| s.split('&').next())
         .unwrap_or(raw);
     Some(url_decode(cleaned))
@@ -193,18 +441,17 @@ fn url_decode(s: &str) -> String {
             result.push(' ');
             i += 1;
         } else if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
-                result.push(byte as char);
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                result.push(char::from(byte));
                 i += 3;
             } else {
-                result.push(bytes[i] as char);
+                result.push(char::from(bytes[i]));
                 i += 1;
             }
         } else {
-            result.push(bytes[i] as char);
+            result.push(char::from(bytes[i]));
             i += 1;
         }
     }
@@ -214,6 +461,16 @@ fn url_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_brave_results_extracts_urls_and_titles() {
+        let json = include_str!("../../tests/fixtures/web_fetcher/brave_results.json");
+        let results = parse_brave_results(json).expect("parse brave json");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].url, "https://example.com/tokio/docs");
+        assert_eq!(results[0].title, "Tokio Async Runtime");
+        assert!(results[0].snippet.contains("Official Tokio"));
+    }
 
     #[test]
     fn parse_ddg_results_extracts_urls_and_titles() {
@@ -226,17 +483,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_ddg_results_unwraps_redirect_links() {
+        let html = include_str!("../../tests/fixtures/web_fetcher/ddg_redirect_results.html");
+        let results = parse_ddg_results(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/tokio/docs");
+    }
+
+    #[test]
+    fn validate_fetch_url_rejects_private_targets() {
+        for url in [
+            "http://example.com",
+            "https://127.0.0.1/path",
+            "https://localhost/path",
+            "https://169.254.169.254/latest/meta-data",
+            "https://10.0.0.1/internal",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                validate_fetch_url(url).is_err(),
+                "expected {url} to be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_fetch_url_allows_public_https() {
+        assert!(validate_fetch_url("https://example.com/docs").is_ok());
+    }
+
+    #[test]
     fn html_to_markdown_converts_basic_html() {
         let html = "<h1>Title</h1><p>Hello <strong>world</strong>.</p>";
         let md = html_to_markdown(html);
         assert!(md.contains("Title"));
         assert!(md.contains("Hello"));
-    }
-
-    #[test]
-    fn hash_content_is_deterministic() {
-        assert_eq!(hash_content("test"), hash_content("test"));
-        assert_ne!(hash_content("test"), hash_content("other"));
     }
 
     #[test]

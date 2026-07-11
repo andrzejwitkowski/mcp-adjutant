@@ -16,7 +16,7 @@ pub use cache_flow::{run_web_fetch_with_cache, WebCacheOutcome};
 pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest, authoritative web content for a given topic. The topic can be anything the user asks about; adapt your search approach to the kind of information it requires.
 
 Available tools (call exactly one per turn):
-- search_web(query, focus?) — scrape DuckDuckGo for the query, fetch the top result pages, and return grounded markdown with inline source links. Use `focus` to narrow the search. Non-terminal: results are added to your observation history.
+- search_web(query, focus?) — search the web via Brave Search, fetch the top result pages, and return grounded markdown with inline source links. Use `focus` to narrow the search. Non-terminal: results are added to your observation history.
 - finalize(report) — end research and return your compacted markdown report.
 
 Strategy:
@@ -36,12 +36,11 @@ pub struct WebFetcherAgent<RC: LlmClient> {
 }
 
 impl<RC: LlmClient> WebFetcherAgent<RC> {
-    /// Build the agent with a reasoning client that drives the loop.
-    /// `search_web` scrapes the web directly (no browsing model needed).
     pub fn new(reasoning_client: RC, profile: WebFetcherProfile) -> Self {
         let token_budget = profile.token_budget;
+        let brave_api_key = profile.brave_api_key.clone();
         let source_collector = Arc::new(Mutex::new(Vec::new()));
-        let tools = web_fetcher_tool_set(token_budget, Arc::clone(&source_collector));
+        let tools = web_fetcher_tool_set(token_budget, brave_api_key, Arc::clone(&source_collector));
         Self {
             reasoning_client,
             tools,
@@ -49,7 +48,6 @@ impl<RC: LlmClient> WebFetcherAgent<RC> {
         }
     }
 
-    /// Drain the collected source pages (called by the cache flow after the loop).
     pub fn take_sources(&self) -> Vec<FetchedPage> {
         self.source_collector
             .lock()
@@ -64,11 +62,7 @@ impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
         "web_fetcher_agent"
     }
 
-    async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
-        if !context.input_prompt.contains("WEB_FETCHER") {
-            context.input_prompt.push_str("\n\n");
-            context.input_prompt.push_str(WEB_FETCHER_SYSTEM_PROMPT);
-        }
+    async fn enrich_context(&self, _context: &mut AgentContext) -> Result<(), String> {
         Ok(())
     }
 
@@ -83,36 +77,43 @@ impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
     }
 
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
-        context
-            .input_prompt
-            .push_str("\nContinue research based on the latest grounded observation.");
+        if context.iterations >= context.max_iterations.saturating_sub(1) {
+            context.input_prompt.push_str(
+                "\nFinal turn: call finalize(report) with your best compacted markdown report.",
+            );
+        } else {
+            context.input_prompt.push_str(
+                "\nContinue research. Call exactly one tool: search_web or finalize.",
+            );
+        }
         Ok(())
     }
 }
 
 fn web_fetcher_tool_set(
     token_budget: u32,
+    brave_api_key: Option<String>,
     source_collector: Arc<Mutex<Vec<FetchedPage>>>,
 ) -> LlmToolSet {
     LlmToolSet::new()
-        .register(SearchWebTool::new(source_collector))
+        .register(SearchWebTool::new(brave_api_key, source_collector))
         .register(FinalizeWebTool::with_budget(token_budget))
 }
 
-/// `search_web(query, focus?)`: scrapes DDG + fetches top pages.
-/// Appends fetched pages to the shared source collector for caching.
 struct SearchWebTool {
+    brave_api_key: Option<String>,
     source_collector: Arc<Mutex<Vec<FetchedPage>>>,
     definition: ToolDefinition,
 }
 
 impl SearchWebTool {
-    fn new(source_collector: Arc<Mutex<Vec<FetchedPage>>>) -> Self {
+    fn new(brave_api_key: Option<String>, source_collector: Arc<Mutex<Vec<FetchedPage>>>) -> Self {
         Self {
+            brave_api_key,
             source_collector,
             definition: ToolDefinition::new(
                 "search_web",
-                "Search the live web via DuckDuckGo and return grounded, cited markdown.",
+                "Search the live web via Brave Search and return grounded, cited markdown.",
             )
             .string_param("query", "Web search query.", true)
             .string_param(
@@ -140,7 +141,7 @@ impl LlmTool for SearchWebTool {
             None => query.clone(),
         };
 
-        let (markdown, pages) = search_and_fetch(&full_query, MAX_PAGES_PER_SEARCH)?;
+        let (markdown, pages) = run_search_blocking(&full_query, self.brave_api_key.as_deref())?;
 
         if let Ok(mut guard) = self.source_collector.lock() {
             guard.extend(pages);
@@ -150,7 +151,27 @@ impl LlmTool for SearchWebTool {
     }
 }
 
-/// `finalize(report)`: terminal tool. Applies the token-budget truncation.
+fn run_search_blocking(
+    query: &str,
+    brave_api_key: Option<&str>,
+) -> Result<(String, Vec<FetchedPage>), String> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                tokio::task::spawn_blocking({
+                    let query = query.to_string();
+                    let api_key = brave_api_key.map(str::to_string);
+                    move || search_and_fetch(&query, MAX_PAGES_PER_SEARCH, api_key.as_deref())
+                })
+                .await
+                .map_err(|err| format!("web search task failed: {err}"))?
+            })
+        })
+    } else {
+        search_and_fetch(query, MAX_PAGES_PER_SEARCH, brave_api_key)
+    }
+}
+
 struct FinalizeWebTool {
     definition: ToolDefinition,
     token_budget: u32,
@@ -216,7 +237,7 @@ mod tests {
     #[test]
     fn web_fetcher_tool_set_registers_both_tools() {
         let collector = Arc::new(Mutex::new(Vec::new()));
-        let tools = web_fetcher_tool_set(8_000, collector);
+        let tools = web_fetcher_tool_set(8_000, None, collector);
         let names: Vec<_> = tools
             .definitions()
             .into_iter()

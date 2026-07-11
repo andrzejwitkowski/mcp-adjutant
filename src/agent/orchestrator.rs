@@ -33,16 +33,17 @@ impl AgentLoopOrchestrator {
             agent.mutate_next_iteration(&mut context).await?;
         }
 
-        // ponytail: hard stop — treat accumulated observations as the scout report when capped
+        // ponytail: hard stop — treat accumulated observations as the final report when capped
         if !context.is_finished {
+            let agent_name = agent.name();
             if context.accumulated_data.is_empty() {
                 context.accumulated_data = format!(
-                    "Scout stopped after {} iteration(s) (max {}).",
+                    "{agent_name} stopped after {} iteration(s) (max {}).",
                     context.iterations, context.max_iterations
                 );
             } else {
                 context.accumulated_data = format!(
-                    "## Scout report (iteration limit after {} of {} turns)\n\n{}",
+                    "## {agent_name} report (iteration limit after {} of {} turns)\n\n{}",
                     context.iterations, context.max_iterations, context.accumulated_data
                 );
             }
@@ -53,9 +54,6 @@ impl AgentLoopOrchestrator {
     }
 }
 
-/// Build the user message for a tool-loop turn: the input prompt, plus the
-/// accumulated observation history once there is any.
-/// Shared by single-tool-loop agents (scout, web_fetcher).
 pub fn build_tool_loop_message(context: &AgentContext) -> String {
     if context.accumulated_data.is_empty() {
         context.input_prompt.clone()
@@ -67,14 +65,6 @@ pub fn build_tool_loop_message(context: &AgentContext) -> String {
     }
 }
 
-/// Run one turn of a single-tool-loop agent: ask the model for exactly one tool
-/// call, invoke it, append the observation, and finish if it is terminal.
-///
-/// Returns `Some((name, args))` for the tool that was invoked (so the caller can
-/// observe side effects like scout's touched-file tracking), or `None` if the
-/// model produced no tool call. Agents that take the *first* tool call and treat
-/// it as the whole turn (scout, web_fetcher) share this body; multi-tool agents
-/// (builder) and non-loop agents (evaluator) do not.
 pub fn run_single_tool_turn<C: LlmClient>(
     client: &C,
     tools: &crate::llm::LlmToolSet,
@@ -89,12 +79,13 @@ pub fn run_single_tool_turn<C: LlmClient>(
         Some(call) => call,
         None => {
             let thought = model_turn.content.unwrap_or_default();
-            if thought.is_empty() {
-                return Err("model response missing tool call".to_string());
-            }
-            let step = format!(
-                "Thought:\n{thought}\nObservation:\n(model did not call a tool — continue)\n"
-            );
+            let step = if thought.is_empty() {
+                "Observation:\n(model returned no tool call — call exactly one tool)\n".to_string()
+            } else {
+                format!(
+                    "Thought:\n{thought}\nObservation:\n(model did not call a tool — call exactly one tool)\n"
+                )
+            };
             context.accumulated_data.push_str(&step);
             return Ok(None);
         }
@@ -117,4 +108,60 @@ pub fn run_single_tool_turn<C: LlmClient>(
     }
 
     Ok(called)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::traits::AgentContext;
+    use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolSet, ToolDefinition};
+
+    struct NoToolClient;
+
+    impl LlmClient for NoToolClient {
+        fn complete(&self, _request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+            Ok(LlmModelTurn {
+                content: None,
+                tool_calls: vec![],
+            })
+        }
+    }
+
+    struct DoneTool;
+
+    impl LlmTool for DoneTool {
+        fn definition(&self) -> &ToolDefinition {
+            static DEF: std::sync::OnceLock<ToolDefinition> = std::sync::OnceLock::new();
+            DEF.get_or_init(|| ToolDefinition::new("done", "done"))
+        }
+
+        fn invoke(&self, _arguments: &serde_json::Value) -> Result<String, String> {
+            Ok("finished".to_string())
+        }
+
+        fn is_terminal(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn empty_tool_response_nudges_instead_of_error() {
+        let tools = LlmToolSet::new().register(DoneTool);
+        let mut context = AgentContext {
+            input_prompt: "research topic".to_string(),
+            accumulated_data: String::new(),
+            iterations: 1,
+            max_iterations: 3,
+            is_finished: false,
+            agent_completed: false,
+            touched_files: Vec::new(),
+        };
+
+        let result =
+            run_single_tool_turn(&NoToolClient, &tools, "system", &mut context)
+                .expect("should continue after empty tool response");
+
+        assert!(result.is_none());
+        assert!(context.accumulated_data.contains("must call"));
+    }
 }

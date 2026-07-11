@@ -12,9 +12,11 @@ export interface PhaseProfile {
 }
 
 export interface WebFetcherProfile {
-  browsing: PhaseProfile
+  brave_api_key?: string | null
   max_search_hops: number
   token_budget: number
+  cache_ttl_seconds: number
+  web_cache_threshold: number
 }
 
 export interface AdjutantConfig {
@@ -52,6 +54,10 @@ export interface CacheOverview {
   embedding_count: number
   dependency_count: number
   evaluation_count: number
+  web_query_count: number
+  web_report_count: number
+  web_source_count: number
+  web_dependency_count: number
 }
 
 export interface CachedQueryRow {
@@ -80,12 +86,66 @@ export interface InsightDependencyRow {
   code_node_id: string
 }
 
+export interface WebQueryRow {
+  id: string
+  raw_text: string
+  has_embedding: boolean
+}
+
+export interface WebReportRow {
+  id: string
+  query_text: string | null
+  content: string
+  created_at: number
+}
+
+export interface WebSourceRow {
+  id: string
+  url: string
+  content_sha256: string
+  fetched_at: number
+  is_stale: boolean
+}
+
+export interface WebFetchDependencyRow {
+  report_id: string
+  source_id: string
+}
+
 export interface CacheSnapshot {
   overview: CacheOverview
   queries: CachedQueryRow[]
   insights: CachedInsightRow[]
   code_nodes: CodeNodeRow[]
   dependencies: InsightDependencyRow[]
+  web_queries: WebQueryRow[]
+  web_reports: WebReportRow[]
+  web_sources: WebSourceRow[]
+  web_dependencies: WebFetchDependencyRow[]
+}
+
+export interface ScoutCachePage {
+  overview: CacheOverview
+  queries: CachedQueryRow[]
+  insights: CachedInsightRow[]
+  code_nodes: CodeNodeRow[]
+  dependencies: InsightDependencyRow[]
+  page: number
+  page_size: number
+  total_count: number
+  total_pages: number
+}
+
+export interface WebCachePage {
+  overview: CacheOverview
+  web_queries: WebQueryRow[]
+  web_reports: WebReportRow[]
+  web_sources: WebSourceRow[]
+  web_dependencies: WebFetchDependencyRow[]
+  page: number
+  page_size: number
+  total_count: number
+  total_pages: number
 }
 
 export interface LlmClientDefinition {

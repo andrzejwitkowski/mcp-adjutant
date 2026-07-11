@@ -67,12 +67,16 @@ const MIGRATIONS: &[&str] = &[
     );",
 ];
 
-/// MCP workspace root: env override, then process cwd, then compile-time repo root.
+/// MCP workspace root: env override, then walk up from cwd to find the repo root.
 pub fn mcp_workspace_root() -> PathBuf {
     std::env::var("MCP_ADJUTANT_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let start = std::env::current_dir().unwrap_or_else(|_| manifest.clone());
+            find_project_root(&start).unwrap_or_else(|_| {
+                find_project_root(&manifest).unwrap_or(start)
+            })
         })
 }
 
@@ -242,10 +246,15 @@ fn path_to_posix_string(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolve_workspace_path_joins_dot() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
         std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
         assert_eq!(
             resolve_workspace_path("."),
@@ -256,11 +265,26 @@ mod tests {
 
     #[test]
     fn resolve_workspace_path_joins_relative_paths() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
         std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
         assert_eq!(
             resolve_workspace_path("./src/cache/project.rs"),
             PathBuf::from("/tmp/mcp-adjutant/src/cache/project.rs")
         );
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+    }
+
+    #[test]
+    fn mcp_workspace_root_walks_up_from_target_dir() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let target_dir = manifest.join("target");
+        fs::create_dir_all(&target_dir).expect("create target dir");
+        let original = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&target_dir).expect("chdir target");
+        let root = mcp_workspace_root();
+        std::env::set_current_dir(original).expect("restore cwd");
+        assert_eq!(root, manifest);
     }
 }

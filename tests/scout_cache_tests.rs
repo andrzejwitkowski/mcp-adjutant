@@ -282,3 +282,108 @@ async fn scout_cache_returns_report_when_store_fails() {
     fs::remove_dir_all(&project_root).ok();
     fs::remove_dir_all(&outside_root).ok();
 }
+
+#[tokio::test]
+async fn scout_cache_stores_after_ripgrep_only_run() {
+    let project_root = unique_temp_project("scout-cache-rg");
+    fs::create_dir_all(project_root.join("src")).expect("create src");
+    write_demo_cargo_manifest(&project_root);
+    fs::write(project_root.join("src/marker.rs"), "pub fn alpha_marker() {}\n").expect("write");
+
+    std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", &project_root);
+    let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
+    let query = "Where is alpha_marker defined";
+    let outcome = run_scout_with_cache(
+        &cache,
+        &ScoutAgent::new(ScriptClient(Mutex::new(VecDeque::from([
+            LlmModelTurn {
+                content: Some("Search marker.".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "ripgrep".to_string(),
+                    arguments: serde_json::json!({ "pattern": "alpha_marker" }),
+                }],
+            },
+            LlmModelTurn {
+                content: Some("Done.".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "finalize".to_string(),
+                    arguments: serde_json::json!({ "report": "## Scout\n- alpha_marker in src/marker.rs" }),
+                }],
+            },
+        ])))),
+        query,
+        5,
+        true,
+    )
+    .await
+    .expect("scout should finish");
+
+    let ScoutCacheOutcome::Fresh(report) = outcome else {
+        panic!("expected fresh scout run");
+    };
+    assert!(report.contains("alpha_marker"));
+    assert!(cache
+        .lock()
+        .expect("cache lock")
+        .try_get_valid_insight(query)
+        .expect("lookup")
+        .expect("stored insight")
+        .contains("alpha_marker"));
+
+    std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[tokio::test]
+async fn scout_cache_stores_when_read_cache_disabled() {
+    let project_root = unique_temp_project("scout-cache-no-read");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+    let marker_file = project_root.join("marker.txt");
+    fs::write(&marker_file, "alpha marker\n").expect("write marker");
+
+    let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
+    let query = "Find alpha marker fresh";
+    let outcome = run_scout_with_cache(
+        &cache,
+        &ScoutAgent::new(ScriptClient(Mutex::new(VecDeque::from([
+            LlmModelTurn {
+                content: Some("Read marker.".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "read_file".to_string(),
+                    arguments: serde_json::json!({
+                        "file": marker_file,
+                        "start": 1,
+                        "end": 1
+                    }),
+                }],
+            },
+            LlmModelTurn {
+                content: Some("Done.".to_string()),
+                tool_calls: vec![LlmToolCall {
+                    name: "finalize".to_string(),
+                    arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
+                }],
+            },
+        ])))),
+        query,
+        5,
+        false,
+    )
+    .await
+    .expect("scout should finish");
+
+    let ScoutCacheOutcome::Fresh(report) = outcome else {
+        panic!("expected fresh scout run");
+    };
+    assert!(report.contains("alpha marker"));
+    assert!(cache
+        .lock()
+        .expect("cache lock")
+        .try_get_valid_insight(query)
+        .expect("lookup")
+        .expect("stored insight")
+        .contains("alpha marker"));
+
+    fs::remove_dir_all(&project_root).ok();
+}

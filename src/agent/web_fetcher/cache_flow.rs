@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use crate::cache::{ProjectCacheManager, WebSourceSnapshot};
+use crate::agent::AgentLoopOrchestrator;
+use crate::cache::{current_unix_timestamp, ProjectCacheManager, WebSourceSnapshot};
+use crate::llm::LlmClient;
 use crate::tools::web_fetch::FetchedPage;
 
 use super::WebFetcherAgent;
@@ -10,64 +12,51 @@ pub enum WebCacheOutcome {
     Fresh(String),
 }
 
-/// Run the web fetcher with a semantic cache.
-/// 1. Check cache for a semantically similar phrase (TTL + content-hash validated).
-/// 2. If miss, run the agent, then store the report + sources.
-pub async fn run_web_fetch_with_cache<RC: crate::llm::LlmClient>(
+pub async fn run_web_fetch_with_cache<RC: LlmClient>(
     cache: &Mutex<ProjectCacheManager>,
     agent: &WebFetcherAgent<RC>,
     search_phrase: &str,
     max_iterations: u32,
     ttl_seconds: i64,
-    use_cache: bool,
+    cache_threshold: f32,
+    read_cache: bool,
 ) -> Result<WebCacheOutcome, String> {
-    if use_cache {
-        let report = {
-            let cache = cache
-                .lock()
-                .map_err(|_| "cache manager lock poisoned".to_string())?;
-            cache.try_get_valid_web_report(search_phrase, ttl_seconds)?
-        };
-        if let Some(cached) = report {
+    if read_cache {
+        if let Some(cached) = cache
+            .lock()
+            .map_err(|_| "cache manager lock poisoned".to_string())?
+            .try_get_valid_web_report(search_phrase, ttl_seconds, cache_threshold)?
+        {
             return Ok(WebCacheOutcome::Hit(cached));
         }
     }
 
-    let result = crate::agent::AgentLoopOrchestrator::run(
-        agent,
-        search_phrase.to_string(),
-        max_iterations,
-    )
-    .await?;
+    let result =
+        AgentLoopOrchestrator::run(agent, search_phrase.to_string(), max_iterations).await?;
 
-    if use_cache && result.agent_completed {
+    if result.agent_completed {
         let sources = collect_source_snapshots(agent);
-        let _ = {
-            let mut cache = cache
+        if !sources.is_empty() {
+            // ponytail: cache store is best-effort; web report is returned even if SQLite write fails
+            let _ = cache
                 .lock()
-                .map_err(|_| "cache manager lock poisoned".to_string())?;
-            cache.store_web_report(search_phrase, &result.accumulated_data, sources)
-        };
+                .map_err(|_| "cache manager lock poisoned".to_string())?
+                .store_web_report(search_phrase, &result.accumulated_data, sources);
+        }
     }
 
     Ok(WebCacheOutcome::Fresh(result.accumulated_data))
 }
 
-fn collect_source_snapshots<RC: crate::llm::LlmClient>(
-    agent: &WebFetcherAgent<RC>,
-) -> Vec<WebSourceSnapshot> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
+fn collect_source_snapshots<RC: LlmClient>(agent: &WebFetcherAgent<RC>) -> Vec<WebSourceSnapshot> {
+    let fetched_at = current_unix_timestamp().unwrap_or(0);
     agent
         .take_sources()
         .into_iter()
         .map(|page: FetchedPage| WebSourceSnapshot {
             url: page.url,
             content_sha256: page.content_sha256,
-            fetched_at: now,
+            fetched_at,
         })
         .collect()
 }

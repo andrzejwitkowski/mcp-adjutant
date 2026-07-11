@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageShell } from './NavBar'
+import { Pager } from './Pager'
 import type { AgentEvaluationRow, EvaluationsPage } from './types'
 import './config-ui.css'
 
@@ -128,28 +129,14 @@ export function EvaluationsView() {
             })}
           </ul>
 
-          {data && data.total_pages > 1 && (
-            <nav className="pager" aria-label="Evaluations pagination">
-              <button
-                type="button"
-                className="config-btn"
-                disabled={page <= 1 || status === 'loading'}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                Previous
-              </button>
-              <span className="pager__status">
-                Page {data.page} of {data.total_pages}
-              </span>
-              <button
-                type="button"
-                className="config-btn"
-                disabled={page >= data.total_pages || status === 'loading'}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Next
-              </button>
-            </nav>
+          {data && (
+            <Pager
+              page={page}
+              totalPages={data.total_pages}
+              loading={status === 'loading'}
+              label="Evaluations pagination"
+              onPageChange={setPage}
+            />
           )}
         </>
       )}

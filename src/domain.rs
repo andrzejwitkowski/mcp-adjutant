@@ -39,6 +39,8 @@ pub struct PhaseProfile {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebFetcherProfile {
+    #[serde(default)]
+    pub brave_api_key: Option<String>,
     #[serde(default = "default_max_search_hops")]
     pub max_search_hops: u32,
     #[serde(default = "default_token_budget")]
@@ -65,6 +67,7 @@ fn default_web_cache_threshold() -> f32 {
 impl Default for WebFetcherProfile {
     fn default() -> Self {
         Self {
+            brave_api_key: None,
             max_search_hops: default_max_search_hops(),
             token_budget: default_token_budget(),
             cache_ttl_seconds: default_cache_ttl_seconds(),

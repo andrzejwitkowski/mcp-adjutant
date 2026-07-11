@@ -8,14 +8,11 @@ use super::file_state::{capture_code_node_snapshot, is_code_node_dirty, CodeNode
 use super::project::{
     current_unix_timestamp, hash_query_text, normalize_relative_path, prepare_project_cache,
 };
+use crate::tools::web_fetch::{resolve_public_host, validate_fetch_url};
 
 /// Minimum cosine similarity for a semantic cache hit (L2-normalized dot product).
 /// ponytail: bge-small-en-v1.5 scores ~0.826 for the task's JWT paraphrase pair; 0.91 is aspirational.
 pub const SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.82;
-
-/// Minimum cosine similarity for a web cache hit.
-/// Web-search paraphrases cluster lower than code-research paraphrases.
-pub const WEB_CACHE_THRESHOLD: f32 = 0.78;
 
 /// A fetched web source snapshot, produced by the scrape tool, stored as a dependency.
 #[derive(Debug, Clone)]
@@ -154,8 +151,6 @@ impl ProjectCacheManager {
         Ok(())
     }
 
-    /// Stores a web report: embeds the search phrase, inserts the report,
-    /// snapshots each source URL, and links them as dependencies.
     pub fn store_web_report(
         &mut self,
         search_phrase: &str,
@@ -206,7 +201,12 @@ impl ProjectCacheManager {
                          url = excluded.url,
                          content_sha256 = excluded.content_sha256,
                          fetched_at = excluded.fetched_at",
-                    params![source_id, source.url, source.content_sha256, source.fetched_at],
+                    params![
+                        source_id,
+                        source.url,
+                        source.content_sha256,
+                        source.fetched_at
+                    ],
                 )
                 .map_err(|err| format!("failed to store web source {}: {err}", source.url))?;
 
@@ -226,27 +226,24 @@ impl ProjectCacheManager {
         Ok(())
     }
 
-    /// Returns a cached web report when a semantically similar search phrase
-    /// exists and every linked source is valid (within TTL or content unchanged).
-    /// `ttl_seconds` is the trust window; sources older than TTL are re-fetched
-    /// and their content hash compared. One changed source invalidates the report.
     pub fn try_get_valid_web_report(
         &self,
         search_phrase: &str,
         ttl_seconds: i64,
+        threshold: f32,
     ) -> Result<Option<String>, String> {
         let query_embedding = self.embedding_engine.generate(search_phrase)?;
-        let matched_query_id = match self.find_web_semantic_match(&query_embedding)? {
-            Some(query_id) => query_id,
-            None => return Ok(None),
+        let Some(matched_query_id) = self.find_web_semantic_match(&query_embedding, threshold)?
+        else {
+            return Ok(None);
         };
 
-        let report_content = match self.conn.query_row(
-            "SELECT content FROM web_reports WHERE id = ?1",
+        let (report_content, report_created_at) = match self.conn.query_row(
+            "SELECT content, created_at FROM web_reports WHERE id = ?1",
             params![matched_query_id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         ) {
-            Ok(content) => content,
+            Ok(row) => row,
             Err(RusqliteError::QueryReturnedNoRows) => return Ok(None),
             Err(err) => {
                 return Err(format!("failed to load cached web report: {err}"));
@@ -254,19 +251,24 @@ impl ProjectCacheManager {
         };
 
         let sources = self.load_web_source_urls(&matched_query_id)?;
-        let now = current_unix_timestamp()?;
+        if sources.is_empty() || sources.iter().any(|(_, url, _, _)| is_local_cache_url(url)) {
+            self.invalidate_web_report(&matched_query_id)?;
+            return Ok(None);
+        }
 
-        for (source_id, url, stored_hash, fetched_at) in sources {
-            let _ = source_id;
-            let age = now - fetched_at;
-            if age < ttl_seconds {
-                continue; // trust window: fresh enough
+        let now = current_unix_timestamp()?;
+        if now - report_created_at < ttl_seconds {
+            return Ok(Some(report_content));
+        }
+
+        for (_, url, stored_hash, _) in sources {
+            if validate_fetch_url(&url).is_err() || resolve_public_host(&url).is_err() {
+                self.invalidate_web_report(&matched_query_id)?;
+                return Ok(None);
             }
-            // Past TTL: re-fetch and compare content hash.
             match crate::tools::web_fetch::fetch_page_as_markdown(&url) {
-                Ok(page) if page.content_sha256 == stored_hash => continue, // unchanged
+                Ok(page) if page.content_sha256 == stored_hash => {}
                 _ => {
-                    // Changed or unreachable: invalidate.
                     self.invalidate_web_report(&matched_query_id)?;
                     return Ok(None);
                 }
@@ -314,15 +316,49 @@ impl ProjectCacheManager {
         Ok(())
     }
 
+    pub fn clear_web_cache(&self) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM web_fetch_dependencies", [])
+            .map_err(|err| format!("failed to clear web dependencies: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_reports", [])
+            .map_err(|err| format!("failed to clear web reports: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_queries", [])
+            .map_err(|err| format!("failed to clear web queries: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_sources", [])
+            .map_err(|err| format!("failed to clear web sources: {err}"))?;
+        Ok(())
+    }
+
     pub fn project_root(&self) -> &Path {
         &self.project_root
     }
 
     fn find_semantic_match(&self, query_embedding: &[f32]) -> Result<Option<String>, String> {
+        self.best_embedding_match("queries", query_embedding, SEMANTIC_SIMILARITY_THRESHOLD)
+    }
+
+    fn find_web_semantic_match(
+        &self,
+        query_embedding: &[f32],
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        self.best_embedding_match("web_queries", query_embedding, threshold)
+    }
+
+    fn best_embedding_match(
+        &self,
+        table: &str,
+        query_embedding: &[f32],
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        let sql = format!("SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL");
         let mut statement = self
             .conn
-            .prepare("SELECT id, embedding FROM queries WHERE embedding IS NOT NULL")
-            .map_err(|err| format!("failed to prepare semantic query lookup: {err}"))?;
+            .prepare(&sql)
+            .map_err(|err| format!("failed to prepare semantic lookup on {table}: {err}"))?;
 
         let rows = statement
             .query_map([], |row| {
@@ -330,30 +366,25 @@ impl ProjectCacheManager {
                 let blob: Vec<u8> = row.get(1)?;
                 Ok((id, blob))
             })
-            .map_err(|err| format!("failed to query stored embeddings: {err}"))?;
+            .map_err(|err| format!("failed to query embeddings from {table}: {err}"))?;
 
         let mut best_match: Option<(String, f32)> = None;
-
         for row in rows {
             let (query_id, blob) =
-                row.map_err(|err| format!("failed to read stored embedding row: {err}"))?;
-
-            let Some(stored_embedding) = decode_embedding_blob(&blob) else {
+                row.map_err(|err| format!("failed to read embedding row from {table}: {err}"))?;
+            let Some(stored) = decode_embedding_blob(&blob) else {
                 continue;
             };
-
-            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored_embedding);
-
-            if similarity >= SEMANTIC_SIMILARITY_THRESHOLD
+            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored);
+            if similarity >= threshold
                 && best_match
                     .as_ref()
-                    .is_none_or(|(_, best_similarity)| similarity > *best_similarity)
+                    .is_none_or(|(_, best)| similarity > *best)
             {
                 best_match = Some((query_id, similarity));
             }
         }
-
-        Ok(best_match.map(|(query_id, _)| query_id))
+        Ok(best_match.map(|(id, _)| id))
     }
 
     fn load_insight_dependencies(&self, insight_id: &str) -> Result<Vec<CodeNodeSnapshot>, String> {
@@ -394,39 +425,6 @@ impl ProjectCacheManager {
         Ok(())
     }
 
-    fn find_web_semantic_match(&self, query_embedding: &[f32]) -> Result<Option<String>, String> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT id, embedding FROM web_queries WHERE embedding IS NOT NULL")
-            .map_err(|err| format!("failed to prepare web semantic lookup: {err}"))?;
-
-        let rows = statement
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let blob: Vec<u8> = row.get(1)?;
-                Ok((id, blob))
-            })
-            .map_err(|err| format!("failed to query web embeddings: {err}"))?;
-
-        let mut best_match: Option<(String, f32)> = None;
-        for row in rows {
-            let (query_id, blob) =
-                row.map_err(|err| format!("failed to read web embedding row: {err}"))?;
-            let Some(stored) = decode_embedding_blob(&blob) else {
-                continue;
-            };
-            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored);
-            if similarity >= WEB_CACHE_THRESHOLD
-                && best_match
-                    .as_ref()
-                    .is_none_or(|(_, best)| similarity > *best)
-            {
-                best_match = Some((query_id, similarity));
-            }
-        }
-        Ok(best_match.map(|(id, _)| id))
-    }
-
     fn load_web_source_urls(
         &self,
         report_id: &str,
@@ -458,19 +456,25 @@ impl ProjectCacheManager {
 
     fn invalidate_web_report(&self, report_id: &str) -> Result<(), String> {
         self.conn
-            .execute(
-                "DELETE FROM web_reports WHERE id = ?1",
-                params![report_id],
-            )
+            .execute("DELETE FROM web_reports WHERE id = ?1", params![report_id])
             .map_err(|err| format!("failed to delete stale web report: {err}"))?;
         self.conn
-            .execute(
-                "DELETE FROM web_queries WHERE id = ?1",
-                params![report_id],
-            )
+            .execute("DELETE FROM web_queries WHERE id = ?1", params![report_id])
             .map_err(|err| format!("failed to delete stale web query: {err}"))?;
+        self.conn
+            .execute(
+                "DELETE FROM web_sources
+                 WHERE id NOT IN (SELECT source_id FROM web_fetch_dependencies)",
+                [],
+            )
+            .map_err(|err| format!("failed to delete orphaned web sources: {err}"))?;
         Ok(())
     }
+}
+
+fn is_local_cache_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.contains("127.0.0.1") || lower.contains("localhost")
 }
 
 fn decode_embedding_blob(blob: &[u8]) -> Option<&[f32]> {

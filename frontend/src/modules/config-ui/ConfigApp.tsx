@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LlmClientCatalog } from './LlmClientCatalog'
 import { NavBar } from './NavBar'
+import { WebFetcherTunables } from './WebFetcherTunables'
 import type { AdjutantConfig, AgentPhase, PhaseProfile, WebFetcherProfile } from './types'
 import './config-ui.css'
 
@@ -41,6 +42,56 @@ const DEFAULT_PROFILE: PhaseProfile = {
   temperature: 0.2,
 }
 
+const DEFAULT_WEB_FETCHER: WebFetcherProfile = {
+  brave_api_key: null,
+  max_search_hops: 3,
+  token_budget: 8000,
+  cache_ttl_seconds: 604800,
+  web_cache_threshold: 0.78,
+}
+
+const KNOWN_PHASES: AgentPhase[] = [
+  'scout',
+  'triage',
+  'builder',
+  'evaluator',
+  'web_fetcher',
+]
+
+function defaultWebFetcher(): WebFetcherProfile {
+  return { ...DEFAULT_WEB_FETCHER }
+}
+
+function migrateLegacyPhases(
+  raw: Record<string, PhaseProfile>,
+): Record<string, PhaseProfile> {
+  const phases = { ...raw }
+  const legacyPruner = phases.transformer
+  delete phases.transformer
+  if (legacyPruner && !phases.pruner) {
+    phases.pruner = legacyPruner
+  }
+  return phases
+}
+
+function sanitizeConfigForSave(config: AdjutantConfig): AdjutantConfig {
+  const rawPhases = migrateLegacyPhases(config.phases as Record<string, PhaseProfile>)
+
+  const phases: Record<string, PhaseProfile> = {}
+  for (const phase of [...KNOWN_PHASES, 'pruner', 'babysitter']) {
+    const profile = rawPhases[phase]
+    if (profile) {
+      phases[phase] = profile
+    }
+  }
+
+  return {
+    ...config,
+    phases: phases as AdjutantConfig['phases'],
+    web_fetcher: config.web_fetcher ?? defaultWebFetcher(),
+  }
+}
+
 function emptyConfig(): AdjutantConfig {
   return {
     phases: {},
@@ -52,13 +103,19 @@ function emptyConfig(): AdjutantConfig {
 }
 
 function withDisplayedPhases(loaded: AdjutantConfig): AdjutantConfig {
-  const phases = { ...loaded.phases }
+  const phases = migrateLegacyPhases(loaded.phases as Record<string, PhaseProfile>) as Partial<
+    Record<AgentPhase, PhaseProfile>
+  >
   for (const { phase } of AGENT_PHASES) {
     if (!phases[phase]) {
       phases[phase] = { ...DEFAULT_PROFILE }
     }
   }
-  return { ...loaded, phases }
+  return {
+    ...loaded,
+    phases,
+    web_fetcher: loaded.web_fetcher ?? defaultWebFetcher(),
+  }
 }
 
 export function ConfigApp() {
@@ -99,14 +156,10 @@ export function ConfigApp() {
   }
 
   function updateWebFetcher(patch: Partial<WebFetcherProfile>) {
-    setConfig((current) => {
-      const existing = current.web_fetcher ?? {
-        browsing: { ...DEFAULT_PROFILE },
-        max_search_hops: 3,
-        token_budget: 8000,
-      }
-      return { ...current, web_fetcher: { ...existing, ...patch } }
-    })
+    setConfig((current) => ({
+      ...current,
+      web_fetcher: { ...(current.web_fetcher ?? defaultWebFetcher()), ...patch },
+    }))
   }
 
   async function saveConfig() {
@@ -114,15 +167,19 @@ export function ConfigApp() {
 
     setStatus('saving')
     setMessage('')
+    const payload = sanitizeConfigForSave(config)
     try {
       const response = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) {
+        const detail = await response.text()
+        throw new Error(detail || `HTTP ${response.status}`)
+      }
       const saved = (await response.json()) as AdjutantConfig
-      setConfig(saved)
+      setConfig(withDisplayedPhases(saved))
       setStatus('ready')
       setMessage('Saved')
     } catch (error) {
@@ -154,6 +211,7 @@ export function ConfigApp() {
         <div className="config-app__quick-links">
           <a href="#/evaluations">Agent evaluations</a>
           <a href="#/cache">Scout semantic cache</a>
+          <a href="#/web-cache">Web fetcher cache</a>
         </div>
       </header>
 
@@ -173,45 +231,13 @@ export function ConfigApp() {
 
       <section className="agent-panel">
         <header>
-          <h2>Web Fetcher — browsing model</h2>
-          <p>
-            The browsing-capable model (OpenRouter :online / Perplexity Sonar) that
-            performs live web searches inside the search_web tool.
-          </p>
+          <h2>Web Fetcher — tunables</h2>
+          <p>Brave Search credentials and cache behavior for the web research agent.</p>
         </header>
-        <LlmClientCatalog
-          groupName="web_fetcher_browsing"
-          profile={config.web_fetcher?.browsing ?? { ...DEFAULT_PROFILE }}
-          onChange={(profile) => updateWebFetcher({ browsing: profile })}
+        <WebFetcherTunables
+          profile={config.web_fetcher ?? defaultWebFetcher()}
+          onChange={updateWebFetcher}
         />
-        <label className="config-app__tunable">
-          Max search hops
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={config.web_fetcher?.max_search_hops ?? 3}
-            onChange={(e) =>
-              updateWebFetcher({
-                max_search_hops: Number(e.target.value),
-              })
-            }
-          />
-        </label>
-        <label className="config-app__tunable">
-          Token budget
-          <input
-            type="number"
-            min={1000}
-            step={1000}
-            value={config.web_fetcher?.token_budget ?? 8000}
-            onChange={(e) =>
-              updateWebFetcher({
-                token_budget: Number(e.target.value),
-              })
-            }
-          />
-        </label>
       </section>
 
       <footer className="config-app__footer">

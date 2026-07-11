@@ -44,6 +44,10 @@ pub fn scout_context_schema() -> Value {
                     "type": "string",
                     "description": "Question or scouting goal for the repository."
                 },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "When true, bypass the semantic cache lookup and scout fresh. Successful runs are still stored in the cache."
+                },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["query", "request_uuid"]
@@ -133,13 +137,17 @@ pub fn registered_mcp_tools() -> Vec<Value> {
 pub fn web_fetch_schema() -> Value {
     json!({
         "name": WEB_FETCH_TOOL_NAME,
-        "description": "Fetches the latest authoritative web content for a search phrase as compacted markdown. Works for any topic - documentation, news, specs, comparisons, code examples, or any web research. The agent searches the live web via a browsing model and returns a condensed report. Returns immediately; fetch the result via query_job_status.",
+        "description": "Fetches the latest authoritative web content for a search phrase as compacted markdown. Works for any topic - documentation, news, specs, comparisons, code examples, or any web research. The agent searches via Brave Search API, fetches top result pages, and returns a condensed report. Results are cached semantically. Requires brave_api_key in web_fetcher config. Returns immediately; fetch the result via query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "search_phrase": {
                     "type": "string",
                     "description": "Topic or search phrase to research on the web."
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "When true, bypass the semantic cache lookup and fetch fresh web content. Successful runs are still stored in the cache."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -237,6 +245,10 @@ pub async fn handle_scout_context(
         .filter(|query| !query.is_empty())
         .ok_or_else(|| "query is required".to_string())?
         .to_string();
+    let force_refresh = args
+        .get("force_refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     dispatch_async_job(
         registry,
@@ -247,8 +259,14 @@ pub async fn handle_scout_context(
                 Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
             let client = create_scout_llm_client(&config)?;
             let agent = ScoutAgent::new(client);
-            match run_scout_with_cache(&cache_manager, &agent, &query, SCOUT_MAX_ITERATIONS, true)
-                .await?
+            match run_scout_with_cache(
+                &cache_manager,
+                &agent,
+                &query,
+                SCOUT_MAX_ITERATIONS,
+                !force_refresh,
+            )
+            .await?
             {
                 ScoutCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
                 ScoutCacheOutcome::Fresh(report) => Ok(report),
@@ -520,6 +538,10 @@ pub async fn handle_web_fetch(
         .filter(|phrase| !phrase.is_empty())
         .ok_or_else(|| "search_phrase is required".to_string())?
         .to_string();
+    let force_refresh = args
+        .get("force_refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     dispatch_async_job(
         registry,
@@ -532,6 +554,7 @@ pub async fn handle_web_fetch(
             let reasoning_client = create_web_fetcher_llm_client(&config)?;
             let max_hops = web_profile.max_search_hops;
             let ttl = web_profile.cache_ttl_seconds as i64;
+            let cache_threshold = web_profile.web_cache_threshold;
 
             let agent = WebFetcherAgent::new(reasoning_client, web_profile);
             match run_web_fetch_with_cache(
@@ -540,7 +563,8 @@ pub async fn handle_web_fetch(
                 &search_phrase,
                 max_hops,
                 ttl,
-                true,
+                cache_threshold,
+                !force_refresh,
             )
             .await?
             {

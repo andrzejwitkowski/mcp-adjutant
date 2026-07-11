@@ -3,6 +3,7 @@ export { EvaluationsView } from './EvaluationsView'
 export { LlmClientCatalog } from './LlmClientCatalog'
 export { NavBar, PageShell } from './NavBar'
 export { ScoutCacheView } from './ScoutCacheView'
+export { WebCacheView } from './WebCacheView'
 export { LLM_CLIENTS } from './clients'
 export type {
   AdjutantConfig,

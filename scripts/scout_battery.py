@@ -7,7 +7,8 @@ import time
 import uuid
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parents[1] / "target/release/mcp-adjutant"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BIN = REPO_ROOT / "target/release/mcp-adjutant"
 OUT_DIR = Path("/tmp/scout_battery")
 
 QUERIES = [
@@ -64,7 +65,7 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        cwd=BIN.parents[1],
+        cwd=REPO_ROOT,
     )
     rid = 1
     mcp_call(proc, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "scout_battery", "version": "0"}}, rid)

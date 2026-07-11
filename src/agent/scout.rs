@@ -6,8 +6,9 @@ use serde_json::Value;
 
 use super::orchestrator::run_single_tool_turn;
 use super::traits::{AgentContext, AutonomousAgent};
-use crate::cache::resolve_workspace_path;
+use crate::cache::{mcp_workspace_root, resolve_workspace_path};
 use crate::llm::{LlmClient, LlmModelTurn, LlmToolCall, LlmToolSet};
+use crate::tools::run_ripgrep_matching_files;
 
 pub use cache_flow::{run_scout_with_cache, ScoutCacheOutcome};
 pub use tools::scout_tool_set;
@@ -63,6 +64,14 @@ impl<C: LlmClient> ScoutAgent<C> {
         };
         context.touched_files.push(resolve_workspace_path(path));
     }
+
+    fn record_ripgrep_hits(context: &mut AgentContext, pattern: &str) {
+        if let Ok(files) = run_ripgrep_matching_files(pattern, &mcp_workspace_root()) {
+            for path in files {
+                context.touched_files.push(resolve_workspace_path(path));
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -83,14 +92,25 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
         let called = run_single_tool_turn(&self.client, &self.tools, SCOUT_SYSTEM_PROMPT, context)?;
         if let Some((tool_name, args)) = called {
             Self::record_touched_file(context, &tool_name, &args);
+            if tool_name == "ripgrep" {
+                if let Some(pattern) = args.get("pattern").and_then(Value::as_str) {
+                    Self::record_ripgrep_hits(context, pattern);
+                }
+            }
         }
         Ok(())
     }
 
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
-        context
-            .input_prompt
-            .push_str("\nContinue scouting based on the latest observation.");
+        if context.iterations >= context.max_iterations.saturating_sub(1) {
+            context.input_prompt.push_str(
+                "\nFinal turn: call finalize(report) with your best condensed markdown report.",
+            );
+        } else {
+            context.input_prompt.push_str(
+                "\nContinue scouting. Call exactly one tool: detect_language, ripgrep, ast_calls, read_file, or finalize.",
+            );
+        }
         Ok(())
     }
 }
