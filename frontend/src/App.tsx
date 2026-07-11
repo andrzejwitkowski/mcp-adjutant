@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ConfigApp } from './modules/config-ui'
 import { EvaluationsView } from './modules/config-ui/EvaluationsView'
+import { MetricsView } from './modules/config-ui/MetricsView'
 import { ScoutCacheView } from './modules/config-ui/ScoutCacheView'
 import { WebCacheView } from './modules/config-ui/WebCacheView'
 
@@ -9,6 +10,7 @@ function currentView() {
   if (hash === 'evaluations') return 'evaluations'
   if (hash === 'cache') return 'cache'
   if (hash === 'web-cache') return 'web-cache'
+  if (hash === 'usage') return 'usage'
   return 'config'
 }
 
@@ -24,5 +26,6 @@ export default function App() {
   if (view === 'evaluations') return <EvaluationsView />
   if (view === 'cache') return <ScoutCacheView />
   if (view === 'web-cache') return <WebCacheView />
+  if (view === 'usage') return <MetricsView />
   return <ConfigApp />
 }

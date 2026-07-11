@@ -8,6 +8,7 @@ use mcp_adjutant::config_server::{
     load_or_default, resolve_config_path, run as run_config_server, static_root, ConfigServerState,
 };
 use mcp_adjutant::mcp_server;
+use mcp_adjutant::metrics::{self, MetricsStore};
 use mcp_adjutant::AdjutantConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,10 +27,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = config.server_port;
     let shared = Arc::new(RwLock::new(config));
 
+    let metrics_db_path = metrics::resolve_metrics_db_path(&config_path);
+    let metrics_store = Arc::new(std::sync::Mutex::new(
+        MetricsStore::open(&metrics_db_path).map_err(|err| format!("metrics db: {err}"))?,
+    ));
+    let session_id = metrics::new_session_id();
+    metrics::init(session_id, Arc::clone(&metrics_store));
+
     let config_state = ConfigServerState {
         config: Arc::clone(&shared),
         config_path,
         static_root: static_root(),
+        metrics: metrics_store,
     };
 
     std::thread::spawn(move || {

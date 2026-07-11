@@ -24,6 +24,10 @@ Available tools (tool calls):
 
 Selection rule: If you do not know the language or repo layout, use detect_language. If you do not know where code lives, use ripgrep. When you know the files, use ast_calls. When you have the essence, call finalize.
 
+Search strategy: Decompose the user query into code symbols (type names, function names, module paths) — not natural-language phrases. Example: search `LlmUsage`, `record_llm_call`, `metrics` instead of "token metrics implementation state".
+
+Mandatory finalize format: Your report must include file:line citations (e.g. src/metrics/store.rs:42) for every claim. If two consecutive searches return zero matches, call read_file on a likely path or finalize with partial findings.
+
 Efficiency: Finalize within 6 tool turns once you can answer. Do not repeat the same tool with identical arguments.
 
 Reply with a short rationale (Thought), then call exactly one tool."#;

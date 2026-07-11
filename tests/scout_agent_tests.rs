@@ -29,6 +29,7 @@ impl LlmClient for ReactiveScriptClient {
                     name: "finalize".to_string(),
                     arguments: serde_json::json!({ "report": "found invoke calls" }),
                 }],
+                ..Default::default()
             });
         }
 
@@ -41,6 +42,7 @@ impl LlmClient for ReactiveScriptClient {
                     "method": "invoke"
                 }),
             }],
+            ..Default::default()
         })
     }
 }
@@ -77,6 +79,7 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
                     "end": 2
                 }),
             }],
+            ..Default::default()
         },
         LlmModelTurn {
             content: Some("Report ready.".to_string()),
@@ -84,6 +87,7 @@ async fn scout_agent_executes_react_tools_then_finalizes() {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
             }],
+            ..Default::default()
         },
     ]);
 

@@ -154,6 +154,45 @@ export interface WebCachePage {
   total_pages: number
 }
 
+export interface CacheHitSummary {
+  scout: number
+  web_fetcher: number
+}
+
+export interface PhaseTokenSummary {
+  agent_phase: string
+  prompt_tokens: number
+  completion_tokens: number
+  job_runs: number
+}
+
+export interface MetricsSummary {
+  session_id: string
+  utc_date: string
+  prompt_tokens: number
+  completion_tokens: number
+  cache_hits: CacheHitSummary
+  by_phase: PhaseTokenSummary[]
+}
+
+export interface DailyMetricsRow {
+  date: string
+  agent_phase: string
+  prompt_tokens: number
+  completion_tokens: number
+  cache_hits: number
+  job_runs: number
+}
+
+export interface TimelineBucket {
+  hour: number
+  agent_phase: string
+  prompt_tokens: number
+  completion_tokens: number
+  cumulative_prompt_tokens: number
+  cumulative_completion_tokens: number
+}
+
 export interface LlmClientDefinition {
   provider: Provider
   label: string

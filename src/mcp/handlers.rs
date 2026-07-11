@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, default_transformer_agent, run_scout_with_cache,
-    run_web_fetch_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
-    SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
-    TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, default_transformer_agent, format_triage_success, run_scout_with_cache,
+    run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent,
+    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent,
+    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -198,8 +198,9 @@ where
     registry.register(&request_uuid, tool_name)?;
     let registry = registry.clone();
     let accepted_uuid = request_uuid.clone();
+    let tool = tool_name.to_string();
     tokio::spawn(async move {
-        run_tracked_job(registry, request_uuid, work).await;
+        run_tracked_job(registry, request_uuid, tool, work).await;
     });
     Ok(accepted_job_response(&accepted_uuid, tool_name))
 }
@@ -346,11 +347,8 @@ pub async fn handle_verify_and_triage(
             .await?;
 
             if result.is_finished {
-                if result
-                    .input_prompt
-                    .contains("All builds/tests completed successfully.")
-                {
-                    return Ok(result.input_prompt);
+                if triage_passed(&result) {
+                    return Ok(format_triage_success(&result));
                 }
                 if !result.accumulated_data.is_empty()
                     && !result.accumulated_data.starts_with("Triage targets")

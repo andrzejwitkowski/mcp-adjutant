@@ -11,6 +11,8 @@ pub struct AgentContext {
     pub is_finished: bool,
     pub agent_completed: bool,
     pub touched_files: Vec<PathBuf>,
+    /// Last tool invocation `(name, serialized args)` — used to block repeat loops.
+    pub last_tool_call: Option<(String, String)>,
 }
 
 #[async_trait]

@@ -29,6 +29,7 @@ impl MockBuilderLlm {
                         "tdd_phase": "red",
                     }),
                 }],
+                ..Default::default()
             },
         }
     }
@@ -195,6 +196,7 @@ impl MockTriageLlmFixCompile {
                         "content": "use demo::answer;",
                     }),
                 }],
+                ..Default::default()
             }),
         }
     }
@@ -310,6 +312,7 @@ impl MockBuilderLlm {
                     name: "gather_integration_context".to_string(),
                     arguments: serde_json::json!({ "components": components }),
                 }],
+                ..Default::default()
             },
         }
     }
@@ -325,6 +328,7 @@ impl MockBuilderLlm {
                         "target_file": target_file,
                     }),
                 }],
+                ..Default::default()
             },
         }
     }
@@ -355,6 +359,7 @@ impl LlmClient for MockScoutLlmIntegration {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": self.report }),
             }],
+            ..Default::default()
         })
     }
 }
@@ -392,6 +397,7 @@ impl LlmClient for MockScoutLlmFactory {
                 name: "finalize".to_string(),
                 arguments: serde_json::json!({ "report": self.report }),
             }],
+            ..Default::default()
         })
     }
 }

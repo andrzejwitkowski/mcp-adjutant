@@ -7,6 +7,7 @@ pub mod jobs;
 pub mod llm;
 pub mod mcp;
 pub mod mcp_server;
+pub mod metrics;
 pub mod storage;
 pub mod tools;
 
@@ -35,7 +36,7 @@ pub use llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
     create_llm_client_for_phase, create_scout_llm_client, create_transformer_llm_client,
     create_triage_llm_client, create_web_fetcher_llm_client, ConfiguredLlmClient, DeepSeekClient,
-    LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet, ParamType,
+    LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet, LlmUsage, ParamType,
     ToolDefinition, ToolInvocationResult, ToolParam,
 };
 pub use mcp::{

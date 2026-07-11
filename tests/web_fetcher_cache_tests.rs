@@ -96,6 +96,7 @@ async fn web_cache_does_not_store_finalize_without_sources() {
                         "report": "## Tokio\nNo search performed."
                     }),
                 }],
+                ..Default::default()
             }]))),
             WebFetcherProfile::default(),
         ),

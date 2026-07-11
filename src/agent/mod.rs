@@ -1,6 +1,7 @@
 mod builder;
 mod evaluator;
 mod orchestrator;
+mod report;
 mod scout;
 mod text_pruner_mock;
 mod traits;
@@ -15,6 +16,7 @@ pub use builder::{
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
+pub use report::{format_triage_success, triage_passed, TRIAGE_PASS_MARKER};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
     ScoutToolCall, SCOUT_SYSTEM_PROMPT,

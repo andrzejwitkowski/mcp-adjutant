@@ -136,10 +136,7 @@ impl<
     }
 
     fn triage_success(triage_ctx: &AgentContext) -> bool {
-        triage_ctx.is_finished
-            && triage_ctx
-                .input_prompt
-                .contains("All builds/tests completed successfully.")
+        triage_ctx.is_finished && crate::agent::triage_passed(triage_ctx)
     }
 
     async fn run_scout_subagent(

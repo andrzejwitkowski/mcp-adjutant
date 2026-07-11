@@ -16,4 +16,4 @@ pub use tools::{
     required_str, LlmTool, LlmToolSet, ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
 };
 pub use traits::LlmClient;
-pub use types::{LlmModelTurn, LlmToolCall};
+pub use types::{LlmModelTurn, LlmToolCall, LlmUsage};

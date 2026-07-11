@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mcp-adjutant": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/target/release/mcp-adjutant",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "MCP_ADJUTANT_DELEGATION_LEVEL": "hard",
+        "MCP_ADJUTANT_REQUIRE_BUILDER": "true",
+        "MCP_ADJUTANT_PROJECT_ROOT": "${workspaceFolder}"
+      }
+    }
+  }
+}

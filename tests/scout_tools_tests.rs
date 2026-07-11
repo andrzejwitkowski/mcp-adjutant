@@ -54,6 +54,22 @@ fn run_ripgrep_from_target_cwd_uses_project_root() {
 }
 
 #[test]
+fn run_ripgrep_empty_pattern_returns_hint() {
+    let root = Path::new(FIXTURES);
+    let output =
+        run_ripgrep("zzz_no_such_pattern_xyz_12345", root).expect("ripgrep should succeed");
+
+    assert!(
+        output.contains("(no matches for pattern"),
+        "expected empty-search hint: {output}"
+    );
+    assert!(
+        output.contains("Hint:"),
+        "expected actionable hint: {output}"
+    );
+}
+
+#[test]
 fn run_ripgrep_finds_pattern_with_context() {
     let root = Path::new(FIXTURES);
     let output = run_ripgrep("alpha marker", root).expect("ripgrep should succeed");

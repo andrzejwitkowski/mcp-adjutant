@@ -45,6 +45,7 @@ async fn web_fetcher_finalizes_report() {
                 "report": "## Tokio async runtime\n- spawn tasks\n- channels"
             }),
         }],
+        ..Default::default()
     }]);
 
     let agent = WebFetcherAgent::new(reasoning, profile_with_budget(8_000));
@@ -66,6 +67,7 @@ async fn web_fetcher_truncates_overlong_report_to_budget() {
             name: "finalize".to_string(),
             arguments: serde_json::json!({ "report": long_body }),
         }],
+        ..Default::default()
     }]);
 
     let agent = WebFetcherAgent::new(reasoning, profile_with_budget(1_000));

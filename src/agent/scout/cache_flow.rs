@@ -25,6 +25,7 @@ pub async fn run_scout_with_cache<C: LlmClient>(
             .map_err(|_| "cache manager lock poisoned".to_string())?
             .try_get_valid_insight(query)?
         {
+            crate::metrics::record_cache_hit(crate::domain::AgentPhase::Scout);
             return Ok(ScoutCacheOutcome::Hit(cached));
         }
     }

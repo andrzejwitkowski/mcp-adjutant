@@ -1,12 +1,28 @@
 use crate::domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
+use crate::metrics::record_llm_call;
 
 use super::deepseek::DeepSeekClient;
 use super::request::LlmRequest;
 use super::traits::LlmClient;
 use super::types::LlmModelTurn;
 
+pub(crate) struct InstrumentedLlmClient {
+    inner: DeepSeekClient,
+    phase: AgentPhase,
+    model_name: String,
+}
+
+impl LlmClient for InstrumentedLlmClient {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        let turn = self.inner.complete(request)?;
+        let usage = turn.usage.unwrap_or_default();
+        record_llm_call(self.phase, &self.model_name, usage);
+        Ok(turn)
+    }
+}
+
 pub enum ConfiguredLlmClient {
-    OpenAiCompatible(DeepSeekClient),
+    OpenAiCompatible(Box<InstrumentedLlmClient>),
 }
 
 impl LlmClient for ConfiguredLlmClient {
@@ -17,12 +33,19 @@ impl LlmClient for ConfiguredLlmClient {
     }
 }
 
-pub fn create_llm_client(profile: PhaseProfile) -> Result<ConfiguredLlmClient, String> {
+pub fn create_llm_client(
+    profile: PhaseProfile,
+    phase: AgentPhase,
+) -> Result<ConfiguredLlmClient, String> {
     match profile.provider {
         Provider::DeepSeek | Provider::OpenRouter | Provider::OpenAI | Provider::Custom => {
-            // ponytail: one OpenAI-compatible transport; profile selects endpoint/model
-            Ok(ConfiguredLlmClient::OpenAiCompatible(DeepSeekClient::new(
-                profile,
+            let model_name = profile.model_name.clone();
+            Ok(ConfiguredLlmClient::OpenAiCompatible(Box::new(
+                InstrumentedLlmClient {
+                    inner: DeepSeekClient::new(profile),
+                    phase,
+                    model_name,
+                },
             )))
         }
     }
@@ -32,7 +55,7 @@ pub fn create_llm_client_for_phase(
     config: &AdjutantConfig,
     phase: AgentPhase,
 ) -> Result<ConfiguredLlmClient, String> {
-    create_llm_client(config.try_get_profile(phase)?.clone())
+    create_llm_client(config.try_get_profile(phase)?.clone(), phase)
 }
 
 pub fn create_triage_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
@@ -67,6 +90,7 @@ pub fn create_web_fetcher_llm_client(
 mod tests {
     use super::*;
     use crate::domain::Provider;
+    use crate::llm::{LlmClient, LlmRequest};
     use std::collections::HashMap;
 
     #[test]
