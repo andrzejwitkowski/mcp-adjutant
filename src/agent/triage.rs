@@ -209,7 +209,17 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         for (dir, command) in targets {
             match self.build_runner.run_build_command(dir, command) {
                 Ok(output) => {
-                    let step = format!("Build OK in {} (`{command}`):\n{output}\n", dir.display());
+                    let (body, truncated) = truncate_build_log(
+                        &output,
+                        Self::BUILD_LOG_MAX_LINES,
+                        Self::BUILD_LOG_MAX_BYTES,
+                    );
+                    let log = if truncated {
+                        format!("(log truncated)\n{body}")
+                    } else {
+                        body
+                    };
+                    let step = format!("Build OK in {} (`{command}`):\n{log}\n", dir.display());
                     context.accumulated_data.push_str(&step);
                 }
                 Err(output) => {
@@ -364,7 +374,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             .map(|(dir, cmd)| format!("{} => {cmd}", dir.display()))
             .collect();
         context.accumulated_data = format!(
-            "Triage targets ({} modules):\n{}",
+            "Triage targets ({} modules):\n{}\n",
             summary.len(),
             summary.join("\n")
         );

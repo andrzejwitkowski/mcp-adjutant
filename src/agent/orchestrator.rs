@@ -157,11 +157,10 @@ mod tests {
             touched_files: Vec::new(),
         };
 
-        let result =
-            run_single_tool_turn(&NoToolClient, &tools, "system", &mut context)
-                .expect("should continue after empty tool response");
+        let result = run_single_tool_turn(&NoToolClient, &tools, "system", &mut context)
+            .expect("should continue after empty tool response");
 
         assert!(result.is_none());
-        assert!(context.accumulated_data.contains("must call"));
+        assert!(context.accumulated_data.contains("call exactly one tool"));
     }
 }

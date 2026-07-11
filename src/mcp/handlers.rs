@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, run_scout_with_cache, run_web_fetch_with_cache, AgentLoopOrchestrator,
-    EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebCacheOutcome,
-    WebFetcherAgent, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, default_transformer_agent, run_scout_with_cache,
+    run_web_fetch_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
+    SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -18,13 +19,14 @@ use crate::jobs::{
 };
 use crate::llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
-    create_triage_llm_client, create_web_fetcher_llm_client,
+    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
 };
 use crate::tools::LlmBuildDiscoverer;
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
 pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_scaffolding";
+pub const EXECUTE_GLOBAL_REFACTOR_TOOL_NAME: &str = "execute_global_refactor";
 pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 
@@ -93,6 +95,32 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
     })
 }
 
+pub fn execute_global_refactor_schema() -> Value {
+    json!({
+        "name": EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+        "description": "Call when changing a method signature, struct name, or propagating a type change across many files. Scout finds call sites; Triage verifies compilation. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "method_name": {
+                    "type": "string",
+                    "description": "Method or struct whose signature/call sites change."
+                },
+                "refactor_instruction": {
+                    "type": "string",
+                    "description": "What must change at each call site?"
+                },
+                "scope_path": {
+                    "type": "string",
+                    "description": "Optional directory scope; only files under this path are gathered, codemodded, verified, and triaged."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["method_name", "refactor_instruction", "request_uuid"]
+        }
+    })
+}
+
 pub fn evaluate_agent_performance_schema() -> Value {
     json!({
         "name": EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
@@ -128,6 +156,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         scout_context_schema(),
         verify_and_triage_schema(),
         generate_tests_and_scaffolding_schema(),
+        execute_global_refactor_schema(),
         evaluate_agent_performance_schema(),
         web_fetch_schema(),
         query_job_status_schema(),
@@ -446,6 +475,82 @@ pub async fn handle_generate_tests_and_scaffolding(
             Ok(format!(
                 "Builder report (finished={}, iterations={}):\n{}\n{}",
                 result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
+            ))
+        },
+    )
+    .await
+}
+
+pub async fn handle_execute_global_refactor(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let method_name = args
+        .get("method_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "method_name is required".to_string())?
+        .to_string();
+    let refactor_instruction = args
+        .get("refactor_instruction")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "refactor_instruction is required".to_string())?
+        .to_string();
+    let scope_path = args
+        .get("scope_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(resolve_workspace_path);
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+        move || async move {
+            let transformer_client = create_transformer_llm_client(&config)?;
+            let codemod_client = create_transformer_llm_client(&config)?;
+            let scout_client = create_scout_llm_client(&config)?;
+            let triage_client = create_triage_llm_client(&config)?;
+            let agent = default_transformer_agent(
+                transformer_client,
+                codemod_client,
+                scout_client,
+                triage_client,
+                Arc::clone(&config),
+                scope_path.clone().into_iter().collect(),
+                scope_path.clone(),
+            );
+
+            let scope_line = scope_path
+                .as_ref()
+                .map(|scope| format!("Scope: only modify files under `{}`.\n", scope.display()))
+                .unwrap_or_default();
+
+            let prompt = format!(
+                "{EXECUTE_GLOBAL_REFACTOR_TOOL_NAME}\nPHASE_3_5_TRANSFORMER\n\n\
+                 Method: {method_name}\n\
+                 Refactor instruction: {refactor_instruction}\n\
+                 {scope_line}\
+                 First gather_refactor_targets for `{method_name}`, then apply_structural_codemod \
+                 using the refactor instruction as transformation_rule."
+            );
+
+            let result =
+                AgentLoopOrchestrator::run(&agent, prompt, TRANSFORMER_MAX_ITERATIONS).await?;
+
+            if result.is_finished && result.accumulated_data.contains("[TRANSFORMER OK]") {
+                return Ok(result.accumulated_data);
+            }
+
+            Ok(format!(
+                "Transformer report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
             ))
         },
     )

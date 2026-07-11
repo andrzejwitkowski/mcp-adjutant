@@ -12,6 +12,7 @@ pub enum AgentPhase {
     Scout,
     Pruner,
     Builder,
+    Transformer,
     Triage,
     Babysitter,
     Evaluator,
@@ -101,6 +102,10 @@ impl Default for AdjutantConfig {
             (
                 AgentPhase::Builder,
                 phase_profile("deepseek-coder", 8_192, 0.2),
+            ),
+            (
+                AgentPhase::Transformer,
+                phase_profile("deepseek-coder", 8_192, 0.1),
             ),
             (
                 AgentPhase::Triage,
@@ -197,6 +202,7 @@ mod tests {
             (AgentPhase::Scout, "deepseek-chat", 4_096, 0.3),
             (AgentPhase::Pruner, "deepseek-chat", 8_192, 0.1),
             (AgentPhase::Builder, "deepseek-coder", 8_192, 0.2),
+            (AgentPhase::Transformer, "deepseek-coder", 8_192, 0.1),
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
             (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),

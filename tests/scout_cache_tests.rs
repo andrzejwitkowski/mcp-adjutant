@@ -288,7 +288,11 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
     let project_root = unique_temp_project("scout-cache-rg");
     fs::create_dir_all(project_root.join("src")).expect("create src");
     write_demo_cargo_manifest(&project_root);
-    fs::write(project_root.join("src/marker.rs"), "pub fn alpha_marker() {}\n").expect("write");
+    fs::write(
+        project_root.join("src/marker.rs"),
+        "pub fn alpha_marker() {}\n",
+    )
+    .expect("write");
 
     std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", &project_root);
     let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));

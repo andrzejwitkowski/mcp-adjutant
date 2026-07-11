@@ -3,6 +3,7 @@ import { LlmClientCatalog } from './LlmClientCatalog'
 import { NavBar } from './NavBar'
 import { WebFetcherTunables } from './WebFetcherTunables'
 import type { AdjutantConfig, AgentPhase, PhaseProfile, WebFetcherProfile } from './types'
+import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
 const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
@@ -20,6 +21,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     phase: 'builder',
     title: 'Builder',
     hint: 'Test generation and scaffolding',
+  },
+  {
+    phase: 'transformer',
+    title: 'Transformer',
+    hint: 'Global AST refactors and signature propagation',
   },
   {
     phase: 'evaluator',
@@ -54,6 +60,7 @@ const KNOWN_PHASES: AgentPhase[] = [
   'scout',
   'triage',
   'builder',
+  'transformer',
   'evaluator',
   'web_fetcher',
 ]
@@ -66,10 +73,9 @@ function migrateLegacyPhases(
   raw: Record<string, PhaseProfile>,
 ): Record<string, PhaseProfile> {
   const phases = { ...raw }
-  const legacyPruner = phases.transformer
-  delete phases.transformer
-  if (legacyPruner && !phases.pruner) {
-    phases.pruner = legacyPruner
+  if (!phases.pruner && phases.transformer) {
+    phases.pruner = phases.transformer
+    delete phases.transformer
   }
   return phases
 }
@@ -138,6 +144,16 @@ export function ConfigApp() {
         setStatus('ready')
       })
       .catch((error: Error) => {
+        emitUiNotify({
+          subject: {
+            component: 'config-app',
+            summary: `load failed: ${error.message}`,
+          },
+          meta: {
+              sourceModule: 'config-ui/ConfigApp',
+            correlationId: null,
+          },
+        })
         setLoaded(false)
         setStatus('error')
         setMessage(error.message)
@@ -180,6 +196,16 @@ export function ConfigApp() {
       }
       const saved = (await response.json()) as AdjutantConfig
       setConfig(withDisplayedPhases(saved))
+      emitUiNotify({
+        subject: {
+          component: 'config-app',
+          summary: 'configuration saved',
+        },
+        meta: {
+          sourceModule: 'config-ui/ConfigApp',
+          correlationId: null,
+        },
+      })
       setStatus('ready')
       setMessage('Saved')
     } catch (error) {

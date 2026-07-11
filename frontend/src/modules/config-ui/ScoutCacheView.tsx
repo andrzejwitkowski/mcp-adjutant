@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { PageShell } from './NavBar'
 import { Pager } from './Pager'
 import type { ScoutCachePage } from './types'
+import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
 const PAGE_SIZE = 20
@@ -36,6 +37,16 @@ export function ScoutCacheView() {
         setStatus('ready')
       })
       .catch((error: Error) => {
+        emitUiNotify({
+          subject: {
+            component: 'scout-cache',
+            summary: `load failed: ${error.message}`,
+          },
+          meta: {
+              sourceModule: 'config-ui/ScoutCacheView',
+            correlationId: null,
+          },
+        })
         setStatus('error')
         setMessage(error.message)
       })

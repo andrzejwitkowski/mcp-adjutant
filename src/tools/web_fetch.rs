@@ -27,8 +27,8 @@ pub struct FetchedPage {
 }
 
 pub fn parse_brave_results(json: &str) -> Result<Vec<SearchResult>, String> {
-    let root: Value =
-        serde_json::from_str(json).map_err(|err| format!("Brave Search JSON parse failed: {err}"))?;
+    let root: Value = serde_json::from_str(json)
+        .map_err(|err| format!("Brave Search JSON parse failed: {err}"))?;
     let results = root
         .pointer("/web/results")
         .and_then(Value::as_array)
@@ -191,7 +191,8 @@ fn search_brave(
                 .filter(|key| !key.is_empty())
         })
         .ok_or_else(|| {
-            "Brave Search API key not configured (set web_fetcher.brave_api_key in config)".to_string()
+            "Brave Search API key not configured (set web_fetcher.brave_api_key in config)"
+                .to_string()
         })?;
 
     let encoded = url_encode(query);
@@ -226,7 +227,9 @@ fn search_brave(
 
     let results = parse_brave_results(&body)?;
     if results.is_empty() {
-        return Err(format!("Brave Search returned no results for query: {query}"));
+        return Err(format!(
+            "Brave Search returned no results for query: {query}"
+        ));
     }
     Ok(results)
 }
@@ -245,7 +248,9 @@ fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
 
     let html = read_limited_string(response.into_reader())?;
     if html.contains("Unfortunately, bots use DuckDuckGo too.") {
-        return Err("DuckDuckGo blocked the request (bot challenge); use Brave Search instead".to_string());
+        return Err(
+            "DuckDuckGo blocked the request (bot challenge); use Brave Search instead".to_string(),
+        );
     }
     let results = parse_ddg_results(&html);
     if results.is_empty() {

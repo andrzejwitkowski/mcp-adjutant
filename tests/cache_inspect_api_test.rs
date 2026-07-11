@@ -163,8 +163,10 @@ fn scout_cache_page_limits_rows() {
     }
 
     let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let page1 = load_scout_cache_page(&conn, &project_root, 1, EVALUATIONS_PAGE_SIZE).expect("page 1");
-    let page2 = load_scout_cache_page(&conn, &project_root, 2, EVALUATIONS_PAGE_SIZE).expect("page 2");
+    let page1 =
+        load_scout_cache_page(&conn, &project_root, 1, EVALUATIONS_PAGE_SIZE).expect("page 1");
+    let page2 =
+        load_scout_cache_page(&conn, &project_root, 2, EVALUATIONS_PAGE_SIZE).expect("page 2");
 
     assert_eq!(page1.total_count, 25);
     assert_eq!(page1.total_pages, 2);
@@ -196,8 +198,10 @@ fn web_cache_page_limits_rows() {
     }
 
     let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let page1 = load_web_cache_page(&conn, &project_root, 604_800, 1, EVALUATIONS_PAGE_SIZE).expect("page 1");
-    let page2 = load_web_cache_page(&conn, &project_root, 604_800, 2, EVALUATIONS_PAGE_SIZE).expect("page 2");
+    let page1 = load_web_cache_page(&conn, &project_root, 604_800, 1, EVALUATIONS_PAGE_SIZE)
+        .expect("page 1");
+    let page2 = load_web_cache_page(&conn, &project_root, 604_800, 2, EVALUATIONS_PAGE_SIZE)
+        .expect("page 2");
 
     assert_eq!(page1.total_count, 25);
     assert_eq!(page1.total_pages, 2);

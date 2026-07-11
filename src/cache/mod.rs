@@ -14,5 +14,5 @@ pub use inspect::{
 pub use manager::{ProjectCacheManager, WebSourceSnapshot, SEMANTIC_SIMILARITY_THRESHOLD};
 pub use project::{
     current_unix_timestamp, hash_query_text, mcp_workspace_root, open_cache_connection,
-    resolve_workspace_path,
+    resolve_workspace_path, resolve_workspace_path_bounded,
 };

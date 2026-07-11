@@ -357,21 +357,24 @@ fn list_queries(
     offset: Option<u32>,
 ) -> Result<Vec<CachedQueryRow>, String> {
     let sql = match (limit, offset) {
-        (Some(_), Some(_)) => "SELECT id, raw_text, embedding FROM queries ORDER BY id LIMIT ?1 OFFSET ?2",
+        (Some(_), Some(_)) => {
+            "SELECT id, raw_text, embedding FROM queries ORDER BY id LIMIT ?1 OFFSET ?2"
+        }
         _ => "SELECT id, raw_text, embedding FROM queries ORDER BY id",
     };
     let mut statement = conn
         .prepare(sql)
         .map_err(|err| format!("failed to prepare queries query: {err}"))?;
 
-    let rows = match (limit, offset) {
-        (Some(limit), Some(offset)) => statement
-            .query_map(params![limit, offset], map_query_row)
-            .map_err(|err| format!("failed to query cached queries: {err}"))?,
-        _ => statement
-            .query_map([], map_query_row)
-            .map_err(|err| format!("failed to query cached queries: {err}"))?,
-    };
+    let rows =
+        match (limit, offset) {
+            (Some(limit), Some(offset)) => statement
+                .query_map(params![limit, offset], map_query_row)
+                .map_err(|err| format!("failed to query cached queries: {err}"))?,
+            _ => statement
+                .query_map([], map_query_row)
+                .map_err(|err| format!("failed to query cached queries: {err}"))?,
+        };
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to read query row: {err}"))
@@ -637,7 +640,9 @@ fn list_web_sources(
 
     if let (Some(limit), Some(offset)) = (limit, offset) {
         let rows = statement
-            .query_map(params![limit, offset], |row| map_web_source_row(row, now, ttl_seconds))
+            .query_map(params![limit, offset], |row| {
+                map_web_source_row(row, now, ttl_seconds)
+            })
             .map_err(|err| format!("failed to query web_sources: {err}"))?;
         return rows
             .collect::<Result<Vec<_>, _>>()

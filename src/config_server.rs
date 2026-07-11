@@ -118,8 +118,14 @@ async fn get_web_cache(
 ) -> Result<Json<WebCachePage>, CacheApiError> {
     let ttl_seconds = web_cache_ttl(&state).await;
     let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
-    let page = load_web_cache_page(&conn, &project_root, ttl_seconds, query.page, EVALUATIONS_PAGE_SIZE)
-        .map_err(CacheApiError::from)?;
+    let page = load_web_cache_page(
+        &conn,
+        &project_root,
+        ttl_seconds,
+        query.page,
+        EVALUATIONS_PAGE_SIZE,
+    )
+    .map_err(CacheApiError::from)?;
     Ok(Json(page))
 }
 
@@ -208,7 +214,13 @@ pub fn load_or_default(path: &Path) -> AdjutantConfig {
             let _ = config.save_to_file(path);
             config
         }
-        Err(_) => AdjutantConfig::default(),
+        Err(err) => {
+            tracing::warn!(
+                "failed to load config from {}: {err}; using built-in defaults",
+                path.display()
+            );
+            AdjutantConfig::default()
+        }
     }
 }
 

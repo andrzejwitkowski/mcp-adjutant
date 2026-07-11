@@ -10,6 +10,7 @@ const KNOWN_PHASES: &[&str] = &[
     "scout",
     "pruner",
     "builder",
+    "transformer",
     "triage",
     "babysitter",
     "evaluator",
@@ -34,8 +35,10 @@ pub fn migrate_config_value(value: &mut Value) {
     };
 
     // Legacy UI used "transformer" before pruner existed in the config schema.
-    if let Some(transformer) = phases.remove("transformer") {
-        phases.entry("pruner".to_string()).or_insert(transformer);
+    if phases.contains_key("transformer") && !phases.contains_key("pruner") {
+        if let Some(transformer) = phases.remove("transformer") {
+            phases.insert("pruner".to_string(), transformer);
+        }
     }
 
     phases.retain(|key, _| KNOWN_PHASES.contains(&key.as_str()));

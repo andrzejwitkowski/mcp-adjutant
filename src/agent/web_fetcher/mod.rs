@@ -40,7 +40,8 @@ impl<RC: LlmClient> WebFetcherAgent<RC> {
         let token_budget = profile.token_budget;
         let brave_api_key = profile.brave_api_key.clone();
         let source_collector = Arc::new(Mutex::new(Vec::new()));
-        let tools = web_fetcher_tool_set(token_budget, brave_api_key, Arc::clone(&source_collector));
+        let tools =
+            web_fetcher_tool_set(token_budget, brave_api_key, Arc::clone(&source_collector));
         Self {
             reasoning_client,
             tools,
@@ -82,9 +83,9 @@ impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
                 "\nFinal turn: call finalize(report) with your best compacted markdown report.",
             );
         } else {
-            context.input_prompt.push_str(
-                "\nContinue research. Call exactly one tool: search_web or finalize.",
-            );
+            context
+                .input_prompt
+                .push_str("\nContinue research. Call exactly one tool: search_web or finalize.");
         }
         Ok(())
     }

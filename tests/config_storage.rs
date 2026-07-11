@@ -97,6 +97,39 @@ fn custom_config_roundtrip_preserves_all_fields() {
 }
 
 #[test]
+fn config_with_transformer_phase_deserializes() {
+    let json = r#"{
+        "phases": {
+            "transformer": {
+                "provider": "open_router",
+                "api_key": null,
+                "base_url": "https://openrouter.ai/api/v1",
+                "model_name": "google/gemini-2.5-flash",
+                "max_tokens": 4096,
+                "temperature": 0.1
+            },
+            "builder": {
+                "provider": "open_router",
+                "api_key": null,
+                "base_url": "https://openrouter.ai/api/v1",
+                "model_name": "google/gemini-2.5-flash",
+                "max_tokens": 8192,
+                "temperature": 0.2
+            }
+        },
+        "server_port": 3000,
+        "storage_path": "/tmp/transformer-phase.json"
+    }"#;
+
+    let config: AdjutantConfig = serde_json::from_str(json).expect("deserialize transformer phase");
+    let transformer = config.get_profile(&AgentPhase::Transformer);
+    let builder = config.get_profile(&AgentPhase::Builder);
+    assert_eq!(transformer.model_name, "google/gemini-2.5-flash");
+    assert_eq!(transformer.base_url, "https://openrouter.ai/api/v1");
+    assert_ne!(transformer.max_tokens, builder.max_tokens);
+}
+
+#[test]
 fn load_from_corrupted_json_returns_parse_error() {
     let temp_dir = unique_temp_path("corrupted-json");
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");

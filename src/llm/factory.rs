@@ -51,6 +51,12 @@ pub fn create_evaluator_llm_client(config: &AdjutantConfig) -> Result<Configured
     create_llm_client_for_phase(config, AgentPhase::Evaluator)
 }
 
+pub fn create_transformer_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Transformer)
+}
+
 pub fn create_web_fetcher_llm_client(
     config: &AdjutantConfig,
 ) -> Result<ConfiguredLlmClient, String> {
@@ -83,6 +89,28 @@ mod tests {
         assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
         assert_eq!(profile.provider, Provider::DeepSeek);
         assert_eq!(profile.model_name, "deepseek-chat");
+    }
+
+    #[test]
+    fn create_transformer_llm_client_uses_transformer_phase_profile() {
+        let mut config = AdjutantConfig::default();
+        config.phases.insert(
+            AgentPhase::Transformer,
+            PhaseProfile {
+                provider: Provider::OpenRouter,
+                api_key: Some("sk-test".to_string()),
+                base_url: "https://openrouter.ai/api/v1".to_string(),
+                model_name: "google/gemini-2.5-flash".to_string(),
+                max_tokens: 4_096,
+                temperature: 0.1,
+            },
+        );
+
+        create_transformer_llm_client(&config).expect("transformer client");
+        assert_eq!(
+            config.get_profile(&AgentPhase::Transformer).model_name,
+            "google/gemini-2.5-flash"
+        );
     }
 
     #[test]

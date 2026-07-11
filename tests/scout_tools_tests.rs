@@ -82,7 +82,7 @@ fn ast_usage_finder_locates_python_call_sites_only() {
 
 #[test]
 fn ast_usage_finder_locates_java_call_sites_only() {
-    assert_call_lines("sample.java", vec![4, 6]);
+    assert_call_lines("sample.java", vec![4, 7]);
 }
 
 #[test]

@@ -92,6 +92,32 @@ pub fn run_fd(pattern: &str) -> Result<Vec<String>, String> {
     Err(last_err)
 }
 
+pub fn run_ripgrep_files(pattern: &str, root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("rg")
+        .current_dir(root)
+        .arg("-l")
+        .arg("-e")
+        .arg(pattern)
+        .arg(".")
+        .output()
+        .map_err(|err| format!("failed to spawn ripgrep: {err}"))?;
+
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(format!(
+            "ripgrep failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 pub fn read_file_range(path: &Path, start: usize, end: usize) -> Result<String, String> {
     if start == 0 {
         return Err("start must be >= 1 (1-based line numbers)".to_string());
