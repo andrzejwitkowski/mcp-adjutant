@@ -172,9 +172,8 @@ impl MetricsStore {
         };
         let created_at = current_unix_timestamp()?;
         let utc_date = utc_date_from_secs(created_at);
-        let request_uuid = request_uuid.or_else(|| {
-            current_job_context().and_then(|ctx| ctx.request_uuid)
-        });
+        let request_uuid =
+            request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
 
         self.conn
             .execute(
