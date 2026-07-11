@@ -146,6 +146,52 @@ fn load_from_corrupted_json_returns_parse_error() {
 }
 
 #[test]
+fn parse_config_json_migrates_legacy_transformer_phase() {
+    let raw = r#"{
+        "phases": {
+            "scout": {
+                "provider": "deep_seek",
+                "api_key": null,
+                "base_url": "https://api.deepseek.com/v1",
+                "model_name": "deepseek-chat",
+                "max_tokens": 4096,
+                "temperature": 0.3
+            },
+            "transformer": {
+                "provider": "open_router",
+                "api_key": null,
+                "base_url": "https://openrouter.ai/api/v1",
+                "model_name": "legacy-model",
+                "max_tokens": 4096,
+                "temperature": 0.1
+            }
+        },
+        "server_port": 3000,
+        "storage_path": "/tmp/config.json",
+        "web_fetcher": {
+            "brave_api_key": "BSA-test",
+            "max_search_hops": 3,
+            "token_budget": 8000,
+            "cache_ttl_seconds": 604800,
+            "web_cache_threshold": 0.78
+        }
+    }"#;
+
+    let config = mcp_adjutant::storage::parse_config_json(raw).expect("parse legacy config");
+    assert!(config.phases.contains_key(&AgentPhase::Scout));
+    assert!(config.phases.contains_key(&AgentPhase::Pruner));
+    let pruner = config.get_profile(&AgentPhase::Pruner);
+    assert_eq!(pruner.model_name, "legacy-model");
+    assert_eq!(
+        config
+            .web_fetcher
+            .as_ref()
+            .and_then(|profile| profile.brave_api_key.as_deref()),
+        Some("BSA-test")
+    );
+}
+
+#[test]
 fn save_creates_missing_parent_directories() {
     let temp_dir = unique_temp_path("nested-save");
     let config_path = temp_dir.join("deep/nested/dir/config.json");

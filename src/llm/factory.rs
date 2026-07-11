@@ -57,6 +57,12 @@ pub fn create_transformer_llm_client(
     create_llm_client_for_phase(config, AgentPhase::Transformer)
 }
 
+pub fn create_web_fetcher_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::WebFetcher)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +124,16 @@ mod tests {
             Err(err) => assert!(err.contains("missing profile for phase Triage")),
             Ok(_) => panic!("expected missing triage profile error"),
         }
+    }
+
+    #[test]
+    fn create_web_fetcher_llm_client_uses_web_fetcher_phase_profile() {
+        let config = AdjutantConfig::default();
+
+        let client = create_web_fetcher_llm_client(&config).expect("web fetcher client");
+        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+
+        let profile = config.get_profile(&AgentPhase::WebFetcher);
+        assert_eq!(profile.model_name, "deepseek-chat");
     }
 }

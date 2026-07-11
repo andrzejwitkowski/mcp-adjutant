@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
+use crate::llm::{required_str, LlmTool, LlmToolSet, ToolDefinition};
 
 pub fn triage_tool_set() -> LlmToolSet {
     LlmToolSet::new()
@@ -77,14 +77,6 @@ pub fn parse_edit_file_arguments(arguments: &Value) -> Result<(PathBuf, usize, S
 
 pub fn parse_report_error_arguments(arguments: &Value) -> Result<String, String> {
     required_str(arguments, "msg")
-}
-
-fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
 }
 
 fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {

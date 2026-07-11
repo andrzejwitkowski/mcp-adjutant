@@ -12,6 +12,7 @@ async-trait = "0.1"
 axum = "0.7"
 bytemuck = { version = "1.16", features = ["derive"] }
 home = "=0.5.9"
+htmd = "0.1"
 ndarray = "0.16"
 ort = "=2.0.0-rc.9"
 rusqlite = { version = "0.32", features = ["bundled"] }

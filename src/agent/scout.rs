@@ -4,9 +4,11 @@ mod tools;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::orchestrator::run_single_tool_turn;
 use super::traits::{AgentContext, AutonomousAgent};
-use crate::cache::resolve_workspace_path;
-use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall, LlmToolSet};
+use crate::cache::{mcp_workspace_root, resolve_workspace_path};
+use crate::llm::{LlmClient, LlmModelTurn, LlmToolCall, LlmToolSet};
+use crate::tools::run_ripgrep_matching_files;
 
 pub use cache_flow::{run_scout_with_cache, ScoutCacheOutcome};
 pub use tools::scout_tool_set;
@@ -63,14 +65,11 @@ impl<C: LlmClient> ScoutAgent<C> {
         context.touched_files.push(resolve_workspace_path(path));
     }
 
-    fn build_user_message(context: &AgentContext) -> String {
-        if context.accumulated_data.is_empty() {
-            context.input_prompt.clone()
-        } else {
-            format!(
-                "{}\n\n---\nObservation history:\n{}",
-                context.input_prompt, context.accumulated_data
-            )
+    fn record_ripgrep_hits(context: &mut AgentContext, pattern: &str) {
+        if let Ok(files) = run_ripgrep_matching_files(pattern, &mcp_workspace_root()) {
+            for path in files {
+                context.touched_files.push(resolve_workspace_path(path));
+            }
         }
     }
 }
@@ -90,48 +89,28 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let user_message = Self::build_user_message(context);
-        let request = LlmRequest::new(SCOUT_SYSTEM_PROMPT, &user_message, &self.tools);
-        let model_turn = self.client.complete(request)?;
-
-        let tool_call = match model_turn.tool_calls.first() {
-            Some(call) => call,
-            None => {
-                let thought = model_turn.content.unwrap_or_default();
-                if thought.is_empty() {
-                    return Err("model response missing tool call".to_string());
+        let called = run_single_tool_turn(&self.client, &self.tools, SCOUT_SYSTEM_PROMPT, context)?;
+        if let Some((tool_name, args)) = called {
+            Self::record_touched_file(context, &tool_name, &args);
+            if tool_name == "ripgrep" {
+                if let Some(pattern) = args.get("pattern").and_then(Value::as_str) {
+                    Self::record_ripgrep_hits(context, pattern);
                 }
-                let step = format!(
-                    "Thought:\n{thought}\nObservation:\n(model did not call a tool — continue)\n"
-                );
-                context.accumulated_data.push_str(&step);
-                return Ok(());
             }
-        };
-
-        let invocation = self.tools.invoke(&tool_call.name, &tool_call.arguments)?;
-        Self::record_touched_file(context, &tool_call.name, &tool_call.arguments);
-
-        let thought = model_turn.content.unwrap_or_default();
-        let step = format!(
-            "Thought:\n{thought}\nTool: {}({})\nObservation:\n{}\n",
-            tool_call.name, tool_call.arguments, invocation.output
-        );
-        context.accumulated_data.push_str(&step);
-
-        if invocation.is_terminal {
-            context.accumulated_data = invocation.output;
-            context.is_finished = true;
-            context.agent_completed = true;
         }
-
         Ok(())
     }
 
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
-        context
-            .input_prompt
-            .push_str("\nContinue scouting based on the latest observation.");
+        if context.iterations >= context.max_iterations.saturating_sub(1) {
+            context.input_prompt.push_str(
+                "\nFinal turn: call finalize(report) with your best condensed markdown report.",
+            );
+        } else {
+            context.input_prompt.push_str(
+                "\nContinue scouting. Call exactly one tool: detect_language, ripgrep, ast_calls, read_file, or finalize.",
+            );
+        }
         Ok(())
     }
 }

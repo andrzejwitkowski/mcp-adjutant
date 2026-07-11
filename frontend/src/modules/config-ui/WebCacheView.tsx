@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageShell } from './NavBar'
 import { Pager } from './Pager'
-import type { ScoutCachePage } from './types'
-import { emitUiNotify } from './uiLog'
+import type { WebCachePage } from './types'
 import './config-ui.css'
 
 const PAGE_SIZE = 20
@@ -15,38 +14,28 @@ function preview(text: string, max = 120) {
   return text.length <= max ? text : `${text.slice(0, max)}…`
 }
 
-export function ScoutCacheView() {
+export function WebCacheView() {
   const [page, setPage] = useState(1)
-  const [data, setData] = useState<ScoutCachePage | null>(null)
+  const [data, setData] = useState<WebCachePage | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [message, setMessage] = useState('')
-  const [expandedInsight, setExpandedInsight] = useState<string | null>(null)
+  const [expandedReport, setExpandedReport] = useState<string | null>(null)
 
   const load = useCallback((targetPage: number) => {
     setStatus('loading')
     setMessage('')
-    fetch(`/api/cache/scout?page=${targetPage}`)
+    fetch(`/api/cache/web?page=${targetPage}`)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<ScoutCachePage>
+        return response.json() as Promise<WebCachePage>
       })
       .then((payload) => {
         setData(payload)
         setPage(payload.page)
-        setExpandedInsight(null)
+        setExpandedReport(null)
         setStatus('ready')
       })
       .catch((error: Error) => {
-        emitUiNotify({
-          subject: {
-            component: 'scout-cache',
-            summary: `load failed: ${error.message}`,
-          },
-          meta: {
-              sourceModule: 'config-ui/ScoutCacheView',
-            correlationId: null,
-          },
-        })
         setStatus('error')
         setMessage(error.message)
       })
@@ -60,8 +49,8 @@ export function ScoutCacheView() {
 
   return (
     <PageShell
-      title="Scout semantic cache"
-      subtitle="Vector-backed insight store in .adjutant/cache.db"
+      title="Web fetcher cache"
+      subtitle="Vector-backed web research store in .adjutant/cache.db"
       actions={
         <button type="button" className="config-btn" onClick={() => load(page)} disabled={status === 'loading'}>
           {status === 'loading' ? 'Loading…' : 'Refresh'}
@@ -73,43 +62,37 @@ export function ScoutCacheView() {
       )}
 
       {overview && (
-        <>
-          <section className="stats-row">
-            <div className="stat-card">
-              <span className="stat-card__label">Queries</span>
-              <span className="stat-card__value">{overview.query_count}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Insights</span>
-              <span className="stat-card__value">{overview.insight_count}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Embeddings</span>
-              <span className="stat-card__value">{overview.embedding_count}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Code nodes</span>
-              <span className="stat-card__value">{overview.code_node_count}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Page size</span>
-              <span className="stat-card__value">{PAGE_SIZE}</span>
-            </div>
-          </section>
-
-          <p className="config-app__meta">
-            Project root: <code>{overview.project_root}</code>
-          </p>
-        </>
+        <section className="stats-row">
+          <div className="stat-card">
+            <span className="stat-card__label">Web queries</span>
+            <span className="stat-card__value">{overview.web_query_count}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card__label">Web reports</span>
+            <span className="stat-card__value">{overview.web_report_count}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card__label">Web sources</span>
+            <span className="stat-card__value">{overview.web_source_count}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card__label">Dependencies</span>
+            <span className="stat-card__value">{overview.web_dependency_count}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card__label">Page size</span>
+            <span className="stat-card__value">{PAGE_SIZE}</span>
+          </div>
+        </section>
       )}
 
       {status === 'ready' && data && data.total_count === 0 && (
-        <p className="config-app__empty">Cache is empty — run scout_context to populate it.</p>
+        <p className="config-app__empty">Web cache is empty — run web_fetch to populate it.</p>
       )}
 
-      {data && data.queries.length > 0 && (
+      {data && data.web_queries.length > 0 && (
         <section className="data-panel">
-          <h2>Queries</h2>
+          <h2>Web queries</h2>
           <table className="data-table">
             <thead>
               <tr>
@@ -118,7 +101,7 @@ export function ScoutCacheView() {
               </tr>
             </thead>
             <tbody>
-              {data.queries.map((row) => (
+              {data.web_queries.map((row) => (
                 <tr key={row.id}>
                   <td>{preview(row.raw_text, 200)}</td>
                   <td>{row.has_embedding ? 'yes' : 'no'}</td>
@@ -129,27 +112,25 @@ export function ScoutCacheView() {
         </section>
       )}
 
-      {data && data.insights.length > 0 && (
+      {data && data.web_reports.length > 0 && (
         <section className="data-panel">
-          <h2>Insights</h2>
+          <h2>Web reports</h2>
           <ul className="insight-list">
-            {data.insights.map((row) => {
-              const isOpen = expandedInsight === row.id
+            {data.web_reports.map((row) => {
+              const isOpen = expandedReport === row.id
               return (
                 <li key={row.id} className="insight-card">
                   <button
                     type="button"
                     className="insight-card__summary"
-                    onClick={() => setExpandedInsight(isOpen ? null : row.id)}
+                    onClick={() => setExpandedReport(isOpen ? null : row.id)}
                     aria-expanded={isOpen}
                   >
                     <span>{preview(row.query_text ?? row.id, 80)}</span>
                     <span className="eval-card__time">{formatTimestamp(row.created_at)}</span>
                   </button>
                   {isOpen && <pre className="insight-card__content">{row.content}</pre>}
-                  {!isOpen && (
-                    <p className="insight-card__preview">{preview(row.content)}</p>
-                  )}
+                  {!isOpen && <p className="insight-card__preview">{preview(row.content)}</p>}
                 </li>
               )
             })}
@@ -157,23 +138,27 @@ export function ScoutCacheView() {
         </section>
       )}
 
-      {data && data.code_nodes.length > 0 && (
+      {data && data.web_sources.length > 0 && (
         <section className="data-panel">
-          <h2>Code nodes</h2>
+          <h2>Web sources</h2>
           <table className="data-table">
             <thead>
               <tr>
-                <th>File</th>
+                <th>URL</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {data.code_nodes.map((row) => (
+              {data.web_sources.map((row) => (
                 <tr key={row.id}>
-                  <td><code>{row.file_path}</code></td>
                   <td>
-                    <span className={`status-chip ${row.is_dirty ? 'is-dirty' : 'is-clean'}`}>
-                      {row.is_dirty ? 'dirty' : 'clean'}
+                    <a href={row.url} target="_blank" rel="noreferrer">
+                      {preview(row.url, 80)}
+                    </a>
+                  </td>
+                  <td>
+                    <span className={`status-chip ${row.is_stale ? 'is-dirty' : 'is-clean'}`}>
+                      {row.is_stale ? 'stale' : 'fresh'}
                     </span>
                   </td>
                 </tr>
@@ -183,21 +168,21 @@ export function ScoutCacheView() {
         </section>
       )}
 
-      {data && data.dependencies.length > 0 && (
+      {data && data.web_dependencies.length > 0 && (
         <section className="data-panel">
           <h2>Dependencies</h2>
           <table className="data-table">
             <thead>
               <tr>
-                <th>Insight</th>
-                <th>Code node</th>
+                <th>Report</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody>
-              {data.dependencies.map((row) => (
-                <tr key={`${row.insight_id}:${row.code_node_id}`}>
-                  <td><code>{preview(row.insight_id, 40)}</code></td>
-                  <td><code>{row.code_node_id}</code></td>
+              {data.web_dependencies.map((row) => (
+                <tr key={`${row.report_id}:${row.source_id}`}>
+                  <td><code>{preview(row.report_id, 40)}</code></td>
+                  <td><code>{preview(row.source_id, 40)}</code></td>
                 </tr>
               ))}
             </tbody>
@@ -210,7 +195,7 @@ export function ScoutCacheView() {
           page={page}
           totalPages={data.total_pages}
           loading={status === 'loading'}
-          label="Scout cache pagination"
+          label="Web cache pagination"
           onPageChange={setPage}
         />
       )}

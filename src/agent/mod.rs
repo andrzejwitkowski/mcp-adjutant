@@ -6,6 +6,7 @@ mod text_pruner_mock;
 mod traits;
 mod transformer;
 mod triage;
+mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
 pub use builder::{
@@ -13,7 +14,7 @@ pub use builder::{
     BUILDER_SYSTEM_PROMPT,
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
-pub use orchestrator::AgentLoopOrchestrator;
+pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
     ScoutToolCall, SCOUT_SYSTEM_PROMPT,
@@ -27,4 +28,7 @@ pub use transformer::{
 };
 pub use triage::{
     triage_tool_set, BuildCommandRunner, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+};
+pub use web_fetcher::{
+    run_web_fetch_with_cache, WebCacheOutcome, WebFetcherAgent, WEB_FETCHER_SYSTEM_PROMPT,
 };

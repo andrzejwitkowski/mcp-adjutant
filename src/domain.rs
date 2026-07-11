@@ -16,6 +16,7 @@ pub enum AgentPhase {
     Triage,
     Babysitter,
     Evaluator,
+    WebFetcher,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,12 +39,53 @@ pub struct PhaseProfile {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebFetcherProfile {
+    #[serde(default)]
+    pub brave_api_key: Option<String>,
+    #[serde(default = "default_max_search_hops")]
+    pub max_search_hops: u32,
+    #[serde(default = "default_token_budget")]
+    pub token_budget: u32,
+    #[serde(default = "default_cache_ttl_seconds")]
+    pub cache_ttl_seconds: u64,
+    #[serde(default = "default_web_cache_threshold")]
+    pub web_cache_threshold: f32,
+}
+
+fn default_max_search_hops() -> u32 {
+    3
+}
+fn default_token_budget() -> u32 {
+    8_000
+}
+fn default_cache_ttl_seconds() -> u64 {
+    604_800
+}
+fn default_web_cache_threshold() -> f32 {
+    0.78
+}
+
+impl Default for WebFetcherProfile {
+    fn default() -> Self {
+        Self {
+            brave_api_key: None,
+            max_search_hops: default_max_search_hops(),
+            token_budget: default_token_budget(),
+            cache_ttl_seconds: default_cache_ttl_seconds(),
+            web_cache_threshold: default_web_cache_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdjutantConfig {
     pub phases: HashMap<AgentPhase, PhaseProfile>,
     pub server_port: u16,
     pub storage_path: String,
     #[serde(default)]
     pub triage_overrides: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub web_fetcher: Option<WebFetcherProfile>,
 }
 
 impl Default for AdjutantConfig {
@@ -77,6 +119,10 @@ impl Default for AdjutantConfig {
                 AgentPhase::Evaluator,
                 phase_profile("deepseek-chat", 2_048, 0.0),
             ),
+            (
+                AgentPhase::WebFetcher,
+                phase_profile("deepseek-chat", 2_048, 0.2),
+            ),
         ]
         .into_iter()
         .collect();
@@ -86,6 +132,7 @@ impl Default for AdjutantConfig {
             server_port: 3_000,
             storage_path: default_storage_path(),
             triage_overrides: None,
+            web_fetcher: Some(WebFetcherProfile::default()),
         }
     }
 }
@@ -115,6 +162,9 @@ impl AdjutantConfig {
     pub fn merge_missing_from_defaults(&mut self) {
         for (phase, profile) in AdjutantConfig::default().phases {
             self.phases.entry(phase).or_insert(profile);
+        }
+        if self.web_fetcher.is_none() {
+            self.web_fetcher = Some(WebFetcherProfile::default());
         }
     }
 }
@@ -156,6 +206,7 @@ mod tests {
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
             (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
+            (AgentPhase::WebFetcher, "deepseek-chat", 2_048, 0.2),
         ];
 
         for (phase, model_name, max_tokens, temperature) in expected_models {
@@ -202,5 +253,46 @@ mod tests {
             legacy.get_profile(&AgentPhase::Builder).model_name,
             "deepseek-coder"
         );
+    }
+
+    #[test]
+    fn default_config_has_web_fetcher_phase_and_profile() {
+        let config = AdjutantConfig::default();
+
+        let web_fetcher = config.get_profile(&AgentPhase::WebFetcher);
+        assert_eq!(web_fetcher.provider, Provider::DeepSeek);
+        assert_eq!(web_fetcher.model_name, "deepseek-chat");
+        assert_eq!(web_fetcher.max_tokens, 2_048);
+
+        let profile = config
+            .web_fetcher
+            .as_ref()
+            .expect("default config should include a WebFetcherProfile");
+        assert_eq!(profile.max_search_hops, 3);
+        assert_eq!(profile.token_budget, 8_000);
+        assert_eq!(profile.cache_ttl_seconds, 604_800);
+        assert!((profile.web_cache_threshold - 0.78).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_restores_web_fetcher_profile() {
+        let mut legacy = AdjutantConfig {
+            phases: HashMap::from([(
+                AgentPhase::Scout,
+                phase_profile("deepseek-chat", 4_096, 0.3),
+            )]),
+            web_fetcher: None,
+            ..Default::default()
+        };
+
+        legacy.merge_missing_from_defaults();
+
+        let profile = legacy
+            .web_fetcher
+            .as_ref()
+            .expect("merge should restore WebFetcherProfile");
+        assert_eq!(profile.max_search_hops, 3);
+        assert_eq!(profile.token_budget, 8_000);
+        assert!(legacy.try_get_profile(AgentPhase::WebFetcher).is_ok());
     }
 }

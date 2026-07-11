@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, default_transformer_agent, run_scout_with_cache, AgentLoopOrchestrator,
-    EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent,
-    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, default_transformer_agent, run_scout_with_cache,
+    run_web_fetch_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
+    SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -18,7 +19,7 @@ use crate::jobs::{
 };
 use crate::llm::{
     create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
-    create_transformer_llm_client, create_triage_llm_client,
+    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
 };
 use crate::tools::LlmBuildDiscoverer;
 
@@ -27,6 +28,7 @@ pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
 pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_scaffolding";
 pub const EXECUTE_GLOBAL_REFACTOR_TOOL_NAME: &str = "execute_global_refactor";
 pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
+pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
@@ -43,6 +45,10 @@ pub fn scout_context_schema() -> Value {
                 "query": {
                     "type": "string",
                     "description": "Question or scouting goal for the repository."
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "When true, bypass the semantic cache lookup and scout fresh. Successful runs are still stored in the cache."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -152,8 +158,31 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         generate_tests_and_scaffolding_schema(),
         execute_global_refactor_schema(),
         evaluate_agent_performance_schema(),
+        web_fetch_schema(),
         query_job_status_schema(),
     ]
+}
+
+pub fn web_fetch_schema() -> Value {
+    json!({
+        "name": WEB_FETCH_TOOL_NAME,
+        "description": "Fetches the latest authoritative web content for a search phrase as compacted markdown. Works for any topic - documentation, news, specs, comparisons, code examples, or any web research. The agent searches via Brave Search API, fetches top result pages, and returns a condensed report. Results are cached semantically. Requires brave_api_key in web_fetcher config. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_phrase": {
+                    "type": "string",
+                    "description": "Topic or search phrase to research on the web."
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "When true, bypass the semantic cache lookup and fetch fresh web content. Successful runs are still stored in the cache."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["search_phrase", "request_uuid"]
+        }
+    })
 }
 
 async fn dispatch_async_job<F, Fut>(
@@ -245,6 +274,10 @@ pub async fn handle_scout_context(
         .filter(|query| !query.is_empty())
         .ok_or_else(|| "query is required".to_string())?
         .to_string();
+    let force_refresh = args
+        .get("force_refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     dispatch_async_job(
         registry,
@@ -255,8 +288,14 @@ pub async fn handle_scout_context(
                 Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
             let client = create_scout_llm_client(&config)?;
             let agent = ScoutAgent::new(client);
-            match run_scout_with_cache(&cache_manager, &agent, &query, SCOUT_MAX_ITERATIONS, true)
-                .await?
+            match run_scout_with_cache(
+                &cache_manager,
+                &agent,
+                &query,
+                SCOUT_MAX_ITERATIONS,
+                !force_refresh,
+            )
+            .await?
             {
                 ScoutCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
                 ScoutCacheOutcome::Fresh(report) => Ok(report),
@@ -586,6 +625,57 @@ pub async fn handle_evaluate_agent_performance(
                 "Evaluator report (finished={}, iterations={}):\n{}",
                 result.is_finished, result.iterations, result.accumulated_data
             ))
+        },
+    )
+    .await
+}
+
+pub async fn handle_web_fetch(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let search_phrase = args
+        .get("search_phrase")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|phrase| !phrase.is_empty())
+        .ok_or_else(|| "search_phrase is required".to_string())?
+        .to_string();
+    let force_refresh = args
+        .get("force_refresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        WEB_FETCH_TOOL_NAME,
+        move || async move {
+            let web_profile = config.web_fetcher.clone().unwrap_or_default();
+            let cache_manager =
+                Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
+            let reasoning_client = create_web_fetcher_llm_client(&config)?;
+            let max_hops = web_profile.max_search_hops;
+            let ttl = web_profile.cache_ttl_seconds as i64;
+            let cache_threshold = web_profile.web_cache_threshold;
+
+            let agent = WebFetcherAgent::new(reasoning_client, web_profile);
+            match run_web_fetch_with_cache(
+                &cache_manager,
+                &agent,
+                &search_phrase,
+                max_hops,
+                ttl,
+                cache_threshold,
+                !force_refresh,
+            )
+            .await?
+            {
+                WebCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
+                WebCacheOutcome::Fresh(report) => Ok(report),
+            }
         },
     )
     .await

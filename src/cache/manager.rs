@@ -8,10 +8,19 @@ use super::file_state::{capture_code_node_snapshot, is_code_node_dirty, CodeNode
 use super::project::{
     current_unix_timestamp, hash_query_text, normalize_relative_path, prepare_project_cache,
 };
+use crate::tools::web_fetch::{resolve_public_host, validate_fetch_url};
 
 /// Minimum cosine similarity for a semantic cache hit (L2-normalized dot product).
 /// ponytail: bge-small-en-v1.5 scores ~0.826 for the task's JWT paraphrase pair; 0.91 is aspirational.
 pub const SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.82;
+
+/// A fetched web source snapshot, produced by the scrape tool, stored as a dependency.
+#[derive(Debug, Clone)]
+pub struct WebSourceSnapshot {
+    pub url: String,
+    pub content_sha256: String,
+    pub fetched_at: i64,
+}
 
 pub struct ProjectCacheManager {
     conn: Connection,
@@ -142,6 +151,133 @@ impl ProjectCacheManager {
         Ok(())
     }
 
+    pub fn store_web_report(
+        &mut self,
+        search_phrase: &str,
+        report_content: &str,
+        sources: Vec<WebSourceSnapshot>,
+    ) -> Result<(), String> {
+        let query_id = hash_query_text(search_phrase);
+        let created_at = current_unix_timestamp()?;
+        let embedding = self.embedding_engine.generate(search_phrase)?;
+        let embedding_blob = bytemuck::cast_slice::<f32, u8>(&embedding).to_vec();
+
+        let transaction = self
+            .conn
+            .transaction()
+            .map_err(|err| format!("failed to start web cache transaction: {err}"))?;
+
+        transaction
+            .execute(
+                "INSERT INTO web_queries (id, raw_text, embedding) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET raw_text = excluded.raw_text, embedding = excluded.embedding",
+                params![query_id, search_phrase, embedding_blob],
+            )
+            .map_err(|err| format!("failed to store web query: {err}"))?;
+
+        transaction
+            .execute(
+                "INSERT INTO web_reports (id, content, created_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET content = excluded.content, created_at = excluded.created_at",
+                params![query_id, report_content, created_at],
+            )
+            .map_err(|err| format!("failed to store web report: {err}"))?;
+
+        transaction
+            .execute(
+                "DELETE FROM web_fetch_dependencies WHERE report_id = ?1",
+                params![query_id],
+            )
+            .map_err(|err| format!("failed to clear old web dependencies: {err}"))?;
+
+        for source in sources {
+            let source_id = hash_query_text(&source.url);
+
+            transaction
+                .execute(
+                    "INSERT INTO web_sources (id, url, content_sha256, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(id) DO UPDATE SET
+                         url = excluded.url,
+                         content_sha256 = excluded.content_sha256,
+                         fetched_at = excluded.fetched_at",
+                    params![
+                        source_id,
+                        source.url,
+                        source.content_sha256,
+                        source.fetched_at
+                    ],
+                )
+                .map_err(|err| format!("failed to store web source {}: {err}", source.url))?;
+
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO web_fetch_dependencies (report_id, source_id)
+                     VALUES (?1, ?2)",
+                    params![query_id, source_id],
+                )
+                .map_err(|err| format!("failed to link web dependency: {err}"))?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|err| format!("failed to commit web cache transaction: {err}"))?;
+
+        Ok(())
+    }
+
+    pub fn try_get_valid_web_report(
+        &self,
+        search_phrase: &str,
+        ttl_seconds: i64,
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        let query_embedding = self.embedding_engine.generate(search_phrase)?;
+        let Some(matched_query_id) = self.find_web_semantic_match(&query_embedding, threshold)?
+        else {
+            return Ok(None);
+        };
+
+        let (report_content, report_created_at) = match self.conn.query_row(
+            "SELECT content, created_at FROM web_reports WHERE id = ?1",
+            params![matched_query_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(RusqliteError::QueryReturnedNoRows) => return Ok(None),
+            Err(err) => {
+                return Err(format!("failed to load cached web report: {err}"));
+            }
+        };
+
+        let sources = self.load_web_source_urls(&matched_query_id)?;
+        if sources.is_empty() || sources.iter().any(|(_, url, _, _)| is_local_cache_url(url)) {
+            self.invalidate_web_report(&matched_query_id)?;
+            return Ok(None);
+        }
+
+        let now = current_unix_timestamp()?;
+        if now - report_created_at < ttl_seconds {
+            return Ok(Some(report_content));
+        }
+
+        for (_, url, stored_hash, _) in sources {
+            if validate_fetch_url(&url).is_err() || resolve_public_host(&url).is_err() {
+                self.invalidate_web_report(&matched_query_id)?;
+                return Ok(None);
+            }
+            match crate::tools::web_fetch::fetch_page_as_markdown(&url) {
+                Ok(page) if page.content_sha256 == stored_hash => {}
+                _ => {
+                    self.invalidate_web_report(&matched_query_id)?;
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(report_content))
+    }
+
     /// Persists an LLM-as-a-Judge evaluation for meta-learning and prompt optimization.
     pub fn store_evaluation(
         &mut self,
@@ -180,15 +316,49 @@ impl ProjectCacheManager {
         Ok(())
     }
 
+    pub fn clear_web_cache(&self) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM web_fetch_dependencies", [])
+            .map_err(|err| format!("failed to clear web dependencies: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_reports", [])
+            .map_err(|err| format!("failed to clear web reports: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_queries", [])
+            .map_err(|err| format!("failed to clear web queries: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_sources", [])
+            .map_err(|err| format!("failed to clear web sources: {err}"))?;
+        Ok(())
+    }
+
     pub fn project_root(&self) -> &Path {
         &self.project_root
     }
 
     fn find_semantic_match(&self, query_embedding: &[f32]) -> Result<Option<String>, String> {
+        self.best_embedding_match("queries", query_embedding, SEMANTIC_SIMILARITY_THRESHOLD)
+    }
+
+    fn find_web_semantic_match(
+        &self,
+        query_embedding: &[f32],
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        self.best_embedding_match("web_queries", query_embedding, threshold)
+    }
+
+    fn best_embedding_match(
+        &self,
+        table: &str,
+        query_embedding: &[f32],
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        let sql = format!("SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL");
         let mut statement = self
             .conn
-            .prepare("SELECT id, embedding FROM queries WHERE embedding IS NOT NULL")
-            .map_err(|err| format!("failed to prepare semantic query lookup: {err}"))?;
+            .prepare(&sql)
+            .map_err(|err| format!("failed to prepare semantic lookup on {table}: {err}"))?;
 
         let rows = statement
             .query_map([], |row| {
@@ -196,30 +366,25 @@ impl ProjectCacheManager {
                 let blob: Vec<u8> = row.get(1)?;
                 Ok((id, blob))
             })
-            .map_err(|err| format!("failed to query stored embeddings: {err}"))?;
+            .map_err(|err| format!("failed to query embeddings from {table}: {err}"))?;
 
         let mut best_match: Option<(String, f32)> = None;
-
         for row in rows {
             let (query_id, blob) =
-                row.map_err(|err| format!("failed to read stored embedding row: {err}"))?;
-
-            let Some(stored_embedding) = decode_embedding_blob(&blob) else {
+                row.map_err(|err| format!("failed to read embedding row from {table}: {err}"))?;
+            let Some(stored) = decode_embedding_blob(&blob) else {
                 continue;
             };
-
-            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored_embedding);
-
-            if similarity >= SEMANTIC_SIMILARITY_THRESHOLD
+            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored);
+            if similarity >= threshold
                 && best_match
                     .as_ref()
-                    .is_none_or(|(_, best_similarity)| similarity > *best_similarity)
+                    .is_none_or(|(_, best)| similarity > *best)
             {
                 best_match = Some((query_id, similarity));
             }
         }
-
-        Ok(best_match.map(|(query_id, _)| query_id))
+        Ok(best_match.map(|(id, _)| id))
     }
 
     fn load_insight_dependencies(&self, insight_id: &str) -> Result<Vec<CodeNodeSnapshot>, String> {
@@ -259,6 +424,57 @@ impl ProjectCacheManager {
 
         Ok(())
     }
+
+    fn load_web_source_urls(
+        &self,
+        report_id: &str,
+    ) -> Result<Vec<(String, String, String, i64)>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT s.id, s.url, s.content_sha256, s.fetched_at
+                 FROM web_sources s
+                 INNER JOIN web_fetch_dependencies dep ON dep.source_id = s.id
+                 WHERE dep.report_id = ?1",
+            )
+            .map_err(|err| format!("failed to prepare web source lookup: {err}"))?;
+
+        let rows = statement
+            .query_map(params![report_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|err| format!("failed to query web sources: {err}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read web source row: {err}"))
+    }
+
+    fn invalidate_web_report(&self, report_id: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM web_reports WHERE id = ?1", params![report_id])
+            .map_err(|err| format!("failed to delete stale web report: {err}"))?;
+        self.conn
+            .execute("DELETE FROM web_queries WHERE id = ?1", params![report_id])
+            .map_err(|err| format!("failed to delete stale web query: {err}"))?;
+        self.conn
+            .execute(
+                "DELETE FROM web_sources
+                 WHERE id NOT IN (SELECT source_id FROM web_fetch_dependencies)",
+                [],
+            )
+            .map_err(|err| format!("failed to delete orphaned web sources: {err}"))?;
+        Ok(())
+    }
+}
+
+fn is_local_cache_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.contains("127.0.0.1") || lower.contains("localhost")
 }
 
 fn decode_embedding_blob(blob: &[u8]) -> Option<&[f32]> {

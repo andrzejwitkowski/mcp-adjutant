@@ -13,8 +13,8 @@ use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cache::{
-    list_evaluations_page, load_cache_snapshot, mcp_workspace_root, open_cache_connection,
-    CacheSnapshot, EvaluationsPage, EVALUATIONS_PAGE_SIZE,
+    list_evaluations_page, load_scout_cache_page, load_web_cache_page, mcp_workspace_root,
+    open_cache_connection, EvaluationsPage, ScoutCachePage, WebCachePage, EVALUATIONS_PAGE_SIZE,
 };
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
@@ -33,7 +33,8 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
     let app = Router::new()
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/evaluations", get(get_evaluations))
-        .route("/api/cache", get(get_cache))
+        .route("/api/cache/scout", get(get_scout_cache))
+        .route("/api/cache/web", get(get_web_cache))
         .fallback_service(serve_dir)
         .with_state(state);
 
@@ -54,15 +55,21 @@ async fn get_config(State(state): State<ConfigServerState>) -> Json<AdjutantConf
 
 async fn put_config(
     State(state): State<ConfigServerState>,
-    Json(mut incoming): Json<AdjutantConfig>,
+    Json(mut value): Json<serde_json::Value>,
 ) -> Result<Json<AdjutantConfig>, AppError> {
+    crate::storage::migrate_config_value(&mut value);
+    let incoming: AdjutantConfig =
+        serde_json::from_value(value).map_err(AdjutantConfigError::from)?;
+
     let mut config = state.config.write().await;
-    for (phase, profile) in incoming.phases.drain() {
+    for (phase, profile) in incoming.phases {
         config.phases.insert(phase, profile);
     }
     config.server_port = incoming.server_port;
     config.storage_path = incoming.storage_path;
     config.triage_overrides = incoming.triage_overrides;
+    config.web_fetcher = incoming.web_fetcher;
+    config.merge_missing_from_defaults();
 
     config
         .save_to_file(&state.config_path)
@@ -95,12 +102,52 @@ fn default_evaluations_page() -> u32 {
     1
 }
 
-async fn get_cache(
+async fn get_scout_cache(
     State(_state): State<ConfigServerState>,
-) -> Result<Json<CacheSnapshot>, CacheApiError> {
+    Query(query): Query<CachePageQuery>,
+) -> Result<Json<ScoutCachePage>, CacheApiError> {
     let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
-    let snapshot = load_cache_snapshot(&conn, &project_root).map_err(CacheApiError::from)?;
-    Ok(Json(snapshot))
+    let page = load_scout_cache_page(&conn, &project_root, query.page, EVALUATIONS_PAGE_SIZE)
+        .map_err(CacheApiError::from)?;
+    Ok(Json(page))
+}
+
+async fn get_web_cache(
+    State(state): State<ConfigServerState>,
+    Query(query): Query<CachePageQuery>,
+) -> Result<Json<WebCachePage>, CacheApiError> {
+    let ttl_seconds = web_cache_ttl(&state).await;
+    let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
+    let page = load_web_cache_page(
+        &conn,
+        &project_root,
+        ttl_seconds,
+        query.page,
+        EVALUATIONS_PAGE_SIZE,
+    )
+    .map_err(CacheApiError::from)?;
+    Ok(Json(page))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CachePageQuery {
+    #[serde(default = "default_cache_page")]
+    page: u32,
+}
+
+fn default_cache_page() -> u32 {
+    1
+}
+
+async fn web_cache_ttl(state: &ConfigServerState) -> i64 {
+    state
+        .config
+        .read()
+        .await
+        .web_fetcher
+        .as_ref()
+        .map(|profile| profile.cache_ttl_seconds as i64)
+        .unwrap_or(604_800)
 }
 
 #[derive(Debug)]
@@ -115,7 +162,7 @@ impl From<AdjutantConfigError> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_REQUEST,
             format!("failed to save config: {}", self.0),
         )
             .into_response()

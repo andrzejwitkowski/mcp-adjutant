@@ -1,0 +1,21 @@
+{
+  "type": "search",
+  "query": {
+    "original": "tokio async runtime"
+  },
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "Tokio Async Runtime",
+        "url": "https://example.com/tokio/docs",
+        "description": "Official Tokio async runtime documentation covering spawn, channels, and timers."
+      },
+      {
+        "title": "Asynchronous Programming in Rust",
+        "url": "https://example.com/rust-async/book",
+        "description": "Guide to async Rust including executors and futures."
+      }
+    ]
+  }
+}

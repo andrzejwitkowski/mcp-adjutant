@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use mcp_adjutant::cache::mcp_workspace_root;
 use mcp_adjutant::tools::{
     detect_file_language, detect_project_languages, read_file_range, run_fd, run_ripgrep,
     AstUsageFinder, SourceLanguage,
@@ -21,6 +22,26 @@ fn read_file_range_rejects_start_after_end() {
     let err = read_file_range(&path, 4, 2).expect_err("invalid range should fail");
 
     assert!(err.contains("start"), "error should mention start: {err}");
+}
+
+#[test]
+fn run_ripgrep_from_target_cwd_uses_project_root() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let target_dir = manifest.join("target");
+    std::fs::create_dir_all(&target_dir).expect("create target dir");
+    let original = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(&target_dir).expect("chdir target");
+
+    let root = mcp_workspace_root();
+    let output = run_ripgrep("JobRegistry", &root).expect("ripgrep should succeed");
+
+    std::env::set_current_dir(original).expect("restore cwd");
+
+    assert_eq!(root, manifest);
+    assert!(
+        output.contains("JobRegistry"),
+        "expected matches under project root: {output}"
+    );
 }
 
 #[test]

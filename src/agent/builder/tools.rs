@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
+use crate::llm::{required_str, LlmTool, LlmToolSet, ToolDefinition};
 
 pub fn builder_tool_set() -> LlmToolSet {
     LlmToolSet::new()
@@ -187,14 +187,6 @@ pub fn extract_test_content(content: Option<&str>, arguments: &Value) -> Result<
         "write_test_suite requires test content in the assistant message or tool argument 'content'"
             .to_string(),
     )
-}
-
-fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
 }
 
 #[cfg(test)]

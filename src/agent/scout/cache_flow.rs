@@ -17,9 +17,9 @@ pub async fn run_scout_with_cache<C: LlmClient>(
     scout: &ScoutAgent<C>,
     query: &str,
     max_iterations: u32,
-    use_cache: bool,
+    read_cache: bool,
 ) -> Result<ScoutCacheOutcome, String> {
-    if use_cache {
+    if read_cache {
         if let Some(cached) = cache
             .lock()
             .map_err(|_| "cache manager lock poisoned".to_string())?
@@ -31,7 +31,7 @@ pub async fn run_scout_with_cache<C: LlmClient>(
 
     let result = AgentLoopOrchestrator::run(scout, query.to_string(), max_iterations).await?;
 
-    if use_cache && result.agent_completed && !result.touched_files.is_empty() {
+    if result.agent_completed && !result.touched_files.is_empty() {
         let files = dedupe_paths(result.touched_files);
         // ponytail: cache store is best-effort; scout report is returned even if SQLite write fails
         let _ = cache

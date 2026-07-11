@@ -211,6 +211,16 @@ pub struct ToolInvocationResult {
     pub is_terminal: bool,
 }
 
+/// Shared argument parser for `LlmTool::invoke` implementations: extracts a
+/// required string argument or errors with a clear message.
+pub fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

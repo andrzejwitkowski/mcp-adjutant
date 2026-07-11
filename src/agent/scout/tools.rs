@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::cache::{mcp_workspace_root, resolve_workspace_path};
-use crate::llm::{LlmTool, LlmToolSet, ToolDefinition};
+use crate::llm::{required_str, LlmTool, LlmToolSet, ToolDefinition};
 use crate::tools::{
     detect_file_language, detect_project_languages, read_file_range, run_ripgrep, AstUsageFinder,
 };
@@ -71,12 +71,7 @@ impl RipgrepTool {
                 "ripgrep",
                 "Broad text search: runs ripgrep with line context.",
             )
-            .string_param("pattern", "Search pattern passed to ripgrep.", true)
-            .string_param(
-                "root",
-                "Repository directory to search (defaults to the MCP project root).",
-                false,
-            ),
+            .string_param("pattern", "Search pattern passed to ripgrep.", true),
         }
     }
 }
@@ -200,14 +195,6 @@ impl LlmTool for FinalizeTool {
     fn is_terminal(&self) -> bool {
         true
     }
-}
-
-fn required_str(arguments: &Value, key: &str) -> Result<String, String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("tool argument '{key}' must be a string"))
 }
 
 fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
