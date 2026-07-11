@@ -39,17 +39,36 @@ pub struct PhaseProfile {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebFetcherProfile {
-    pub browsing: PhaseProfile,
+    #[serde(default = "default_max_search_hops")]
     pub max_search_hops: u32,
+    #[serde(default = "default_token_budget")]
     pub token_budget: u32,
+    #[serde(default = "default_cache_ttl_seconds")]
+    pub cache_ttl_seconds: u64,
+    #[serde(default = "default_web_cache_threshold")]
+    pub web_cache_threshold: f32,
+}
+
+fn default_max_search_hops() -> u32 {
+    3
+}
+fn default_token_budget() -> u32 {
+    8_000
+}
+fn default_cache_ttl_seconds() -> u64 {
+    604_800
+}
+fn default_web_cache_threshold() -> f32 {
+    0.78
 }
 
 impl Default for WebFetcherProfile {
     fn default() -> Self {
         Self {
-            browsing: phase_profile("deepseek-chat", 4_096, 0.2),
-            max_search_hops: 3,
-            token_budget: 8_000,
+            max_search_hops: default_max_search_hops(),
+            token_budget: default_token_budget(),
+            cache_ttl_seconds: default_cache_ttl_seconds(),
+            web_cache_threshold: default_web_cache_threshold(),
         }
     }
 }
@@ -242,7 +261,8 @@ mod tests {
             .expect("default config should include a WebFetcherProfile");
         assert_eq!(profile.max_search_hops, 3);
         assert_eq!(profile.token_budget, 8_000);
-        assert_eq!(profile.browsing.model_name, "deepseek-chat");
+        assert_eq!(profile.cache_ttl_seconds, 604_800);
+        assert!((profile.web_cache_threshold - 0.78).abs() < f32::EPSILON);
     }
 
     #[test]

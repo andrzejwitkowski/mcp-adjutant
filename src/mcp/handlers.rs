@@ -16,8 +16,8 @@ use crate::jobs::{
     request_uuid_schema_property, run_tracked_job, JobRegistry,
 };
 use crate::llm::{
-    create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
-    create_scout_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
+    create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
+    create_triage_llm_client, create_web_fetcher_llm_client,
 };
 use crate::tools::LlmBuildDiscoverer;
 
@@ -528,10 +528,9 @@ pub async fn handle_web_fetch(
             let web_profile = config.web_fetcher.clone().unwrap_or_default();
 
             let reasoning_client = create_web_fetcher_llm_client(&config)?;
-            let browsing_client = create_llm_client(web_profile.browsing.clone())?;
             let max_hops = web_profile.max_search_hops;
 
-            let agent = WebFetcherAgent::new(reasoning_client, browsing_client, web_profile);
+            let agent = WebFetcherAgent::new(reasoning_client, web_profile);
             let result =
                 AgentLoopOrchestrator::run(&agent, search_phrase.clone(), max_hops).await?;
 

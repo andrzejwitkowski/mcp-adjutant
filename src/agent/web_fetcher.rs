@@ -1,17 +1,18 @@
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use serde_json::Value;
 
 use super::orchestrator::run_single_tool_turn;
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::WebFetcherProfile;
-use crate::llm::{
-    required_str, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolSet, ToolDefinition,
-};
+use crate::llm::{required_str, LlmClient, LlmTool, LlmToolSet, ToolDefinition};
+use crate::tools::web_fetch::{search_and_fetch, FetchedPage};
 
 pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest, authoritative web content for a given topic. The topic can be anything the user asks about; adapt your search approach to the kind of information it requires.
 
 Available tools (call exactly one per turn):
-- search_web(query, focus?) — ask a browsing-capable model to search the live web for `query` and return grounded, cited markdown. Use `focus` to narrow (e.g. "official source", "recent news", "API reference", "primary source"). Non-terminal: results are added to your observation history.
+- search_web(query, focus?) — scrape DuckDuckGo for the query, fetch the top result pages, and return grounded markdown with inline source links. Use `focus` to narrow the search. Non-terminal: results are added to your observation history.
 - finalize(report) — end research and return your compacted markdown report.
 
 Strategy:
@@ -21,29 +22,35 @@ Strategy:
 
 Efficiency: prefer 1-2 well-targeted searches. Do not repeat the same query. Reply with a short Thought, then call exactly one tool."#;
 
-const BROWSING_SYSTEM_PROMPT: &str = r#"You are a web research assistant with live web access. Search the web for the user's query and return a concise, accurate markdown summary of the most authoritative and up-to-date sources for the topic. Include inline markdown links to the sources you cite. Do not invent URLs."#;
-
-/// Approximate chars-per-token ratio for the v1 character-budget truncation.
+const MAX_PAGES_PER_SEARCH: usize = 3;
 const CHARS_PER_TOKEN: usize = 4;
 
 pub struct WebFetcherAgent<RC: LlmClient> {
     reasoning_client: RC,
     tools: LlmToolSet,
+    source_collector: Arc<Mutex<Vec<FetchedPage>>>,
 }
 
 impl<RC: LlmClient> WebFetcherAgent<RC> {
-    /// Build the agent with a reasoning client (drives the loop) and a browsing
-    /// client (used inside the `search_web` tool to reach the live web).
-    pub fn new<BC: LlmClient + 'static>(
-        reasoning_client: RC,
-        browsing_client: BC,
-        profile: WebFetcherProfile,
-    ) -> Self {
-        let tools = web_fetcher_tool_set(browsing_client, profile.token_budget);
+    /// Build the agent with a reasoning client that drives the loop.
+    /// `search_web` scrapes the web directly (no browsing model needed).
+    pub fn new(reasoning_client: RC, profile: WebFetcherProfile) -> Self {
+        let token_budget = profile.token_budget;
+        let source_collector = Arc::new(Mutex::new(Vec::new()));
+        let tools = web_fetcher_tool_set(token_budget, Arc::clone(&source_collector));
         Self {
             reasoning_client,
             tools,
+            source_collector,
         }
+    }
+
+    /// Drain the collected source pages (called by the cache flow after the loop).
+    pub fn take_sources(&self) -> Vec<FetchedPage> {
+        self.source_collector
+            .lock()
+            .map(|mut guard| std::mem::take(&mut *guard))
+            .unwrap_or_default()
     }
 }
 
@@ -79,31 +86,29 @@ impl<RC: LlmClient> AutonomousAgent for WebFetcherAgent<RC> {
     }
 }
 
-/// Build the web-fetcher tool set. The browsing client is moved into the
-/// `search_web` tool so it can reach the live web on each invocation.
-/// `token_budget` configures the `finalize` truncation.
-fn web_fetcher_tool_set<BC: LlmClient + 'static>(
-    browsing_client: BC,
+fn web_fetcher_tool_set(
     token_budget: u32,
+    source_collector: Arc<Mutex<Vec<FetchedPage>>>,
 ) -> LlmToolSet {
     LlmToolSet::new()
-        .register(SearchWebTool::new(browsing_client))
+        .register(SearchWebTool::new(source_collector))
         .register(FinalizeWebTool::with_budget(token_budget))
 }
 
-/// `search_web(query, focus?)`: calls the browsing model and returns grounded markdown.
-struct SearchWebTool<BC: LlmClient> {
-    browsing_client: BC,
+/// `search_web(query, focus?)`: scrapes DDG + fetches top pages.
+/// Appends fetched pages to the shared source collector for caching.
+struct SearchWebTool {
+    source_collector: Arc<Mutex<Vec<FetchedPage>>>,
     definition: ToolDefinition,
 }
 
-impl<BC: LlmClient> SearchWebTool<BC> {
-    fn new(browsing_client: BC) -> Self {
+impl SearchWebTool {
+    fn new(source_collector: Arc<Mutex<Vec<FetchedPage>>>) -> Self {
         Self {
-            browsing_client,
+            source_collector,
             definition: ToolDefinition::new(
                 "search_web",
-                "Search the live web via a browsing model and return grounded, cited markdown.",
+                "Search the live web via DuckDuckGo and return grounded, cited markdown.",
             )
             .string_param("query", "Web search query.", true)
             .string_param(
@@ -115,7 +120,7 @@ impl<BC: LlmClient> SearchWebTool<BC> {
     }
 }
 
-impl<BC: LlmClient> LlmTool for SearchWebTool<BC> {
+impl LlmTool for SearchWebTool {
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
@@ -126,18 +131,18 @@ impl<BC: LlmClient> LlmTool for SearchWebTool<BC> {
             .get("focus")
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty());
-        let user_message = match focus {
-            Some(focus) => format!("Query: {query}\nFocus: {focus}"),
-            None => format!("Query: {query}"),
+        let full_query = match focus {
+            Some(focus) => format!("{query} {focus}"),
+            None => query.clone(),
         };
 
-        let empty_tools = LlmToolSet::new();
-        let request = LlmRequest::new(BROWSING_SYSTEM_PROMPT, &user_message, &empty_tools);
-        let turn: LlmModelTurn = self.browsing_client.complete(request)?;
+        let (markdown, pages) = search_and_fetch(&full_query, MAX_PAGES_PER_SEARCH)?;
 
-        turn.content
-            .filter(|content| !content.trim().is_empty())
-            .ok_or_else(|| "browsing model returned no content".to_string())
+        if let Ok(mut guard) = self.source_collector.lock() {
+            guard.extend(pages);
+        }
+
+        Ok(markdown)
     }
 }
 
@@ -175,9 +180,6 @@ impl LlmTool for FinalizeWebTool {
     }
 }
 
-/// Truncates `report` to an approximate character budget derived from
-/// `token_budget` (token_budget * CHARS_PER_TOKEN). When truncated, appends a
-/// visible `[truncated]` note. Reuses the TextPrunerMock prune idiom (char-based).
 fn truncate_to_token_budget(report: &str, token_budget: u32) -> String {
     let char_budget = (token_budget as usize)
         .saturating_mul(CHARS_PER_TOKEN)
@@ -209,16 +211,8 @@ mod tests {
 
     #[test]
     fn web_fetcher_tool_set_registers_both_tools() {
-        struct NoopBrowsing;
-        impl LlmClient for NoopBrowsing {
-            fn complete(&self, _request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
-                Ok(LlmModelTurn {
-                    content: Some("noop".to_string()),
-                    tool_calls: vec![],
-                })
-            }
-        }
-        let tools = web_fetcher_tool_set(NoopBrowsing, 8_000);
+        let collector = Arc::new(Mutex::new(Vec::new()));
+        let tools = web_fetcher_tool_set(8_000, collector);
         let names: Vec<_> = tools
             .definitions()
             .into_iter()
