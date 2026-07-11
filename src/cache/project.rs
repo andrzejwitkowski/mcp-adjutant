@@ -42,6 +42,29 @@ const MIGRATIONS: &[&str] = &[
         feedback_notes TEXT NOT NULL,
         created_at INTEGER NOT NULL
     );",
+    "CREATE TABLE IF NOT EXISTS web_queries (
+        id TEXT PRIMARY KEY,
+        raw_text TEXT NOT NULL,
+        embedding BLOB
+    );",
+    "CREATE TABLE IF NOT EXISTS web_reports (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    );",
+    "CREATE TABLE IF NOT EXISTS web_sources (
+        id TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+    );",
+    "CREATE TABLE IF NOT EXISTS web_fetch_dependencies (
+        report_id TEXT,
+        source_id TEXT,
+        PRIMARY KEY (report_id, source_id),
+        FOREIGN KEY(report_id) REFERENCES web_reports(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_id) REFERENCES web_sources(id) ON DELETE CASCADE
+    );",
 ];
 
 /// MCP workspace root: env override, then process cwd, then compile-time repo root.
