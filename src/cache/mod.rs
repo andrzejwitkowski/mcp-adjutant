@@ -7,7 +7,8 @@ pub mod project;
 pub use embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 pub use inspect::{
     list_evaluations, list_evaluations_page, load_cache_snapshot, AgentEvaluationRow,
-    CacheSnapshot, EvaluationsPage, EVALUATIONS_PAGE_SIZE,
+    CacheSnapshot, EvaluationsPage, WebFetchDependencyRow, WebQueryRow, WebReportRow, WebSourceRow,
+    EVALUATIONS_PAGE_SIZE,
 };
 pub use manager::{
     ProjectCacheManager, WebSourceSnapshot, SEMANTIC_SIMILARITY_THRESHOLD, WEB_CACHE_THRESHOLD,

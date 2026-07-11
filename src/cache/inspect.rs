@@ -4,6 +4,7 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 
 use super::file_state::{is_code_node_dirty, CodeNodeSnapshot};
+use super::project::current_unix_timestamp;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentEvaluationRow {
@@ -37,6 +38,10 @@ pub struct CacheOverview {
     pub embedding_count: usize,
     pub dependency_count: usize,
     pub evaluation_count: usize,
+    pub web_query_count: usize,
+    pub web_report_count: usize,
+    pub web_source_count: usize,
+    pub web_dependency_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,12 +75,46 @@ pub struct InsightDependencyRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct WebQueryRow {
+    pub id: String,
+    pub raw_text: String,
+    pub has_embedding: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WebReportRow {
+    pub id: String,
+    pub query_text: Option<String>,
+    pub content: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WebSourceRow {
+    pub id: String,
+    pub url: String,
+    pub content_sha256: String,
+    pub fetched_at: i64,
+    pub is_stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WebFetchDependencyRow {
+    pub report_id: String,
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CacheSnapshot {
     pub overview: CacheOverview,
     pub queries: Vec<CachedQueryRow>,
     pub insights: Vec<CachedInsightRow>,
     pub code_nodes: Vec<CodeNodeRow>,
     pub dependencies: Vec<InsightDependencyRow>,
+    pub web_queries: Vec<WebQueryRow>,
+    pub web_reports: Vec<WebReportRow>,
+    pub web_sources: Vec<WebSourceRow>,
+    pub web_dependencies: Vec<WebFetchDependencyRow>,
 }
 
 pub fn list_evaluations(conn: &Connection) -> Result<Vec<AgentEvaluationRow>, String> {
@@ -167,11 +206,16 @@ fn map_evaluation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEvaluati
 pub fn load_cache_snapshot(
     conn: &Connection,
     project_root: &Path,
+    ttl_seconds: i64,
 ) -> Result<CacheSnapshot, String> {
     let queries = list_queries(conn)?;
     let insights = list_insights(conn)?;
     let code_nodes = list_code_nodes(conn, project_root)?;
     let dependencies = list_dependencies(conn)?;
+    let web_queries = list_web_queries(conn)?;
+    let web_reports = list_web_reports(conn)?;
+    let web_sources = list_web_sources(conn, ttl_seconds)?;
+    let web_dependencies = list_web_dependencies(conn)?;
 
     let overview = CacheOverview {
         project_root: project_root.display().to_string(),
@@ -181,6 +225,10 @@ pub fn load_cache_snapshot(
         embedding_count: queries.iter().filter(|q| q.has_embedding).count(),
         dependency_count: dependencies.len(),
         evaluation_count: count_rows(conn, "agent_evaluations")?,
+        web_query_count: web_queries.len(),
+        web_report_count: web_reports.len(),
+        web_source_count: web_sources.len(),
+        web_dependency_count: web_dependencies.len(),
     };
 
     Ok(CacheSnapshot {
@@ -189,6 +237,10 @@ pub fn load_cache_snapshot(
         insights,
         code_nodes,
         dependencies,
+        web_queries,
+        web_reports,
+        web_sources,
+        web_dependencies,
     })
 }
 
@@ -296,6 +348,87 @@ fn list_dependencies(conn: &Connection) -> Result<Vec<InsightDependencyRow>, Str
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to read dependency row: {err}"))
+}
+
+fn list_web_queries(conn: &Connection) -> Result<Vec<WebQueryRow>, String> {
+    let mut statement = conn
+        .prepare("SELECT id, raw_text, embedding FROM web_queries ORDER BY id")
+        .map_err(|err| format!("failed to prepare web_queries query: {err}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            let embedding: Option<Vec<u8>> = row.get(2)?;
+            Ok(WebQueryRow {
+                id: row.get(0)?,
+                raw_text: row.get(1)?,
+                has_embedding: embedding.is_some_and(|blob| !blob.is_empty()),
+            })
+        })
+        .map_err(|err| format!("failed to query web_queries: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read web_query row: {err}"))
+}
+
+fn list_web_reports(conn: &Connection) -> Result<Vec<WebReportRow>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT r.id, q.raw_text, r.content, r.created_at
+             FROM web_reports r
+             LEFT JOIN web_queries q ON q.id = r.id
+             ORDER BY r.created_at DESC",
+        )
+        .map_err(|err| format!("failed to prepare web_reports query: {err}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(WebReportRow {
+                id: row.get(0)?,
+                query_text: row.get(1)?,
+                content: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })
+        .map_err(|err| format!("failed to query web_reports: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read web_report row: {err}"))
+}
+
+fn list_web_sources(conn: &Connection, ttl_seconds: i64) -> Result<Vec<WebSourceRow>, String> {
+    let now = current_unix_timestamp()?;
+    let mut statement = conn
+        .prepare("SELECT id, url, content_sha256, fetched_at FROM web_sources ORDER BY url")
+        .map_err(|err| format!("failed to prepare web_sources query: {err}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            let fetched_at: i64 = row.get(3)?;
+            let is_stale = now - fetched_at > ttl_seconds;
+            Ok(WebSourceRow {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                content_sha256: row.get(2)?,
+                fetched_at,
+                is_stale,
+            })
+        })
+        .map_err(|err| format!("failed to query web_sources: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read web_source row: {err}"))
+}
+
+fn list_web_dependencies(conn: &Connection) -> Result<Vec<WebFetchDependencyRow>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT report_id, source_id FROM web_fetch_dependencies ORDER BY report_id, source_id",
+        )
+        .map_err(|err| format!("failed to prepare web_dependencies query: {err}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(WebFetchDependencyRow {
+                report_id: row.get(0)?,
+                source_id: row.get(1)?,
+            })
+        })
+        .map_err(|err| format!("failed to query web_dependencies: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read web_dependency row: {err}"))
 }
 
 fn count_rows(conn: &Connection, table: &str) -> Result<usize, String> {

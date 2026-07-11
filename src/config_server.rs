@@ -99,7 +99,7 @@ async fn get_cache(
     State(_state): State<ConfigServerState>,
 ) -> Result<Json<CacheSnapshot>, CacheApiError> {
     let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
-    let snapshot = load_cache_snapshot(&conn, &project_root).map_err(CacheApiError::from)?;
+    let snapshot = load_cache_snapshot(&conn, &project_root, 604_800).map_err(CacheApiError::from)?;
     Ok(Json(snapshot))
 }
 
