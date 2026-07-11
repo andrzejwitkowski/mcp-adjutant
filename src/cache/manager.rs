@@ -13,6 +13,18 @@ use super::project::{
 /// ponytail: bge-small-en-v1.5 scores ~0.826 for the task's JWT paraphrase pair; 0.91 is aspirational.
 pub const SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.82;
 
+/// Minimum cosine similarity for a web cache hit.
+/// Web-search paraphrases cluster lower than code-research paraphrases.
+pub const WEB_CACHE_THRESHOLD: f32 = 0.78;
+
+/// A fetched web source snapshot, produced by the scrape tool, stored as a dependency.
+#[derive(Debug, Clone)]
+pub struct WebSourceSnapshot {
+    pub url: String,
+    pub content_sha256: String,
+    pub fetched_at: i64,
+}
+
 pub struct ProjectCacheManager {
     conn: Connection,
     project_root: PathBuf,
@@ -142,6 +154,128 @@ impl ProjectCacheManager {
         Ok(())
     }
 
+    /// Stores a web report: embeds the search phrase, inserts the report,
+    /// snapshots each source URL, and links them as dependencies.
+    pub fn store_web_report(
+        &mut self,
+        search_phrase: &str,
+        report_content: &str,
+        sources: Vec<WebSourceSnapshot>,
+    ) -> Result<(), String> {
+        let query_id = hash_query_text(search_phrase);
+        let created_at = current_unix_timestamp()?;
+        let embedding = self.embedding_engine.generate(search_phrase)?;
+        let embedding_blob = bytemuck::cast_slice::<f32, u8>(&embedding).to_vec();
+
+        let transaction = self
+            .conn
+            .transaction()
+            .map_err(|err| format!("failed to start web cache transaction: {err}"))?;
+
+        transaction
+            .execute(
+                "INSERT INTO web_queries (id, raw_text, embedding) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET raw_text = excluded.raw_text, embedding = excluded.embedding",
+                params![query_id, search_phrase, embedding_blob],
+            )
+            .map_err(|err| format!("failed to store web query: {err}"))?;
+
+        transaction
+            .execute(
+                "INSERT INTO web_reports (id, content, created_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET content = excluded.content, created_at = excluded.created_at",
+                params![query_id, report_content, created_at],
+            )
+            .map_err(|err| format!("failed to store web report: {err}"))?;
+
+        transaction
+            .execute(
+                "DELETE FROM web_fetch_dependencies WHERE report_id = ?1",
+                params![query_id],
+            )
+            .map_err(|err| format!("failed to clear old web dependencies: {err}"))?;
+
+        for source in sources {
+            let source_id = hash_query_text(&source.url);
+
+            transaction
+                .execute(
+                    "INSERT INTO web_sources (id, url, content_sha256, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(id) DO UPDATE SET
+                         url = excluded.url,
+                         content_sha256 = excluded.content_sha256,
+                         fetched_at = excluded.fetched_at",
+                    params![source_id, source.url, source.content_sha256, source.fetched_at],
+                )
+                .map_err(|err| format!("failed to store web source {}: {err}", source.url))?;
+
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO web_fetch_dependencies (report_id, source_id)
+                     VALUES (?1, ?2)",
+                    params![query_id, source_id],
+                )
+                .map_err(|err| format!("failed to link web dependency: {err}"))?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|err| format!("failed to commit web cache transaction: {err}"))?;
+
+        Ok(())
+    }
+
+    /// Returns a cached web report when a semantically similar search phrase
+    /// exists and every linked source is valid (within TTL or content unchanged).
+    /// `ttl_seconds` is the trust window; sources older than TTL are re-fetched
+    /// and their content hash compared. One changed source invalidates the report.
+    pub fn try_get_valid_web_report(
+        &self,
+        search_phrase: &str,
+        ttl_seconds: i64,
+    ) -> Result<Option<String>, String> {
+        let query_embedding = self.embedding_engine.generate(search_phrase)?;
+        let matched_query_id = match self.find_web_semantic_match(&query_embedding)? {
+            Some(query_id) => query_id,
+            None => return Ok(None),
+        };
+
+        let report_content = match self.conn.query_row(
+            "SELECT content FROM web_reports WHERE id = ?1",
+            params![matched_query_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(content) => content,
+            Err(RusqliteError::QueryReturnedNoRows) => return Ok(None),
+            Err(err) => {
+                return Err(format!("failed to load cached web report: {err}"));
+            }
+        };
+
+        let sources = self.load_web_source_urls(&matched_query_id)?;
+        let now = current_unix_timestamp()?;
+
+        for (source_id, url, stored_hash, fetched_at) in sources {
+            let _ = source_id;
+            let age = now - fetched_at;
+            if age < ttl_seconds {
+                continue; // trust window: fresh enough
+            }
+            // Past TTL: re-fetch and compare content hash.
+            match crate::tools::web_fetch::fetch_page_as_markdown(&url) {
+                Ok(page) if page.content_sha256 == stored_hash => continue, // unchanged
+                _ => {
+                    // Changed or unreachable: invalidate.
+                    self.invalidate_web_report(&matched_query_id)?;
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(report_content))
+    }
+
     /// Persists an LLM-as-a-Judge evaluation for meta-learning and prompt optimization.
     pub fn store_evaluation(
         &mut self,
@@ -257,6 +391,84 @@ impl ProjectCacheManager {
             .execute("DELETE FROM queries WHERE id = ?1", params![insight_id])
             .map_err(|err| format!("failed to delete stale query: {err}"))?;
 
+        Ok(())
+    }
+
+    fn find_web_semantic_match(&self, query_embedding: &[f32]) -> Result<Option<String>, String> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT id, embedding FROM web_queries WHERE embedding IS NOT NULL")
+            .map_err(|err| format!("failed to prepare web semantic lookup: {err}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                Ok((id, blob))
+            })
+            .map_err(|err| format!("failed to query web embeddings: {err}"))?;
+
+        let mut best_match: Option<(String, f32)> = None;
+        for row in rows {
+            let (query_id, blob) =
+                row.map_err(|err| format!("failed to read web embedding row: {err}"))?;
+            let Some(stored) = decode_embedding_blob(&blob) else {
+                continue;
+            };
+            let similarity = LocalEmbeddingEngine::dot_product(query_embedding, stored);
+            if similarity >= WEB_CACHE_THRESHOLD
+                && best_match
+                    .as_ref()
+                    .is_none_or(|(_, best)| similarity > *best)
+            {
+                best_match = Some((query_id, similarity));
+            }
+        }
+        Ok(best_match.map(|(id, _)| id))
+    }
+
+    fn load_web_source_urls(
+        &self,
+        report_id: &str,
+    ) -> Result<Vec<(String, String, String, i64)>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT s.id, s.url, s.content_sha256, s.fetched_at
+                 FROM web_sources s
+                 INNER JOIN web_fetch_dependencies dep ON dep.source_id = s.id
+                 WHERE dep.report_id = ?1",
+            )
+            .map_err(|err| format!("failed to prepare web source lookup: {err}"))?;
+
+        let rows = statement
+            .query_map(params![report_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|err| format!("failed to query web sources: {err}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read web source row: {err}"))
+    }
+
+    fn invalidate_web_report(&self, report_id: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "DELETE FROM web_reports WHERE id = ?1",
+                params![report_id],
+            )
+            .map_err(|err| format!("failed to delete stale web report: {err}"))?;
+        self.conn
+            .execute(
+                "DELETE FROM web_queries WHERE id = ?1",
+                params![report_id],
+            )
+            .map_err(|err| format!("failed to delete stale web query: {err}"))?;
         Ok(())
     }
 }
