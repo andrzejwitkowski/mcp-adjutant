@@ -4,6 +4,7 @@ mod cmd;
 mod compiler;
 mod env_detector;
 mod lang;
+pub mod web_fetch;
 
 pub use ast::AstUsageFinder;
 pub use build_discovery::{
