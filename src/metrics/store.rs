@@ -162,14 +162,19 @@ impl MetricsStore {
         Ok(())
     }
 
-    pub fn record_agent_run(&self, mcp_tool: &str) -> Result<(), String> {
+    pub fn record_agent_run(
+        &self,
+        mcp_tool: &str,
+        request_uuid: Option<String>,
+    ) -> Result<(), String> {
         let Some(phase) = mcp_tool_to_phase(mcp_tool) else {
             return Ok(());
         };
         let created_at = current_unix_timestamp()?;
         let utc_date = utc_date_from_secs(created_at);
-        let job = current_job_context();
-        let request_uuid = job.and_then(|ctx| ctx.request_uuid);
+        let request_uuid = request_uuid.or_else(|| {
+            current_job_context().and_then(|ctx| ctx.request_uuid)
+        });
 
         self.conn
             .execute(
@@ -215,14 +220,14 @@ pub fn record_cache_hit(phase: AgentPhase) {
     }
 }
 
-pub fn record_agent_run(mcp_tool: &str) {
+pub fn record_agent_run(mcp_tool: &str, request_uuid: Option<String>) {
     let Some(store) = metrics_store() else {
         return;
     };
     let Ok(guard) = store.lock() else {
         return;
     };
-    if let Err(err) = guard.record_agent_run(mcp_tool) {
+    if let Err(err) = guard.record_agent_run(mcp_tool, request_uuid) {
         tracing::warn!("metrics agent run not recorded: {err}");
     }
 }
@@ -307,7 +312,7 @@ mod tests {
                 store
                     .lock()
                     .expect("lock")
-                    .record_agent_run("verify_and_triage")
+                    .record_agent_run("verify_and_triage", Some("req-1".to_string()))
                     .expect("run");
             },
         )

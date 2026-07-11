@@ -265,11 +265,11 @@ pub async fn run_tracked_job<F, Fut>(
 
     match join_result {
         Ok(Ok(result)) => {
-            crate::metrics::record_agent_run(&tool_name);
+            crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.complete(&request_uuid, result)
         }
         Ok(Err(error)) => {
-            crate::metrics::record_agent_run(&tool_name);
+            crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.fail(&request_uuid, error)
         }
         Err(join_error) if join_error.is_panic() => {

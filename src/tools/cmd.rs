@@ -33,7 +33,11 @@ pub fn run_ripgrep(pattern: &str, root: &Path) -> Result<String, String> {
     }
 
     if stdout.len() > MAX_OUTPUT_BYTES {
-        Ok(format!("{}\n...(truncated)", &stdout[..MAX_OUTPUT_BYTES]))
+        let mut end = MAX_OUTPUT_BYTES.min(stdout.len());
+        while end > 0 && !stdout.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(format!("{}\n...(truncated)", &stdout[..end]))
     } else {
         Ok(stdout)
     }

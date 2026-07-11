@@ -113,7 +113,7 @@ pub fn run_single_tool_turn<C: LlmClient>(
             tool_call.name, tool_call.arguments
         );
         context.accumulated_data.push_str(&step);
-        return Ok(Some((tool_call.name.clone(), tool_call.arguments.clone())));
+        return Ok(None);
     }
     context.last_tool_call = Some(call_key);
 

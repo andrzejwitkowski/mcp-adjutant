@@ -21,15 +21,11 @@ impl LlmClient for InstrumentedLlmClient {
     }
 }
 
-pub enum ConfiguredLlmClient {
-    OpenAiCompatible(Box<InstrumentedLlmClient>),
-}
+pub struct ConfiguredLlmClient(Box<InstrumentedLlmClient>);
 
 impl LlmClient for ConfiguredLlmClient {
     fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
-        match self {
-            Self::OpenAiCompatible(client) => client.complete(request),
-        }
+        self.0.complete(request)
     }
 }
 
@@ -40,13 +36,11 @@ pub fn create_llm_client(
     match profile.provider {
         Provider::DeepSeek | Provider::OpenRouter | Provider::OpenAI | Provider::Custom => {
             let model_name = profile.model_name.clone();
-            Ok(ConfiguredLlmClient::OpenAiCompatible(Box::new(
-                InstrumentedLlmClient {
-                    inner: DeepSeekClient::new(profile),
-                    phase,
-                    model_name,
-                },
-            )))
+            Ok(ConfiguredLlmClient(Box::new(InstrumentedLlmClient {
+                inner: DeepSeekClient::new(profile),
+                phase,
+                model_name,
+            })))
         }
     }
 }
@@ -90,7 +84,6 @@ pub fn create_web_fetcher_llm_client(
 mod tests {
     use super::*;
     use crate::domain::Provider;
-    use crate::llm::{LlmClient, LlmRequest};
     use std::collections::HashMap;
 
     #[test]
@@ -98,8 +91,7 @@ mod tests {
         let config = AdjutantConfig::default();
         let profile = config.get_profile(&AgentPhase::Triage);
 
-        let client = create_triage_llm_client(&config).expect("triage client");
-        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+        create_triage_llm_client(&config).expect("triage client");
         assert_eq!(profile.provider, Provider::DeepSeek);
         assert_eq!(profile.model_name, "deepseek-coder");
     }
@@ -109,8 +101,7 @@ mod tests {
         let config = AdjutantConfig::default();
         let profile = config.get_profile(&AgentPhase::Scout);
 
-        let client = create_scout_llm_client(&config).expect("scout client");
-        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+        create_scout_llm_client(&config).expect("scout client");
         assert_eq!(profile.provider, Provider::DeepSeek);
         assert_eq!(profile.model_name, "deepseek-chat");
     }
@@ -154,8 +145,7 @@ mod tests {
     fn create_web_fetcher_llm_client_uses_web_fetcher_phase_profile() {
         let config = AdjutantConfig::default();
 
-        let client = create_web_fetcher_llm_client(&config).expect("web fetcher client");
-        assert!(matches!(client, ConfiguredLlmClient::OpenAiCompatible(_)));
+        create_web_fetcher_llm_client(&config).expect("web fetcher client");
 
         let profile = config.get_profile(&AgentPhase::WebFetcher);
         assert_eq!(profile.model_name, "deepseek-chat");

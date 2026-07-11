@@ -14,19 +14,9 @@ pub struct LlmToolCall {
     pub arguments: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LlmModelTurn {
     pub content: Option<String>,
     pub tool_calls: Vec<LlmToolCall>,
     pub usage: Option<LlmUsage>,
-}
-
-impl Default for LlmModelTurn {
-    fn default() -> Self {
-        Self {
-            content: None,
-            tool_calls: vec![],
-            usage: None,
-        }
-    }
 }
