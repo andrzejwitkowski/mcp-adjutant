@@ -23,4 +23,6 @@ pub use traits::{AgentContext, AutonomousAgent};
 pub use triage::{
     triage_tool_set, BuildCommandRunner, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
-pub use web_fetcher::{WebFetcherAgent, WEB_FETCHER_SYSTEM_PROMPT};
+pub use web_fetcher::{
+    run_web_fetch_with_cache, WebCacheOutcome, WebFetcherAgent, WEB_FETCHER_SYSTEM_PROMPT,
+};

@@ -1,3 +1,5 @@
+pub mod cache_flow;
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -8,6 +10,8 @@ use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::WebFetcherProfile;
 use crate::llm::{required_str, LlmClient, LlmTool, LlmToolSet, ToolDefinition};
 use crate::tools::web_fetch::{search_and_fetch, FetchedPage};
+
+pub use cache_flow::{run_web_fetch_with_cache, WebCacheOutcome};
 
 pub const WEB_FETCHER_SYSTEM_PROMPT: &str = r#"You are an autonomous web research agent (WEB_FETCHER). Your goal is to produce a compacted, accurate markdown document of the latest, authoritative web content for a given topic. The topic can be anything the user asks about; adapt your search approach to the kind of information it requires.
 

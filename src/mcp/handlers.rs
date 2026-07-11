@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, run_scout_with_cache, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent,
-    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebFetcherAgent, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, run_scout_with_cache, run_web_fetch_with_cache, AgentLoopOrchestrator,
+    EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebCacheOutcome,
+    WebFetcherAgent, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -526,21 +527,26 @@ pub async fn handle_web_fetch(
         WEB_FETCH_TOOL_NAME,
         move || async move {
             let web_profile = config.web_fetcher.clone().unwrap_or_default();
-
+            let cache_manager =
+                Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
             let reasoning_client = create_web_fetcher_llm_client(&config)?;
             let max_hops = web_profile.max_search_hops;
+            let ttl = web_profile.cache_ttl_seconds as i64;
 
             let agent = WebFetcherAgent::new(reasoning_client, web_profile);
-            let result =
-                AgentLoopOrchestrator::run(&agent, search_phrase.clone(), max_hops).await?;
-
-            if result.is_finished {
-                return Ok(result.accumulated_data);
+            match run_web_fetch_with_cache(
+                &cache_manager,
+                &agent,
+                &search_phrase,
+                max_hops,
+                ttl,
+                true,
+            )
+            .await?
+            {
+                WebCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
+                WebCacheOutcome::Fresh(report) => Ok(report),
             }
-            Ok(format!(
-                "Web fetch report (finished={}, iterations={}):\n{}",
-                result.is_finished, result.iterations, result.accumulated_data
-            ))
         },
     )
     .await
