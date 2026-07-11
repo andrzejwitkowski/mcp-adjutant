@@ -8,8 +8,6 @@ use super::file_state::{capture_code_node_snapshot, is_code_node_dirty, CodeNode
 use super::project::{
     current_unix_timestamp, hash_query_text, normalize_relative_path, prepare_project_cache,
 };
-use crate::tools::web_fetch::{resolve_public_host, validate_fetch_url};
-
 /// Minimum cosine similarity for a semantic cache hit (L2-normalized dot product).
 /// ponytail: bge-small-en-v1.5 scores ~0.826 for the task's JWT paraphrase pair; 0.91 is aspirational.
 pub const SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.82;
@@ -20,6 +18,20 @@ pub struct WebSourceSnapshot {
     pub url: String,
     pub content_sha256: String,
     pub fetched_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebReportRevalidation {
+    pub query_id: String,
+    pub report_content: String,
+    pub sources: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WebReportCacheLookup {
+    Fresh(String),
+    Stale(WebReportRevalidation),
+    Miss,
 }
 
 pub struct ProjectCacheManager {
@@ -226,16 +238,16 @@ impl ProjectCacheManager {
         Ok(())
     }
 
-    pub fn try_get_valid_web_report(
+    pub fn lookup_web_report_cache(
         &self,
         search_phrase: &str,
         ttl_seconds: i64,
         threshold: f32,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<WebReportCacheLookup, String> {
         let query_embedding = self.embedding_engine.generate(search_phrase)?;
         let Some(matched_query_id) = self.find_web_semantic_match(&query_embedding, threshold)?
         else {
-            return Ok(None);
+            return Ok(WebReportCacheLookup::Miss);
         };
 
         let (report_content, report_created_at) = match self.conn.query_row(
@@ -244,7 +256,7 @@ impl ProjectCacheManager {
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         ) {
             Ok(row) => row,
-            Err(RusqliteError::QueryReturnedNoRows) => return Ok(None),
+            Err(RusqliteError::QueryReturnedNoRows) => return Ok(WebReportCacheLookup::Miss),
             Err(err) => {
                 return Err(format!("failed to load cached web report: {err}"));
             }
@@ -253,29 +265,51 @@ impl ProjectCacheManager {
         let sources = self.load_web_source_urls(&matched_query_id)?;
         if sources.is_empty() || sources.iter().any(|(_, url, _, _)| is_local_cache_url(url)) {
             self.invalidate_web_report(&matched_query_id)?;
-            return Ok(None);
+            return Ok(WebReportCacheLookup::Miss);
         }
 
         let now = current_unix_timestamp()?;
         if now - report_created_at < ttl_seconds {
-            return Ok(Some(report_content));
+            return Ok(WebReportCacheLookup::Fresh(report_content));
         }
 
-        for (_, url, stored_hash, _) in sources {
-            if validate_fetch_url(&url).is_err() || resolve_public_host(&url).is_err() {
-                self.invalidate_web_report(&matched_query_id)?;
-                return Ok(None);
-            }
-            match crate::tools::web_fetch::fetch_page_as_markdown(&url) {
-                Ok(page) if page.content_sha256 == stored_hash => {}
-                _ => {
-                    self.invalidate_web_report(&matched_query_id)?;
-                    return Ok(None);
-                }
-            }
-        }
+        Ok(WebReportCacheLookup::Stale(WebReportRevalidation {
+            query_id: matched_query_id,
+            report_content,
+            sources: sources
+                .into_iter()
+                .map(|(_, url, hash, _)| (url, hash))
+                .collect(),
+        }))
+    }
 
-        Ok(Some(report_content))
+    pub fn revalidate_stale_web_report(
+        &self,
+        pending: WebReportRevalidation,
+    ) -> Result<Option<String>, String> {
+        if crate::tools::web_fetch::web_sources_still_valid(&pending.sources) {
+            Ok(Some(pending.report_content))
+        } else {
+            self.invalidate_stale_web_report(&pending.query_id)?;
+            Ok(None)
+        }
+    }
+
+    pub fn invalidate_stale_web_report(&self, query_id: &str) -> Result<(), String> {
+        self.invalidate_web_report(query_id)
+    }
+
+    pub fn try_get_valid_web_report(
+        &self,
+        search_phrase: &str,
+        ttl_seconds: i64,
+        threshold: f32,
+    ) -> Result<Option<String>, String> {
+        match self.lookup_web_report_cache(search_phrase, ttl_seconds, threshold)? {
+            WebReportCacheLookup::Fresh(report) => Ok(Some(report)),
+            WebReportCacheLookup::Miss => Ok(None),
+            WebReportCacheLookup::Stale(pending) => self.revalidate_stale_web_report(pending),
+        }
     }
 
     /// Persists an LLM-as-a-Judge evaluation for meta-learning and prompt optimization.

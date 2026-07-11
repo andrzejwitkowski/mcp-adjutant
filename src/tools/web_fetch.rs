@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -142,22 +142,21 @@ pub fn validate_fetch_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn web_sources_still_valid(sources: &[(String, String)]) -> bool {
+    sources.iter().all(|(url, stored_hash)| {
+        validate_fetch_url(url).is_ok()
+            && resolve_public_host(url).is_ok()
+            && fetch_page_as_markdown(url).is_ok_and(|page| page.content_sha256 == *stored_hash)
+    })
+}
+
 pub fn fetch_page_as_markdown(url: &str) -> Result<FetchedPage, String> {
-    validate_fetch_url(url)?;
-    resolve_public_host(url)?;
-
-    let response = http_agent()
-        .get(url)
-        .set("User-Agent", USER_AGENT)
-        .call()
-        .map_err(|err| format!("failed to fetch {url}: {err}"))?;
-
-    let html = read_limited_string(response.into_reader())?;
+    let (final_url, html) = fetch_html_validated(url)?;
     let markdown = html_to_markdown(&html);
     let content_sha256 = hash_query_text(&markdown);
 
     Ok(FetchedPage {
-        url: url.to_string(),
+        url: final_url,
         markdown,
         content_sha256,
     })
@@ -205,16 +204,22 @@ fn search_brave(
         })
         .unwrap_or_else(|_| format!("{BRAVE_SEARCH_URL}?q={encoded}&count={count}"));
 
-    let response = http_agent()
+    let (status, body) = match http_agent()
         .get(&search_url)
         .set("User-Agent", USER_AGENT)
         .set("Accept", "application/json")
         .set("X-Subscription-Token", api_key.as_str())
         .call()
-        .map_err(|err| format!("Brave Search request failed: {err}"))?;
-
-    let status = response.status();
-    let body = read_limited_string(response.into_reader())?;
+    {
+        Ok(response) => (
+            response.status(),
+            read_limited_string(response.into_reader())?,
+        ),
+        Err(ureq::Error::Status(status, response)) => {
+            (status, read_limited_string(response.into_reader())?)
+        }
+        Err(err) => return Err(format!("Brave Search request failed: {err}")),
+    };
     if status == 401 || status == 403 {
         return Err("Brave Search API key invalid or unauthorized".to_string());
     }
@@ -305,25 +310,116 @@ fn assemble_search_report(
 }
 
 pub fn resolve_public_host(url: &str) -> Result<(), String> {
-    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
-    let host = fetch_host(url)?;
-    if allow_local && (host.starts_with("127.0.0.1") || host.eq_ignore_ascii_case("localhost")) {
-        return Ok(());
+    resolve_host_addrs(&fetch_host(url)?)?;
+    Ok(())
+}
+
+fn fetch_html_validated(start_url: &str) -> Result<(String, String), String> {
+    let mut current = start_url.to_string();
+    for hop in 0..=MAX_REDIRECTS {
+        validate_fetch_url(&current)?;
+        let host = fetch_host(&current)?;
+        let addrs = resolve_host_addrs(&host)?;
+        let agent = pinned_http_agent(&host, &addrs);
+
+        let response = match agent.get(&current).set("User-Agent", USER_AGENT).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(status, response)) if (300..400).contains(&status) => {
+                if hop == MAX_REDIRECTS {
+                    return Err(format!("too many redirects fetching {start_url}"));
+                }
+                let location = response
+                    .header("Location")
+                    .ok_or_else(|| format!("redirect from {current} missing Location header"))?;
+                current = resolve_redirect_url(&current, location)?;
+                continue;
+            }
+            Err(ureq::Error::Status(status, _)) => {
+                return Err(format!("failed to fetch {current}: HTTP {status}"));
+            }
+            Err(err) => return Err(format!("failed to fetch {current}: {err}")),
+        };
+
+        let status = response.status();
+        if (300..400).contains(&status) {
+            if hop == MAX_REDIRECTS {
+                return Err(format!("too many redirects fetching {start_url}"));
+            }
+            let location = response
+                .header("Location")
+                .ok_or_else(|| format!("redirect from {current} missing Location header"))?;
+            current = resolve_redirect_url(&current, location)?;
+            continue;
+        }
+        if !(200..300).contains(&status) {
+            return Err(format!("failed to fetch {current}: HTTP {status}"));
+        }
+        let html = read_limited_string(response.into_reader())?;
+        return Ok((current, html));
     }
-    if host.parse::<IpAddr>().is_ok() {
-        return Ok(());
+    Err(format!("too many redirects fetching {start_url}"))
+}
+
+fn resolve_host_addrs(host: &str) -> Result<Vec<SocketAddr>, String> {
+    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
+    if allow_local && (host.starts_with("127.0.0.1") || host.eq_ignore_ascii_case("localhost")) {
+        return (host, 80)
+            .to_socket_addrs()
+            .or_else(|_| (host, 443).to_socket_addrs())
+            .map(|iter| iter.collect())
+            .map_err(|err| format!("failed to resolve {host}: {err}"));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_blocked_ip(ip) {
+            return Err(format!("blocked IP: {ip}"));
+        }
+        return Ok(vec![SocketAddr::new(ip, 443)]);
     }
 
-    for addr in (host.as_str(), 443)
+    let addrs: Vec<_> = (host, 443)
         .to_socket_addrs()
         .map_err(|err| format!("failed to resolve {host}: {err}"))?
-    {
+        .collect();
+    for addr in &addrs {
         if is_blocked_ip(addr.ip()) {
             return Err(format!("blocked IP for {host}: {}", addr.ip()));
         }
     }
+    Ok(addrs)
+}
 
-    Ok(())
+fn resolve_redirect_url(base: &str, location: &str) -> Result<String, String> {
+    let location = location.trim();
+    if location.starts_with("https://") {
+        return Ok(location.to_string());
+    }
+    let allow_local = std::env::var("MCP_ADJUTANT_ALLOW_LOCAL_FETCH").is_ok();
+    if allow_local && location.starts_with("http://") {
+        return Ok(location.to_string());
+    }
+    if location.starts_with("//") {
+        return Ok(format!("https:{location}"));
+    }
+    Err(format!(
+        "unsupported redirect target: {location} (from {base})"
+    ))
+}
+
+fn pinned_http_agent(host: &str, addrs: &[SocketAddr]) -> ureq::Agent {
+    let host = host.to_string();
+    let pinned = addrs.to_vec();
+    ureq::AgentBuilder::new()
+        .timeout_connect(FETCH_TIMEOUT)
+        .timeout_read(FETCH_TIMEOUT)
+        .redirects(0)
+        .resolver(move |name: &str| {
+            if name == host {
+                Ok(pinned.clone())
+            } else {
+                name.to_socket_addrs().map(Iterator::collect)
+            }
+        })
+        .build()
 }
 
 fn fetch_host(url: &str) -> Result<String, String> {
@@ -349,7 +445,7 @@ fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(FETCH_TIMEOUT)
         .timeout_read(FETCH_TIMEOUT)
-        .redirects(MAX_REDIRECTS)
+        .redirects(0)
         .build()
 }
 
@@ -438,29 +534,29 @@ fn unescape_html(text: &str) -> String {
 }
 
 fn url_decode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
+    let mut bytes_out = Vec::with_capacity(s.len());
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'+' {
-            result.push(' ');
+            bytes_out.push(b' ');
             i += 1;
         } else if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let Ok(byte) =
                 u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
             {
-                result.push(char::from(byte));
+                bytes_out.push(byte);
                 i += 3;
             } else {
-                result.push(char::from(bytes[i]));
+                bytes_out.push(bytes[i]);
                 i += 1;
             }
         } else {
-            result.push(char::from(bytes[i]));
+            bytes_out.push(bytes[i]);
             i += 1;
         }
     }
-    result
+    String::from_utf8_lossy(&bytes_out).into_owned()
 }
 
 #[cfg(test)]
@@ -542,5 +638,11 @@ mod tests {
     fn url_encode_replaces_spaces() {
         assert_eq!(url_encode("rust async"), "rust+async");
         assert_eq!(url_encode("a&b"), "a%26b");
+    }
+
+    #[test]
+    fn url_decode_handles_utf8_percent_sequences() {
+        assert_eq!(url_decode("%C3%A9"), "é");
+        assert_eq!(url_decode("caf%C3%A9"), "café");
     }
 }

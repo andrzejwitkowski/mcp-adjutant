@@ -68,7 +68,14 @@ async fn put_config(
     config.server_port = incoming.server_port;
     config.storage_path = incoming.storage_path;
     config.triage_overrides = incoming.triage_overrides;
-    config.web_fetcher = incoming.web_fetcher;
+    let mut web_fetcher = incoming.web_fetcher.unwrap_or_default();
+    if web_fetcher.brave_api_key.is_none() {
+        web_fetcher.brave_api_key = config
+            .web_fetcher
+            .as_ref()
+            .and_then(|profile| profile.brave_api_key.clone());
+    }
+    config.web_fetcher = Some(web_fetcher);
     config.merge_missing_from_defaults();
 
     config

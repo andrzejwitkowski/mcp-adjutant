@@ -8,6 +8,16 @@ use mcp_adjutant::tools::{
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scout");
 
+struct CwdGuard {
+    original: std::path::PathBuf,
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.original).ok();
+    }
+}
+
 #[test]
 fn read_file_range_returns_requested_lines() {
     let path = Path::new(FIXTURES).join("readme.txt");
@@ -31,11 +41,10 @@ fn run_ripgrep_from_target_cwd_uses_project_root() {
     std::fs::create_dir_all(&target_dir).expect("create target dir");
     let original = std::env::current_dir().expect("cwd");
     std::env::set_current_dir(&target_dir).expect("chdir target");
+    let _cwd_guard = CwdGuard { original };
 
     let root = mcp_workspace_root();
     let output = run_ripgrep("JobRegistry", &root).expect("ripgrep should succeed");
-
-    std::env::set_current_dir(original).expect("restore cwd");
 
     assert_eq!(root, manifest);
     assert!(
