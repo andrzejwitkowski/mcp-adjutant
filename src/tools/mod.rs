@@ -21,9 +21,9 @@ pub use crash_log::{
     analyze_crash_log, build_summary, parser_confident, read_log_file, strip_file_url, to_report,
     truncate_for_llm, truncate_log_text, CrashAnalysisCore, LogAnalysisReport,
 };
-pub use log_source::{resolve_log_content, LogSourceKind, ResolvedLog};
 pub use env_detector::{find_nearest_module_boundary, get_dirty_files_from_git};
 pub use lang::{
     detect_file_language, detect_project_languages, language_from_extension, FileLanguageReport,
     ProjectLanguageReport, SourceLanguage,
 };
+pub use log_source::{resolve_log_content, LogSourceKind, ResolvedLog};

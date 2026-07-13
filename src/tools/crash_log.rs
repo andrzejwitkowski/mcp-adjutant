@@ -48,18 +48,15 @@ fn truncate_log_bytes(bytes: &[u8], max_bytes: usize) -> (String, bool) {
         .iter()
         .position(|b| *b < 128 || *b >= 192)
         .unwrap_or(0);
-    (
-        String::from_utf8_lossy(&slice[start..]).into_owned(),
-        true,
-    )
+    (String::from_utf8_lossy(&slice[start..]).into_owned(), true)
 }
 
 pub fn read_log_file(path: &Path) -> Result<(String, bool), String> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
 
-    let mut file = File::open(path)
-        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let mut file =
+        File::open(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     let len = file
         .metadata()
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?
@@ -331,9 +328,10 @@ fn detect_node_error(log: &str) -> Option<CrashAnalysisCore> {
 
 fn detect_java_exception(log: &str) -> Option<CrashAnalysisCore> {
     let lines: Vec<&str> = log.lines().collect();
-    let (header_idx, error_type, error_message) = lines.iter().enumerate().find_map(|(i, line)| {
-        parse_java_exception_header(line).map(|(etype, msg)| (i, etype, msg))
-    })?;
+    let (header_idx, error_type, error_message) =
+        lines.iter().enumerate().find_map(|(i, line)| {
+            parse_java_exception_header(line).map(|(etype, msg)| (i, etype, msg))
+        })?;
 
     for line in lines.iter().skip(header_idx + 1).take(8) {
         let Some((path, ln, col)) = parse_java_stack_frame(line) else {

@@ -12,9 +12,7 @@ use crate::agent::{
     TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
     TRIAGE_SYSTEM_PROMPT,
 };
-use crate::cache::{
-    mcp_workspace_root, resolve_workspace_path, ProjectCacheManager,
-};
+use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
 use crate::jobs::{
     accepted_job_response, parse_request_uuid, query_job_status_schema,
@@ -26,8 +24,7 @@ use crate::llm::{
     create_web_fetcher_llm_client,
 };
 use crate::tools::{
-    analyze_crash_log, parser_confident, resolve_log_content, to_report,
-    LlmBuildDiscoverer,
+    analyze_crash_log, parser_confident, resolve_log_content, to_report, LlmBuildDiscoverer,
 };
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";

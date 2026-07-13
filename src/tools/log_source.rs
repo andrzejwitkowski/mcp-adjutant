@@ -112,9 +112,7 @@ fn fetch_gh_failed_log(run_id: &str) -> Result<(String, bool), String> {
             // ponytail: best-effort kill; hung gh may orphan without unix kill
             #[cfg(unix)]
             {
-                let _ = Command::new("kill")
-                    .args(["-9", &pid.to_string()])
-                    .status();
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
             }
             return Err(format!(
                 "gh run view timed out after {}s",
@@ -137,7 +135,11 @@ fn fetch_gh_failed_log(run_id: &str) -> Result<(String, bool), String> {
         return Err(format!(
             "gh run view failed (exit {}): {}{}",
             output.status,
-            if stderr.is_empty() { "no stderr" } else { stderr },
+            if stderr.is_empty() {
+                "no stderr"
+            } else {
+                stderr
+            },
             hint
         ));
     }
