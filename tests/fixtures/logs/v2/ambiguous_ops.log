@@ -1,0 +1,6 @@
+2026-07-13 09:15:00.001 INFO  [deploy] rollout canary 12% complete
+2026-07-13 09:15:00.112 WARN  [cache] eviction burst shard=3
+2026-07-13 09:15:00.445 DEBUG [sync] heartbeat peer=eu-west-2b
+Intermittent 502s reported by users; root cause not obvious from metrics alone
+2026-07-13 09:15:01.002 ERROR [ingress] upstream timeout route=/api/v1/scout
+2026-07-13 09:15:01.003 INFO  [deploy] continuing rollout

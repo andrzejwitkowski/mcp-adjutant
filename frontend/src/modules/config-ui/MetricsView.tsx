@@ -36,6 +36,7 @@ const PHASE_COLORS: Record<string, string> = {
   builder: '#50c878',
   transformer: '#b084cc',
   evaluator: '#ff6b6b',
+  log_analyzer: '#e85d75',
   web_fetcher: '#20b2aa',
 }
 

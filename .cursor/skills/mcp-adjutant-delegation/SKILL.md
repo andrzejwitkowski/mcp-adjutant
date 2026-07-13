@@ -15,6 +15,7 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | Tool | Sub-agent | Delegate when |
 | --- | --- | --- |
 | `scout_context` | Scout | Repo layout, tracing, impact analysis, “where is X” |
+| `analyze_log` | LogAnalyzer | Log files — crash triage, CI failures, error search in logs |
 | `verify_and_triage` | Triage | After code changes — compile, type-check, trivial fixes |
 | `generate_tests_and_scaffolding` | Builder | Unit/integration/factory tests for a source file |
 | `web_fetch` | WebFetcher | External docs, API specs, library behavior, comparisons |
@@ -33,15 +34,60 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 3. Run `evaluate_agent_performance` on every sub-agent result (medium/hard).
 4. Only self-serve what MCP did not cover.
 
-When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping `generate_tests_and_scaffolding` after editing `src/` logic is a **rule violation** — call builder or document N/A in the [session checklist](#session-checklist-hard--medium).
+When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping `generate_tests_and_scaffolding` after editing **logic-bearing source** (see [Builder scope](#builder-scope)) is a **rule violation** — call builder or document N/A in the [session checklist](#session-checklist-hard--medium) and [builder ledger](#builder-ledger-hard--medium).
+
+When `MCP_ADJUTANT_REQUIRE_LOG_ANALYZER=true`, skipping `analyze_log` when investigating log files is a **rule violation**.
+
+On session start, read `.cursor/mcp.json` env. If `MCP_ADJUTANT_REQUIRE_BUILDER=true`, announce once: **"Builder required — no hand-written tests for new/changed logic-bearing source."**
+
+## Builder gate (`MCP_ADJUTANT_REQUIRE_BUILDER=true`)
+
+**Before** `cargo test`, `npm test`, `pytest`, `go test`, handoff, or claiming "done":
+
+1. Collect every [logic-bearing source file](#builder-scope) you **created or changed behavior in** this session.
+2. For **each** file → one `generate_tests_and_scaffolding` call (`test_type: unit` unless integration/factory is obvious).
+3. Poll `query_job_status` until `terminal=true` per file.
+4. Run `evaluate_agent_performance` on each builder result (`target_agent`: `Phase_4_Builder`, score ≥ 7).
+5. Only then `verify_and_triage`.
+
+**Forbidden substitutes for builder (even if tests pass):**
+
+- Hand-writing new test files, new test modules, or co-located test blocks (`describe`/`it`, `def test_`, `#[test]`, `func Test`, …) for logic you added
+- Project test runners (`cargo test`, `npm test`, `vitest`, `pytest`, `go test`, …) as proof builder was unnecessary
+- "fixtures were small / trivial" without an explicit N/A row in the [builder ledger](#builder-ledger-hard--medium)
+
+**Allowed N/A (must document per file in builder ledger):**
+
+- Comment-only, formatting-only, or rename-only edits with zero behavior change
+- Pure re-export / barrel files with no new logic
+- Docs, lockfiles, generated `dist/` / `target/` output, CI YAML with no app logic
+- Language or layout where builder cannot target the file (say why; use that stack's normal test command via triage instead)
+
+### Builder scope
+
+**Logic-bearing source** = application code where you added or changed executable behavior (functions, methods, types with logic, components with behavior, modules, classes).
+
+Use **path + role**, not a single language. Examples:
+
+| Stack | Usually in scope | Usually out of scope |
+| --- | --- | --- |
+| Rust | `src/**/*.rs`, `benches/*.rs` with logic | `build.rs` config-only, generated code |
+| TypeScript / JavaScript | `**/*.{ts,tsx,js,jsx}` under app roots (`frontend/`, `packages/`, `lib/`, `app/`) | `*.config.*`, `*.d.ts`, story-only files if no logic changed |
+| Python | `**/*.py` under `src/`, `lib/`, package roots | `__pycache__/`, empty `__init__.py` re-exports |
+| Go | `**/*.go` outside `vendor/` | generated `*.pb.go` if untouched |
+| Java / Kotlin | `src/main/**/*.{java,kt}` | resources-only edits |
+| C / C++ | `src/**/*.{c,cpp,cc,h,hpp}` | headers that only declare what you didn't implement |
+
+When unsure, treat the file as in scope and call builder once; document N/A only with a concrete reason.
 
 ### Tool router
 
 | User intent / trigger | MCP tool (required) | Never substitute with |
 | --- | --- | --- |
+| Log investigation, crash triage, CI log analysis, searching errors in log files | `analyze_log` | `scout_context`, Grep, Read, fastcontext, manual grep on log files |
 | Repo layout, tracing, impact, “where is X” | `scout_context` | fastcontext, Grep chains, Task explore |
 | After any code edit | `verify_and_triage` | cargo/npm manually, ReadLints only |
-| New/changed logic in `src/` without tests | `generate_tests_and_scaffolding` | Hand-written test files |
+| New/changed logic in logic-bearing source without builder | `generate_tests_and_scaffolding` | Hand-written test files |
 | External docs, API specs, library usage | `web_fetch` | WebSearch, WebFetch, guessing |
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
@@ -70,6 +116,7 @@ Delegate **only** when you are confident the sub-agent can complete the task wit
 | Situation | Tool |
 | --- | --- |
 | Broad repo search across many files | `scout_context` |
+| Log file triage (local path, `https://` URL, or `gh-run:<id>`) | `analyze_log` |
 | Mechanical compile/type errors (imports, typos, missing semicolons) | `verify_and_triage` |
 | Boilerplate test files for an existing function/module | `generate_tests_and_scaffolding` |
 | Need authoritative external doc snippet | `web_fetch` |
@@ -143,13 +190,14 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 
 ### Mandatory pipelines
 
-**Feature / bugfix session:**
+**Feature / bugfix session (strict order):**
 
 1. `scout_context` — map affected modules (if >2 files or layout unknown)
-2. [premium implements]
-3. `generate_tests_and_scaffolding` — **every** touched `src/` file with new/changed logic (one file per call)
-4. `verify_and_triage` — always before handoff
-5. `evaluate_agent_performance` — on scout, builder, and triage outputs (score ≥ 7)
+2. Premium implements **logic only** in logic-bearing source — **do not create new test files or test modules** in this step
+3. `generate_tests_and_scaffolding` — **one call per touched logic-bearing source file** (before any project test runner)
+4. Review builder output; premium may **edit** generated tests, not replace with from-scratch test files
+5. `verify_and_triage` — always before handoff
+6. `evaluate_agent_performance` — on scout, **each builder**, and triage outputs (score ≥ 7)
 
 **External research session:**
 
@@ -169,8 +217,9 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 | Trigger | Required action |
 | --- | --- |
 | Any non-trivial task needing repo context | `scout_context` first |
+| Any log file investigation | `analyze_log` first |
 | Any code change (including small edits) | `verify_and_triage` before commit or handoff |
-| New or changed logic in `src/` | `generate_tests_and_scaffolding` per affected file |
+| New or changed logic in logic-bearing source | `generate_tests_and_scaffolding` per affected file |
 | Citing external library/API behavior | `web_fetch` first |
 | Propagating rename/signature across files | `execute_global_refactor` |
 | Every sub-agent result before use | `evaluate_agent_performance` |
@@ -197,12 +246,26 @@ Before handoff on substantive work, include in your response (or internal trace)
 ```markdown
 ### Adjutant checklist
 - [ ] scout_context — Y/N (query: …)
-- [ ] generate_tests_and_scaffolding — Y/N (files: …)
+- [ ] analyze_log — Y/N (log_path: …) — required when task touches logs
+- [ ] generate_tests_and_scaffolding — Y/N (see builder ledger)
 - [ ] verify_and_triage — Y/N
 - [ ] web_fetch — Y/N or N/A
 - [ ] execute_global_refactor — Y/N or N/A
 - [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …
 ```
+
+### Builder ledger (hard / medium)
+
+Fill **before handoff** when any logic-bearing source changed. Empty ledger + changed logic = incomplete session.
+
+```markdown
+### Builder ledger
+| Source file | Builder UUID | Status | Eval score | Test output path | N/A reason |
+|-------------|--------------|--------|------------|------------------|------------|
+| `path/to/module.ext` | … | completed / failed / N/A | … | … | (only if N/A) |
+```
+
+One row per touched logic-bearing file. `MCP_ADJUTANT_REQUIRE_BUILDER=true` and zero builder calls with no N/A rows → **do not hand off**.
 
 ---
 
@@ -299,6 +362,21 @@ Stop iterating only when **one** of these is true:
 
 ## Tool argument quick reference
 
+**analyze_log**
+
+```json
+{ "log_path": "target/debug/test.log", "request_uuid": "<uuid>" }
+```
+
+Remote sources (same tool — babysitter/CI):
+
+```json
+{ "log_path": "gh-run:12345678901", "request_uuid": "<uuid>" }
+{ "log_path": "https://example.com/artifacts/build.log", "request_uuid": "<uuid>" }
+```
+
+After `gh pr checks` fails: `gh run view <run-id> --log-failed` → pass `gh-run:<run-id>` to `analyze_log` instead of pasting raw log text.
+
 **scout_context**
 
 ```json
@@ -325,7 +403,7 @@ Omit `target_paths` or pass `[]` to use git dirty files.
 }
 ```
 
-`test_type`: `unit` | `integration` | `factory`. Call **once per source file** with new/changed logic.
+`test_type`: `unit` | `integration` | `factory`. Call **once per logic-bearing source file** with new/changed logic. Examples: `src/agent/scout.rs`, `frontend/src/modules/config-ui/ConfigApp.tsx`, `lib/foo.py`.
 
 **web_fetch**
 
@@ -371,7 +449,7 @@ flowchart TD
     A[Task started] --> R{MCP tool matches router?}
     R -->|yes| C[Call MCP tool first]
     R -->|no| F[Premium agent work]
-    F --> R2{Edited src/ or need verify?}
+    F --> R2{Changed logic-bearing source or need verify?}
     R2 -->|yes| C
     C --> G[Poll query_job_status]
     G --> I[evaluate_agent_performance]
@@ -386,9 +464,12 @@ flowchart TD
 ## Anti-patterns
 
 - Reading dozens of files into context when `scout_context` would suffice (**hard** and often **medium**)
+- **Implement → hand-write tests → run test runner → triage only at end** — builder skipped; use [builder ledger](#builder-ledger-hard--medium)
+- **"fixtures were small"** — not an exemption when `MCP_ADJUTANT_REQUIRE_BUILDER=true`
 - **Scout + triage + evaluate only** — skipping builder, web_fetch, and refactor when triggers match
 - Implementing features and **never calling `generate_tests_and_scaffolding`** (hard violation when `MCP_ADJUTANT_REQUIRE_BUILDER=true`)
 - Using **WebSearch** or **WebFetch** when `web_fetch` MCP is available
+- Using **Grep/Read/fastcontext** on log files when `analyze_log` MCP is available
 - Using **Task/explore** or **fastcontext** when `scout_context` applies
 - Committing after edits without `verify_and_triage` (**hard** always; **medium** after substantive edits)
 - Ignoring `evaluate_agent_performance` in **medium**/**hard** and trusting unverified sub-agent output
@@ -397,3 +478,15 @@ flowchart TD
 - **Giving up after one weak sub-agent result** instead of retrying with a better prompt
 - **Repeating the same vague prompt** — each retry must add constraints, paths, or critique from the prior attempt
 - **Self-serving immediately** when a refined delegation round would be cheaper than loading files into context
+
+---
+
+## Enforcement companion
+
+Skills are policy; they do not block edits. Pair this skill with:
+
+1. **[`.cursor/rules/builder-gate.mdc`](../rules/builder-gate.mdc)** — always-on reminder after logic-bearing edits (all languages).
+2. **Session announce** — when `MCP_ADJUTANT_REQUIRE_BUILDER=true`, state builder requirement at first delegation (see [MCP-first rule](#mcp-first-rule-always-when-connected)).
+3. **Optional Cursor hook** — on `afterFileEdit`, if the path matches logic-bearing patterns (not `*.md`, not lockfiles), append a one-line reminder to update the builder ledger before handoff. Example glob intent: application source trees, not docs-only.
+
+Empty builder ledger at handoff with changed logic = treat as **failed session**, same as red CI.

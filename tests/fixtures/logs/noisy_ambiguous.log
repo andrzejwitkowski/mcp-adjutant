@@ -1,0 +1,6 @@
+2026-07-13 08:04:00.123 INFO  [gateway] upstream connect ok host=api.example.com
+2026-07-13 08:04:00.456 DEBUG [gateway] retry attempt 1/3
+2026-07-13 08:04:01.789 WARN  [billing] latency spike region=eu-west
+Something went wrong in the payment pipeline but details are unclear
+2026-07-13 08:04:02.100 ERROR [worker] job 9f2a failed after 3 retries
+2026-07-13 08:04:02.101 INFO  [metrics] flush complete

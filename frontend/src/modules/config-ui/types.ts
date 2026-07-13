@@ -6,6 +6,7 @@ export type AgentPhase =
   | 'builder'
   | 'transformer'
   | 'evaluator'
+  | 'log_analyzer'
   | 'web_fetcher'
 
 export interface PhaseProfile {

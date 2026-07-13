@@ -1,0 +1,11 @@
+   Compiling mcp-adjutant v0.1.0 (/home/runner/work/mcp-adjutant/mcp-adjutant)
+[2026-07-13T08:00:01Z] INFO  http: GET /health 200
+error[E0425]: cannot find value `syntax` in this scope
+ --> src/cache/manager.rs:88:9
+  |
+88|     let x = syntax;
+  |         ^^^^^^ not found in this scope
+error[E0308]: mismatched types
+ --> src/jobs.rs:42:1
+  |
+  | expected `()`, found integer

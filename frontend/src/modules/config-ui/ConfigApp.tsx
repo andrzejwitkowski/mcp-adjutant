@@ -33,6 +33,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     hint: 'QA sub-agent output quality (scores 1–10)',
   },
   {
+    phase: 'log_analyzer',
+    title: 'Log Analyzer',
+    hint: 'Triage log files — what failed and where',
+  },
+  {
     phase: 'web_fetcher',
     title: 'Web Fetcher',
     hint: 'Reasoning model that drives web doc research',
@@ -46,6 +51,18 @@ const DEFAULT_PROFILE: PhaseProfile = {
   model_name: 'deepseek-chat',
   max_tokens: 4096,
   temperature: 0.2,
+}
+
+const PHASE_DEFAULT_OVERRIDES: Partial<
+  Record<AgentPhase, Partial<PhaseProfile>>
+> = {
+  evaluator: { max_tokens: 2048, temperature: 0 },
+  log_analyzer: { max_tokens: 2048, temperature: 0 },
+  web_fetcher: { max_tokens: 2048, temperature: 0.2 },
+}
+
+function defaultProfileFor(phase: AgentPhase): PhaseProfile {
+  return { ...DEFAULT_PROFILE, ...PHASE_DEFAULT_OVERRIDES[phase] }
 }
 
 const DEFAULT_WEB_FETCHER: WebFetcherProfile = {
@@ -62,6 +79,7 @@ const KNOWN_PHASES: AgentPhase[] = [
   'builder',
   'transformer',
   'evaluator',
+  'log_analyzer',
   'web_fetcher',
 ]
 
@@ -114,7 +132,7 @@ function withDisplayedPhases(loaded: AdjutantConfig): AdjutantConfig {
   >
   for (const { phase } of AGENT_PHASES) {
     if (!phases[phase]) {
-      phases[phase] = { ...DEFAULT_PROFILE }
+      phases[phase] = defaultProfileFor(phase)
     }
   }
   return {
@@ -161,7 +179,7 @@ export function ConfigApp() {
   }, [])
 
   function profileFor(phase: AgentPhase): PhaseProfile {
-    return config.phases[phase] ?? { ...DEFAULT_PROFILE }
+    return config.phases[phase] ?? defaultProfileFor(phase)
   }
 
   function updatePhase(phase: AgentPhase, profile: PhaseProfile) {

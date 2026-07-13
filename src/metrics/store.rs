@@ -237,6 +237,7 @@ fn mcp_tool_to_phase(mcp_tool: &str) -> Option<AgentPhase> {
         "verify_and_triage" => Some(AgentPhase::Triage),
         "generate_tests_and_scaffolding" => Some(AgentPhase::Builder),
         "evaluate_agent_performance" => Some(AgentPhase::Evaluator),
+        "analyze_log" => Some(AgentPhase::LogAnalyzer),
         "web_fetch" => Some(AgentPhase::WebFetcher),
         "execute_global_refactor" => Some(AgentPhase::Transformer),
         _ => None,

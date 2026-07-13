@@ -1,0 +1,9 @@
+[2026-07-13T08:01:00Z] DEBUG tokio: worker started
+     Running unittests src/lib.rs
+
+thread 'worker' panicked at src/agent/triage.rs:796:14:
+boom: assertion failed
+stack backtrace:
+   0: rust_begin_unwind
+   1: core::panicking::panic_fmt
+note: run with `RUST_BACKTRACE=1`

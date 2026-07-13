@@ -1,0 +1,6 @@
+[2026-07-13T09:12:00.000Z] vite: hmr update /src/modules/config-ui/ConfigApp.tsx
+[2026-07-13T09:12:01.000Z] vite: page reload
+
+ReferenceError: config is not defined
+    at loadSettings (frontend/src/modules/config-ui/types.ts:88:5)
+    at ModuleJob.run (node:internal/modules/esm/module_job:234:25)

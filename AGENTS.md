@@ -52,4 +52,6 @@ Native build tools (`build-essential`, `g++`, `fd-find`, `ripgrep`) are required
 
 ### Agent delegation (Cursor)
 
-This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](.cursor/skills/mcp-adjutant-delegation/SKILL.md). Premium agents must route scouting, triage, test generation, web research, and refactors through MCP tools before native Grep/Read/WebSearch/manual builds. `MCP_ADJUTANT_REQUIRE_BUILDER=true` in [`.cursor/mcp.json`](.cursor/mcp.json).
+This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](.cursor/skills/mcp-adjutant-delegation/SKILL.md). Premium agents must route scouting, triage, test generation, web research, log analysis, and refactors through MCP tools before native Grep/Read/WebSearch/manual builds. `MCP_ADJUTANT_REQUIRE_BUILDER=true` in [`.cursor/mcp.json`](.cursor/mcp.json) — builder required for every changed **logic-bearing source file** (any language; see skill builder ledger), not hand-written tests.
+
+**Log files:** always call `analyze_log` with `log_path` before Grep/Read/fastcontext on log content. `log_path` accepts local files, `https://…` log URLs, and `gh-run:<run_id>` (GitHub Actions failed-job logs via `gh` CLI — use after `gh run view <id> --log-failed` in babysitter/CI loops).
