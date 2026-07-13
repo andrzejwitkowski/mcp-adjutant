@@ -201,7 +201,9 @@ pub fn parse_request_uuid(args: &Value) -> Result<String, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "request_uuid is required".to_string())
+        .ok_or_else(|| {
+            "request_uuid is required: generate a new UUID v4, retry this tool call with the same arguments plus request_uuid, then poll query_job_status with that UUID until terminal=true. Do not fall back to native tools — this is a recoverable input error.".to_string()
+        })
 }
 
 pub fn request_uuid_schema_property() -> Value {
