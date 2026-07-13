@@ -266,26 +266,30 @@ fn detect_python_traceback(log: &str) -> Option<CrashAnalysisCore> {
         }
     }
 
+    let mut last_frame = None;
+    let mut last_idx = 0;
     for (i, line) in lines.iter().enumerate() {
         if let Some((path, ln)) = parse_python_file_line(line) {
-            let stack: Vec<_> = lines
-                .iter()
-                .copied()
-                .skip(i.saturating_sub(1))
-                .take(5)
-                .map(strip_timestamp_noise)
-                .collect();
-            return Some(CrashAnalysisCore {
-                error_type,
-                error_message: error_line,
-                target_file: Some(normalize_path(path)),
-                line_number: Some(ln),
-                column_number: None,
-                isolated_stack_trace: stack.join("\n"),
-            });
+            last_frame = Some((path, ln));
+            last_idx = i;
         }
     }
-    None
+    let (path, ln) = last_frame?;
+    let stack: Vec<_> = lines
+        .iter()
+        .copied()
+        .skip(last_idx.saturating_sub(1))
+        .take(5)
+        .map(strip_timestamp_noise)
+        .collect();
+    Some(CrashAnalysisCore {
+        error_type,
+        error_message: error_line,
+        target_file: Some(normalize_path(path)),
+        line_number: Some(ln),
+        column_number: None,
+        isolated_stack_trace: stack.join("\n"),
+    })
 }
 
 fn detect_node_error(log: &str) -> Option<CrashAnalysisCore> {

@@ -8,6 +8,15 @@ use mcp_adjutant::tools::{
 };
 
 #[test]
+fn python_traceback_parses_innermost_frame() {
+    let log = "Traceback (most recent call last):\n  File \"lib/handlers.py\", line 24, in handle_request\n    result = process(data)\n  File \"lib/service.py\", line 12, in process\n    return int(data[\"count\"])\nValueError: invalid literal";
+    let core = analyze_crash_log(log);
+    assert_eq!(core.error_type, "ValueError");
+    assert_eq!(core.target_file.as_deref(), Some("lib/service.py"));
+    assert_eq!(core.line_number, Some(12));
+}
+
+#[test]
 fn python_traceback_parses_file_line() {
     let log = "Traceback (most recent call last):\n  File \"src/main.py\", line 12, in <module>\n    main()\nValueError: bad input";
     let core = analyze_crash_log(log);

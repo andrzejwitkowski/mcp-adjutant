@@ -722,37 +722,43 @@ pub async fn handle_analyze_log(
         request_uuid,
         ANALYZE_LOG_TOOL_NAME,
         move || async move {
-            let resolved = resolve_log_content(&log_path_raw)?;
-            let core = analyze_crash_log(&resolved.content);
-            let mut llm_summary = None;
-            let mut llm_fallback_error = None;
-            let mut final_core = core;
+            let config = Arc::clone(&config);
+            let log_path = log_path_raw.clone();
+            tokio::task::spawn_blocking(move || {
+                let resolved = resolve_log_content(&log_path)?;
+                let core = analyze_crash_log(&resolved.content);
+                let mut llm_summary = None;
+                let mut llm_fallback_error = None;
+                let mut final_core = core;
 
-            if !parser_confident(&final_core) {
-                match create_log_analyzer_llm_client(&config)
-                    .map(|client| LogAnalyzerAgent::new(client).analyze(&resolved.content))
-                {
-                    Ok(Ok(payload)) => {
-                        llm_summary = payload.summary.clone();
-                        let (refined, summary) = llm_payload_to_core(payload);
-                        final_core = refined;
-                        if llm_summary.is_none() {
-                            llm_summary = summary;
+                if !parser_confident(&final_core) {
+                    match create_log_analyzer_llm_client(&config)
+                        .map(|client| LogAnalyzerAgent::new(client).analyze(&resolved.content))
+                    {
+                        Ok(Ok(payload)) => {
+                            llm_summary = payload.summary.clone();
+                            let (refined, summary) = llm_payload_to_core(payload);
+                            final_core = refined;
+                            if llm_summary.is_none() {
+                                llm_summary = summary;
+                            }
                         }
+                        Ok(Err(err)) | Err(err) => llm_fallback_error = Some(err),
                     }
-                    Ok(Err(err)) | Err(err) => llm_fallback_error = Some(err),
                 }
-            }
 
-            let report = to_report(
-                final_core,
-                log_path_raw,
-                resolved.kind.as_str(),
-                resolved.truncated,
-                llm_summary,
-                llm_fallback_error,
-            );
-            serde_json::to_string(&report).map_err(|err| format!("serialize report: {err}"))
+                let report = to_report(
+                    final_core,
+                    log_path,
+                    resolved.kind.as_str(),
+                    resolved.truncated,
+                    llm_summary,
+                    llm_fallback_error,
+                );
+                serde_json::to_string(&report).map_err(|err| format!("serialize report: {err}"))
+            })
+            .await
+            .map_err(|err| format!("analyze_log task failed: {err}"))?
         },
     )
     .await
