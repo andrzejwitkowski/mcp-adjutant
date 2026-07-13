@@ -7,10 +7,10 @@ mod types;
 
 pub use deepseek::DeepSeekClient;
 pub use factory::{
-    create_builder_llm_client, create_evaluator_llm_client, create_llm_client,
-    create_llm_client_for_phase, create_log_analyzer_llm_client, create_scout_llm_client,
-    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
-    ConfiguredLlmClient,
+    create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
+    create_llm_client, create_llm_client_for_phase, create_log_analyzer_llm_client,
+    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
+    create_web_fetcher_llm_client, ConfiguredLlmClient,
 };
 pub use request::LlmRequest;
 pub use tools::{

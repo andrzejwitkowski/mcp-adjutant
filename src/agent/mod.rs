@@ -1,3 +1,4 @@
+mod babysitter;
 mod builder;
 mod evaluator;
 mod log_analyzer;
@@ -11,12 +12,18 @@ mod triage;
 mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
+pub use babysitter::{
+    babysitter_tool_set, parse_log_path, parse_report_body, parse_triage_arguments,
+    BabysitterAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+};
 pub use builder::{
     builder_tool_set, default_builder_agent, BuilderAgent, DefaultBuilderAgent,
     BUILDER_SYSTEM_PROMPT,
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
-pub use log_analyzer::{llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT};
+pub use log_analyzer::{
+    analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT,
+};
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use report::{format_triage_success, triage_passed, TRIAGE_PASS_MARKER};
 pub use scout::{

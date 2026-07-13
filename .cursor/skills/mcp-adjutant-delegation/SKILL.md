@@ -1,6 +1,6 @@
 ---
 name: mcp-adjutant-delegation
-description: MCP-FIRST when mcp-adjutant is connected. Route repo scouting, compile fix, test generation, web research, global refactor, and sub-agent QA through adjutant tools before Grep/Read/WebSearch/manual builds. Activates for any task matching an MCP tool; hard mode is default in this repo.
+description: MCP-FIRST when mcp-adjutant is connected — including Plan mode and other planning phases. Route repo scouting, compile fix, test generation, web research, global refactor, and sub-agent QA through adjutant tools before Grep/Read/WebSearch/manual builds. Activates for implementation and plan/design research when an MCP tool matches; hard mode is default in this repo.
 metadata:
   delegation-levels: low, medium, hard
   default-delegation-level: medium
@@ -38,7 +38,24 @@ When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping `generate_tests_and_scaffoldi
 
 When `MCP_ADJUTANT_REQUIRE_LOG_ANALYZER=true`, skipping `analyze_log` when investigating log files is a **rule violation**.
 
+**Planning phases are not exempt.** Plan mode, design docs, and implementation plans still use adjutant for repo and external research — see [Planning phases](#planning-phases-plan-mode-design-docs-implementation-plans).
+
 On session start, read `.cursor/mcp.json` env. If `MCP_ADJUTANT_REQUIRE_BUILDER=true`, announce once: **"Builder required — no hand-written tests for new/changed logic-bearing source."**
+
+## Planning phases (Plan mode, design docs, implementation plans)
+
+MCP-first applies **before you write a plan** — not only during implementation. Plan mode is read-only for the premium agent but **not** an exemption from delegation when `mcp-adjutant` is connected.
+
+When drafting plans, specs, gap analyses, or architecture decisions:
+
+1. **`scout_context`** — map modules, existing patterns, and gaps (“does X exist?”, call sites, file:line). Run **before** Grep/Read chains, Task explore, or fastcontext when layout is unknown or spans multiple files.
+2. **`web_fetch`** — external library/API constraints the plan will cite.
+3. **`analyze_log`** — when the plan depends on CI failure evidence or log triage.
+4. **`evaluate_agent_performance`** — on scout/web/log outputs (medium/hard) before embedding claims in the plan.
+
+Premium agent role in planning: **synthesize** adjutant evidence into the plan. Use Grep/Read only to spot-check file:line paths the sub-agents returned.
+
+**Out of scope during pure planning** (no code edits yet): `generate_tests_and_scaffolding`, `verify_and_triage`, `execute_global_refactor`.
 
 ## Builder gate (`MCP_ADJUTANT_REQUIRE_BUILDER=true`)
 
@@ -84,6 +101,7 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 
 | User intent / trigger | MCP tool (required) | Never substitute with |
 | --- | --- | --- |
+| Plan mode, design doc, implementation plan needing repo context | `scout_context` (+ `web_fetch` if external APIs) | fastcontext, Grep chains, Task explore, manual multi-file Read |
 | Log investigation, crash triage, CI log analysis, searching errors in log files | `analyze_log` | `scout_context`, Grep, Read, fastcontext, manual grep on log files |
 | Repo layout, tracing, impact, “where is X” | `scout_context` | fastcontext, Grep chains, Task explore |
 | After any code edit | `verify_and_triage` | cargo/npm manually, ReadLints only |
@@ -212,10 +230,19 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 3. `verify_and_triage`
 4. `evaluate_agent_performance`
 
+**Planning / Plan mode session (strict order):**
+
+1. `scout_context` — map affected modules, existing implementations, and gaps (always when plan spans >1 file or layout unknown)
+2. `web_fetch` — when the plan cites external library/API behavior
+3. `analyze_log` — when the plan depends on CI/log evidence
+4. `evaluate_agent_performance` — on scout/web/log outputs (score ≥ 7)
+5. Premium writes the plan from verified adjutant evidence — not from manual Grep chains
+
 ### Hard rules (non-negotiable)
 
 | Trigger | Required action |
 | --- | --- |
+| Plan mode or drafting a plan needing repo context | `scout_context` first (+ `web_fetch` if external) |
 | Any non-trivial task needing repo context | `scout_context` first |
 | Any log file investigation | `analyze_log` first |
 | Any code change (including small edits) | `verify_and_triage` before commit or handoff |
@@ -463,6 +490,7 @@ flowchart TD
 
 ## Anti-patterns
 
+- **Grep/Read/fastcontext during Plan mode** when `scout_context` should map the repo first (**hard** violation in this repo)
 - Reading dozens of files into context when `scout_context` would suffice (**hard** and often **medium**)
 - **Implement → hand-write tests → run test runner → triage only at end** — builder skipped; use [builder ledger](#builder-ledger-hard--medium)
 - **"fixtures were small"** — not an exemption when `MCP_ADJUTANT_REQUIRE_BUILDER=true`

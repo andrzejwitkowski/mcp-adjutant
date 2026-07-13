@@ -1,7 +1,11 @@
 use serde::Deserialize;
 
-use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
-use crate::tools::{truncate_for_llm, CrashAnalysisCore};
+use crate::domain::AdjutantConfig;
+use crate::llm::{create_log_analyzer_llm_client, LlmClient, LlmRequest, LlmToolSet};
+use crate::tools::{
+    analyze_crash_log, parser_confident, resolve_log_content, to_report, truncate_for_llm,
+    CrashAnalysisCore,
+};
 
 pub const LOG_ANALYZER_SYSTEM_PROMPT: &str = r#"You are a hyper-focused log analysis utility. Triage crash logs: isolate the first root cause, extract coordinates, return ONLY one minified JSON object (no markdown fences, no fixes).
 
@@ -47,6 +51,48 @@ impl<C: LlmClient> LogAnalyzerAgent<C> {
             .ok_or_else(|| "log analyzer model response missing content".to_string())?;
         parse_llm_response(&raw)
     }
+}
+
+pub fn analyze_log_at_path(
+    config: &AdjutantConfig,
+    log_path: &str,
+    pretty: bool,
+) -> Result<String, String> {
+    let resolved = resolve_log_content(log_path)?;
+    let mut final_core = analyze_crash_log(&resolved.content);
+    let mut llm_summary = None;
+    let mut llm_fallback_error = None;
+
+    if !parser_confident(&final_core) {
+        match create_log_analyzer_llm_client(config)
+            .map(|client| LogAnalyzerAgent::new(client).analyze(&resolved.content))
+        {
+            Ok(Ok(payload)) => {
+                llm_summary = payload.summary.clone();
+                let (refined, summary) = llm_payload_to_core(payload);
+                final_core = refined;
+                if llm_summary.is_none() {
+                    llm_summary = summary;
+                }
+            }
+            Ok(Err(err)) | Err(err) => llm_fallback_error = Some(err),
+        }
+    }
+
+    let report = to_report(
+        final_core,
+        log_path.to_string(),
+        resolved.kind.as_str(),
+        resolved.truncated,
+        llm_summary,
+        llm_fallback_error,
+    );
+    let serialize = if pretty {
+        serde_json::to_string_pretty
+    } else {
+        serde_json::to_string
+    };
+    serialize(&report).map_err(|err| format!("serialize log report: {err}"))
 }
 
 pub fn llm_payload_to_core(payload: LlmAnalysisPayload) -> (CrashAnalysisCore, Option<String>) {
