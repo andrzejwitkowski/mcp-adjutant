@@ -10,10 +10,11 @@ This repo *is* mcp-adjutant. When the `mcp-adjutant` MCP server is connected, fo
 
 ## MCP-first — use adjutant before native tools
 
-When adjutant MCP tools are available, **do not** substitute native tools for matching work:
+When adjutant MCP tools are available, **do not** substitute native tools for matching work — **including Plan mode and plan/design research**:
 
 | Task | MCP tool | Do NOT use instead |
 | --- | --- | --- |
+| Plan mode, design doc, implementation plan needing repo context | `scout_context` (+ `web_fetch` if external) | fastcontext, Grep chains, Task explore, manual multi-file Read |
 | Log investigation, crash/CI log triage | `analyze_log` | Grep, Read, fastcontext on log files |
 | Repo context, tracing, impact analysis | `scout_context` | fastcontext, Grep chains, Task explore |
 | After code changes | `verify_and_triage` | manual cargo/npm, ReadLints only |

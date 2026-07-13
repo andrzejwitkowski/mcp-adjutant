@@ -86,6 +86,12 @@ pub fn create_web_fetcher_llm_client(
     create_llm_client_for_phase(config, AgentPhase::WebFetcher)
 }
 
+pub fn create_babysitter_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Babysitter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

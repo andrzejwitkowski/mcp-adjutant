@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, default_transformer_agent, format_triage_success, llm_payload_to_core,
+    analyze_log_at_path, default_builder_agent, default_transformer_agent, format_triage_success,
     run_scout_with_cache, run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator,
-    EvaluatorAgent, LogAnalyzerAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner,
-    TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
-    TRIAGE_SYSTEM_PROMPT,
+    BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent,
+    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -19,13 +19,11 @@ use crate::jobs::{
     request_uuid_schema_property, run_tracked_job, JobRegistry,
 };
 use crate::llm::{
-    create_builder_llm_client, create_evaluator_llm_client, create_log_analyzer_llm_client,
+    create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
     create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
     create_web_fetcher_llm_client,
 };
-use crate::tools::{
-    analyze_crash_log, parser_confident, resolve_log_content, to_report, LlmBuildDiscoverer,
-};
+use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
@@ -34,6 +32,7 @@ pub const EXECUTE_GLOBAL_REFACTOR_TOOL_NAME: &str = "execute_global_refactor";
 pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
+pub const BABYSIT_PR_TOOL_NAME: &str = "babysit_pr";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
@@ -165,6 +164,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         evaluate_agent_performance_schema(),
         web_fetch_schema(),
         analyze_log_schema(),
+        babysit_pr_schema(),
         query_job_status_schema(),
     ]
 }
@@ -724,41 +724,82 @@ pub async fn handle_analyze_log(
         move || async move {
             let config = Arc::clone(&config);
             let log_path = log_path_raw.clone();
-            tokio::task::spawn_blocking(move || {
-                let resolved = resolve_log_content(&log_path)?;
-                let core = analyze_crash_log(&resolved.content);
-                let mut llm_summary = None;
-                let mut llm_fallback_error = None;
-                let mut final_core = core;
+            tokio::task::spawn_blocking(move || analyze_log_at_path(&config, &log_path, false))
+                .await
+                .map_err(|err| format!("analyze_log task failed: {err}"))?
+        },
+    )
+    .await
+}
 
-                if !parser_confident(&final_core) {
-                    match create_log_analyzer_llm_client(&config)
-                        .map(|client| LogAnalyzerAgent::new(client).analyze(&resolved.content))
-                    {
-                        Ok(Ok(payload)) => {
-                            llm_summary = payload.summary.clone();
-                            let (refined, summary) = llm_payload_to_core(payload);
-                            final_core = refined;
-                            if llm_summary.is_none() {
-                                llm_summary = summary;
-                            }
-                        }
-                        Ok(Err(err)) | Err(err) => llm_fallback_error = Some(err),
-                    }
-                }
+pub fn babysit_pr_schema() -> Value {
+    json!({
+        "name": BABYSIT_PR_TOOL_NAME,
+        "description": "Runs the BabysitterAgent loop (max 20 turns) to drive a GitHub PR toward mergeable state: CI green and actionable reviews fixed. Requires `gh` CLI, authenticated `gh auth login`, and local checkout on the PR head branch. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pr_number": {
+                    "type": "integer",
+                    "description": "GitHub pull request number in the current repository."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["pr_number", "request_uuid"]
+        }
+    })
+}
 
-                let report = to_report(
-                    final_core,
-                    log_path,
-                    resolved.kind.as_str(),
-                    resolved.truncated,
-                    llm_summary,
-                    llm_fallback_error,
-                );
-                serde_json::to_string(&report).map_err(|err| format!("serialize report: {err}"))
-            })
-            .await
-            .map_err(|err| format!("analyze_log task failed: {err}"))?
+pub async fn handle_babysit_pr(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let pr_number = args
+        .get("pr_number")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "pr_number is required".to_string())?;
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        BABYSIT_PR_TOOL_NAME,
+        move || async move {
+            let pr_state = gh_pr_state(pr_number)?;
+            assert_on_pr_head_branch(&pr_state.head_ref_name)?;
+
+            let babysitter_client = create_babysitter_llm_client(&config)?;
+            let triage_client = create_triage_llm_client(&config)?;
+            let scout_client = create_scout_llm_client(&config)?;
+            let discoverer = LlmBuildDiscoverer::new(scout_client);
+            let triage_agent = TriageAgent::with_build_runner_and_discoverer(
+                triage_client,
+                Vec::new(),
+                Arc::clone(&config),
+                SystemBuildRunner,
+                discoverer,
+            );
+            let agent = BabysitterAgent::new(
+                babysitter_client,
+                Arc::clone(&config),
+                triage_agent,
+                pr_number,
+            );
+
+            let prompt =
+                format!("{BABYSIT_PR_TOOL_NAME}\nPR #{pr_number}\n\n{BABYSITTER_SYSTEM_PROMPT}");
+            let result =
+                AgentLoopOrchestrator::run(&agent, prompt, BABYSITTER_MAX_ITERATIONS).await?;
+
+            if result.is_finished && result.agent_completed {
+                return Ok(result.accumulated_data);
+            }
+
+            Ok(format!(
+                "Babysitter report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
+            ))
         },
     )
     .await

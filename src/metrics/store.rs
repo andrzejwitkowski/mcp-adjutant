@@ -240,6 +240,7 @@ fn mcp_tool_to_phase(mcp_tool: &str) -> Option<AgentPhase> {
         "analyze_log" => Some(AgentPhase::LogAnalyzer),
         "web_fetch" => Some(AgentPhase::WebFetcher),
         "execute_global_refactor" => Some(AgentPhase::Transformer),
+        "babysit_pr" => Some(AgentPhase::Babysitter),
         _ => None,
     }
 }

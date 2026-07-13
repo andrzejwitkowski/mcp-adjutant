@@ -42,6 +42,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     title: 'Web Fetcher',
     hint: 'Reasoning model that drives web doc research',
   },
+  {
+    phase: 'babysitter',
+    title: 'Babysitter',
+    hint: 'PR orchestration — CI, reviews, push when green',
+  },
 ]
 
 const DEFAULT_PROFILE: PhaseProfile = {
@@ -59,6 +64,7 @@ const PHASE_DEFAULT_OVERRIDES: Partial<
   evaluator: { max_tokens: 2048, temperature: 0 },
   log_analyzer: { max_tokens: 2048, temperature: 0 },
   web_fetcher: { max_tokens: 2048, temperature: 0.2 },
+  babysitter: { max_tokens: 4096, temperature: 0.4 },
 }
 
 function defaultProfileFor(phase: AgentPhase): PhaseProfile {
@@ -81,6 +87,7 @@ const KNOWN_PHASES: AgentPhase[] = [
   'evaluator',
   'log_analyzer',
   'web_fetcher',
+  'babysitter',
 ]
 
 function defaultWebFetcher(): WebFetcherProfile {
@@ -102,7 +109,7 @@ function sanitizeConfigForSave(config: AdjutantConfig): AdjutantConfig {
   const rawPhases = migrateLegacyPhases(config.phases as Record<string, PhaseProfile>)
 
   const phases: Record<string, PhaseProfile> = {}
-  for (const phase of [...KNOWN_PHASES, 'pruner', 'babysitter']) {
+  for (const phase of [...KNOWN_PHASES, 'pruner']) {
     const profile = rawPhases[phase]
     if (profile) {
       phases[phase] = profile
