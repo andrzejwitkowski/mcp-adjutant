@@ -57,3 +57,5 @@ This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/
 **Log files:** always call `analyze_log` with `log_path` before Grep/Read/fastcontext on log content. `log_path` accepts local files, `https://…` log URLs, and `gh-run:<run_id>` (GitHub Actions failed-job logs via `gh` CLI — use after `gh run view <id> --log-failed` in babysitter/CI loops).
 
 **PR babysitting:** invoke skill [`.cursor/skills/adjutant-babysitter/`](.cursor/skills/adjutant-babysitter/SKILL.md) or MCP tool `babysit_pr` (looped BabysitterAgent, 20 turns). Requires `gh` CLI + checkout on PR head branch.
+
+**Cross-language API type sync:** `transpile_types` (TranspilerAgent). Coordinator sets `architecture_layout`, optional `verify_workspace` + `verify_command`. Pre-flight: `scout_context` → `evaluate_agent_performance` → `transpile_types`.
