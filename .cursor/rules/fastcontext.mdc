@@ -21,6 +21,7 @@ When adjutant MCP tools are available, **do not** substitute native tools for ma
 | Tests for new/changed `src/` logic | `generate_tests_and_scaffolding` | hand-written test files |
 | External docs, API specs, library behavior | `web_fetch` | WebSearch, WebFetch |
 | Rename/signature across files | `execute_global_refactor` | manual multi-file edits |
+| Cross-language API type / DTO sync | `transpile_types` (after `scout_context`; [skill](../skills/adjutant-transpiler/SKILL.md)) | hand-written bindings, copy-paste structs |
 | Every sub-agent result before use | `evaluate_agent_performance` | trusting output unchecked |
 
 Poll `query_job_status` until `terminal=true` for every async tool. Read the delegation skill for retry/evaluator loops and the session checklist.
@@ -39,4 +40,4 @@ Use `fastcontext -q "<question; file:line evidence>" --max-turns 8` only when:
 Endpoint: `http://127.0.0.1:8080/v1`, model `fastcontext`, 32k context.
 If down: `launchctl kickstart -k gui/$(id -u)/com.andrzej.fastcontext.llama-server`.
 
-FastContext remains read-only evidence gathering — never a substitute for adjutant scout, triage, builder, web_fetch, or evaluation when MCP is up.
+FastContext remains read-only evidence gathering — never a substitute for adjutant scout, triage, builder, transpiler, web_fetch, or evaluation when MCP is up.

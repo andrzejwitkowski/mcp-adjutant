@@ -10,10 +10,11 @@ use crate::jobs::{JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 use crate::mcp::{
     handle_analyze_log, handle_babysit_pr, handle_evaluate_agent_performance,
     handle_execute_global_refactor, handle_generate_tests_and_scaffolding, handle_query_job_status,
-    handle_scout_context, handle_verify_and_triage, handle_web_fetch, registered_mcp_tools,
-    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-    EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-    SCOUT_CONTEXT_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
+    handle_scout_context, handle_transpile_types, handle_verify_and_triage, handle_web_fetch,
+    registered_mcp_tools, ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME,
+    VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
 };
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +180,9 @@ async fn handle_tool_call(
         WEB_FETCH_TOOL_NAME => handle_web_fetch(arguments, config_snapshot, &jobs).await,
         ANALYZE_LOG_TOOL_NAME => handle_analyze_log(arguments, config_snapshot, &jobs).await,
         BABYSIT_PR_TOOL_NAME => handle_babysit_pr(arguments, config_snapshot, &jobs).await,
+        TRANSPILE_TYPES_TOOL_NAME => {
+            handle_transpile_types(arguments, config_snapshot, &jobs).await
+        }
         QUERY_JOB_STATUS_TOOL_NAME => handle_query_job_status(arguments, &jobs).await,
         other => Err(format!("unknown tool: {other}")),
     };

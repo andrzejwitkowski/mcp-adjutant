@@ -2,6 +2,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use crate::cache::mcp_workspace_root;
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct PrCheck {
     pub name: String,
@@ -48,13 +50,18 @@ pub struct PrState {
 }
 
 fn run_gh_capture(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh").args(args).output().map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            "gh CLI not found; install GitHub CLI".into()
-        } else {
-            format!("failed to spawn gh: {err}")
-        }
-    })?;
+    let repo_root = mcp_workspace_root();
+    let output = Command::new("gh")
+        .current_dir(&repo_root)
+        .args(args)
+        .output()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                "gh CLI not found; install GitHub CLI".into()
+            } else {
+                format!("failed to spawn gh: {err}")
+            }
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -207,7 +214,9 @@ pub fn gh_post_comment(pr_number: u64, body: &str) -> Result<(), String> {
 }
 
 pub fn assert_on_pr_head_branch(expected_head_ref: &str) -> Result<(), String> {
+    let repo_root = mcp_workspace_root();
     let output = Command::new("git")
+        .current_dir(&repo_root)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .map_err(|err| format!("failed to run git: {err}"))?;
@@ -224,7 +233,9 @@ pub fn assert_on_pr_head_branch(expected_head_ref: &str) -> Result<(), String> {
 }
 
 pub fn git_push_origin_head() -> Result<String, String> {
+    let repo_root = mcp_workspace_root();
     let output = Command::new("git")
+        .current_dir(&repo_root)
         .args(["push", "origin", "HEAD"])
         .output()
         .map_err(|err| format!("failed to run git push: {err}"))?;

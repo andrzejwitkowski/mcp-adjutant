@@ -6,11 +6,13 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    analyze_log_at_path, default_builder_agent, default_transformer_agent, format_triage_success,
-    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator,
-    BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent,
-    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
-    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    analyze_log_at_path, default_builder_agent, default_transformer_agent,
+    default_verify_workspace, embed_source_files, format_triage_success,
+    parse_transpile_types_args, run_scout_with_cache, run_web_fetch_with_cache, triage_passed,
+    AgentLoopOrchestrator, BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
+    SystemBuildRunner, TranspilerAgent, TriageAgent, WebCacheOutcome, WebFetcherAgent,
+    BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -33,6 +35,9 @@ pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performan
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
 pub const BABYSIT_PR_TOOL_NAME: &str = "babysit_pr";
+pub const TRANSPILE_TYPES_TOOL_NAME: &str = "transpile_types";
+
+const SOURCE_EMBED_MAX_BYTES: usize = 64 * 1024;
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
@@ -165,6 +170,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         web_fetch_schema(),
         analyze_log_schema(),
         babysit_pr_schema(),
+        transpile_types_schema(),
         query_job_status_schema(),
     ]
 }
@@ -798,6 +804,151 @@ pub async fn handle_babysit_pr(
 
             Ok(format!(
                 "Babysitter report (finished={}, iterations={}):\n{}",
+                result.is_finished, result.iterations, result.accumulated_data
+            ))
+        },
+    )
+    .await
+}
+
+pub fn transpile_types_schema() -> Value {
+    json!({
+        "name": TRANSPILE_TYPES_TOOL_NAME,
+        "description": "Sync API types/DTOs across languages via TranspilerAgent. Returns immediately; fetch via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Source-language files containing API types/DTOs."
+                },
+                "target_path": {
+                    "type": "string",
+                    "description": "Primary target-language output file (created or overwritten)."
+                },
+                "architecture_layout": {
+                    "type": "string",
+                    "description": "Coordinator wish: idiom mapping, file layout, symbol grouping, re-export strategy, validation libs, wire-format naming."
+                },
+                "preserve_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Files the agent must not overwrite."
+                },
+                "verify_workspace": {
+                    "type": "string",
+                    "description": "Directory to run verify_command in (default: parent of target_path or repo root)."
+                },
+                "verify_command": {
+                    "type": "string",
+                    "description": "Optional verification shell command (e.g. npm run typecheck, cargo check, mypy pkg). Triage auto-discovers when omitted."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["source_paths", "target_path", "architecture_layout", "request_uuid"]
+        }
+    })
+}
+
+pub async fn handle_transpile_types(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let parsed = parse_transpile_types_args(&args)?;
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        TRANSPILE_TYPES_TOOL_NAME,
+        move || async move {
+            let resolved_sources: Vec<PathBuf> = parsed
+                .source_paths
+                .iter()
+                .map(resolve_workspace_path)
+                .collect();
+            let resolved_target = resolve_workspace_path(&parsed.target_path);
+            let resolved_preserve: Vec<PathBuf> = parsed
+                .preserve_paths
+                .iter()
+                .map(resolve_workspace_path)
+                .collect();
+
+            let verify_ws = parsed
+                .verify_workspace
+                .map(resolve_workspace_path)
+                .unwrap_or_else(|| default_verify_workspace(&resolved_target));
+            let verify_command = parsed.verify_command;
+
+            let sources_block = embed_source_files(&resolved_sources, SOURCE_EMBED_MAX_BYTES)?;
+            let preserve_list = resolved_preserve
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let verify_line = verify_command
+                .as_deref()
+                .map(|cmd| format!("cd {} && {cmd}", verify_ws.display()))
+                .unwrap_or_else(|| "auto (child triage discovers)".to_string());
+
+            let prompt = format!(
+                "{TRANSPILE_TYPES_TOOL_NAME}\n\n\
+                 ## Architecture layout (coordinator)\n\n{architecture_layout}\n\n\
+                 {sources_block}\
+                 ## Targets\n\n- target_path: {target}\n- preserve_paths: {preserve_list}\n- verify: {verify_line}\n\n\
+                 {TRANSPILER_SYSTEM_PROMPT}",
+                architecture_layout = parsed.architecture_layout,
+                target = resolved_target.display(),
+            );
+
+            let transpiler_client = create_builder_llm_client(&config)?;
+            let triage_client = create_triage_llm_client(&config)?;
+
+            let result = if verify_command.is_some() {
+                let triage_agent = TriageAgent::with_build_runner(
+                    triage_client,
+                    vec![resolved_target.clone()],
+                    Arc::clone(&config),
+                    SystemBuildRunner,
+                );
+                let agent = TranspilerAgent::new(
+                    transpiler_client,
+                    triage_agent,
+                    resolved_target,
+                    resolved_preserve,
+                    verify_ws,
+                    verify_command,
+                );
+                AgentLoopOrchestrator::run(&agent, prompt, TRANSPILER_MAX_ITERATIONS).await
+            } else {
+                let scout_client = create_scout_llm_client(&config)?;
+                let discoverer = LlmBuildDiscoverer::new(scout_client);
+                let triage_agent = TriageAgent::with_build_runner_and_discoverer(
+                    triage_client,
+                    vec![resolved_target.clone()],
+                    Arc::clone(&config),
+                    SystemBuildRunner,
+                    discoverer,
+                );
+                let agent = TranspilerAgent::new(
+                    transpiler_client,
+                    triage_agent,
+                    resolved_target,
+                    resolved_preserve,
+                    verify_ws,
+                    verify_command,
+                );
+                AgentLoopOrchestrator::run(&agent, prompt, TRANSPILER_MAX_ITERATIONS).await
+            }?;
+
+            if result.is_finished && result.agent_completed {
+                return Ok(result.accumulated_data);
+            }
+
+            Ok(format!(
+                "Transpiler report (finished={}, iterations={}):\n{}",
                 result.is_finished, result.iterations, result.accumulated_data
             ))
         },
