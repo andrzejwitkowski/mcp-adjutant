@@ -30,8 +30,10 @@ fn test_parse_transpile_types_args_missing_source_paths() {
 
     let result = parse_transpile_types_args(&args);
     assert!(result.is_err());
-    // The error message is now "source_paths is required" due to the fix in the source code.
-    assert_eq!(result.unwrap_err(), "source_paths is required".to_string());
+    assert_eq!(
+        result.unwrap_err(),
+        "source_paths array is required".to_string()
+    );
 }
 
 #[test]
