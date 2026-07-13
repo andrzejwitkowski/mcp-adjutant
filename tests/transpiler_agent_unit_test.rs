@@ -31,10 +31,7 @@ fn test_parse_transpile_types_args_missing_source_paths() {
     let result = parse_transpile_types_args(&args);
     assert!(result.is_err());
     // The error message is now "source_paths is required" due to the fix in the source code.
-    assert_eq!(
-        result.unwrap_err(),
-        "source_paths is required".to_string()
-    );
+    assert_eq!(result.unwrap_err(), "source_paths is required".to_string());
 }
 
 #[test]
@@ -62,10 +59,7 @@ fn test_parse_transpile_types_args_missing_target_path() {
 
     let result = parse_transpile_types_args(&args);
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err(),
-        "target_path is required".to_string()
-    );
+    assert_eq!(result.unwrap_err(), "target_path is required".to_string());
 }
 
 #[test]
@@ -99,18 +93,12 @@ fn test_parse_transpile_types_args_with_optional_fields() {
     assert_eq!(parsed_args.source_paths, vec!["src/models/user.rs"]);
     assert_eq!(parsed_args.target_path, "bindings/user.ts");
     assert_eq!(parsed_args.architecture_layout, "typescript");
-    assert_eq!(
-        parsed_args.preserve_paths,
-        vec!["src/foo.rs", "src/bar.rs"]
-    );
+    assert_eq!(parsed_args.preserve_paths, vec!["src/foo.rs", "src/bar.rs"]);
     assert_eq!(
         parsed_args.verify_workspace,
         Some("/tmp/workspace".to_string())
     );
-    assert_eq!(
-        parsed_args.verify_command,
-        Some("npm test".to_string())
-    );
+    assert_eq!(parsed_args.verify_command, Some("npm test".to_string()));
 }
 
 #[test]
