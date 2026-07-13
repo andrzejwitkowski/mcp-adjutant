@@ -27,7 +27,7 @@ Rules:
 - Read idiom mapping rules from architecture_layout (field naming, enums, Option/null, collections, validation libs).
 - Adapt source idioms natively in the target language.
 - Preserve wire-format field names when architecture_layout says so.
-- Never edit files outside architecture_layout / preserve_paths.
+- Never edit preserve_paths or any file other than target_path (write_target_file is allowlisted to target_path only).
 - Loop: write_target_file → invoke_child_triage → fix until observation contains [TRIAGE PASS] → finalize_sync.
 - On iteration cap or unrecoverable mismatch → report_error.
 
@@ -47,13 +47,7 @@ pub struct TranspileTypesArgs {
 }
 
 pub fn parse_transpile_types_args(args: &Value) -> Result<TranspileTypesArgs, String> {
-    let source_paths = args
-        .get("source_paths")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "source_paths array is required".to_string())?
-        .iter()
-        .filter_map(|item| item.as_str().map(str::to_string))
-        .collect::<Vec<_>>();
+    let source_paths = tools::required_string_array(args, "source_paths")?;
     if source_paths.is_empty() {
         return Err("source_paths must not be empty".to_string());
     }
@@ -69,16 +63,7 @@ pub fn parse_transpile_types_args(args: &Value) -> Result<TranspileTypesArgs, St
             .and_then(Value::as_str)
             .ok_or_else(|| "architecture_layout is required".to_string())?
             .to_string(),
-        preserve_paths: args
-            .get("preserve_paths")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        preserve_paths: tools::optional_string_array(args, "preserve_paths")?,
         verify_workspace: args
             .get("verify_workspace")
             .and_then(Value::as_str)
@@ -86,6 +71,8 @@ pub fn parse_transpile_types_args(args: &Value) -> Result<TranspileTypesArgs, St
         verify_command: args
             .get("verify_command")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(str::to_string),
     })
 }
@@ -180,6 +167,13 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
 
     fn write_target_file(&self, path: &str, content: &str) -> Result<String, String> {
         let resolved = resolve_workspace_path(path);
+        if resolved != self.target_path {
+            return Err(format!(
+                "refusing write_target_file: {} is not target_path {}",
+                resolved.display(),
+                self.target_path.display()
+            ));
+        }
         if self.preserve_paths.iter().any(|p| p == &resolved) {
             return Err(format!(
                 "refusing write_target_file: {} is in preserve_paths",
@@ -192,6 +186,9 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
         }
         std::fs::write(&resolved, content)
             .map_err(|err| format!("write {}: {err}", resolved.display()))?;
+        if let Ok(mut guard) = self.triage_green.lock() {
+            *guard = false;
+        }
         Ok(format!(
             "wrote {} ({} bytes)",
             resolved.display(),
@@ -345,6 +342,17 @@ fn language_tag(path: &Path) -> &'static str {
         .unwrap_or("unknown")
 }
 
+fn truncate_utf8_prefix(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes.min(s.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 pub fn embed_source_files(paths: &[PathBuf], max_bytes_per_file: usize) -> Result<String, String> {
     let mut out = String::from("## Source files\n\n");
     for path in paths {
@@ -355,10 +363,7 @@ pub fn embed_source_files(paths: &[PathBuf], max_bytes_per_file: usize) -> Resul
         let body = if contents.len() > max_bytes_per_file {
             format!(
                 "{}\n... [truncated]",
-                contents
-                    .chars()
-                    .take(max_bytes_per_file)
-                    .collect::<String>()
+                truncate_utf8_prefix(&contents, max_bytes_per_file)
             )
         } else {
             contents
@@ -404,5 +409,22 @@ mod tests {
             "architecture_layout": "sync"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn parse_transpile_types_args_rejects_non_string_source() {
+        let err = parse_transpile_types_args(&serde_json::json!({
+            "source_paths": ["ok.rs", 1],
+            "target_path": "out.ts",
+            "architecture_layout": "sync"
+        }))
+        .unwrap_err();
+        assert!(err.contains("source_paths[1]"));
+    }
+
+    #[test]
+    fn truncate_utf8_prefix_respects_byte_limit() {
+        let s = "é".repeat(100); // 2 bytes per char
+        assert!(truncate_utf8_prefix(&s, 50).len() <= 50);
     }
 }

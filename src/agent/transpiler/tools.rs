@@ -23,9 +23,11 @@ impl LlmTool for HarnessTool {
 
     fn invoke(&self, arguments: &Value) -> Result<String, String> {
         if self.terminal {
+            if self.definition.name == "report_error" {
+                return required_str(arguments, "reason");
+            }
             let summary = arguments
                 .get("summary")
-                .or_else(|| arguments.get("reason"))
                 .and_then(Value::as_str)
                 .unwrap_or("session finalized");
             return Ok(summary.to_string());
@@ -83,6 +85,38 @@ pub fn transpiler_tool_set() -> LlmToolSet {
         ))
 }
 
+pub fn required_string_array(arguments: &Value, key: &str) -> Result<Vec<String>, String> {
+    let array = arguments
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{key} array is required"))?;
+    parse_string_array_items(key, array)
+}
+
+pub fn optional_string_array(arguments: &Value, key: &str) -> Result<Vec<String>, String> {
+    match arguments.get(key) {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => parse_string_array_items(key, items),
+        Some(_) => Err(format!("{key} must be an array")),
+    }
+}
+
+fn parse_string_array_items(key: &str, items: &[Value]) -> Result<Vec<String>, String> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let s = item
+                .as_str()
+                .ok_or_else(|| format!("{key}[{i}] must be a string"))?;
+            if s.is_empty() {
+                return Err(format!("{key}[{i}] must not be empty"));
+            }
+            Ok(s.to_string())
+        })
+        .collect()
+}
+
 pub fn parse_write_arguments(arguments: &Value) -> Result<(String, String), String> {
     let path = required_str(arguments, "path")?;
     let content = required_str(arguments, "content")?;
@@ -90,13 +124,7 @@ pub fn parse_write_arguments(arguments: &Value) -> Result<(String, String), Stri
 }
 
 pub fn parse_triage_arguments(arguments: &Value) -> Result<(Vec<String>, String), String> {
-    let paths = arguments
-        .get("target_paths")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "target_paths array is required".to_string())?
-        .iter()
-        .filter_map(|item| item.as_str().map(str::to_string))
-        .collect::<Vec<_>>();
+    let paths = required_string_array(arguments, "target_paths")?;
     if paths.is_empty() {
         return Err("target_paths must not be empty".to_string());
     }

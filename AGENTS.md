@@ -58,4 +58,4 @@ This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/
 
 **PR babysitting:** invoke skill [`.cursor/skills/adjutant-babysitter/`](.cursor/skills/adjutant-babysitter/SKILL.md) or MCP tool `babysit_pr` (looped BabysitterAgent, 20 turns). Requires `gh` CLI + checkout on PR head branch.
 
-**Cross-language API type sync:** `transpile_types` (TranspilerAgent). Coordinator sets `architecture_layout`, optional `verify_workspace` + `verify_command`. Pre-flight: `scout_context` → `evaluate_agent_performance` → `transpile_types`.
+**Cross-language API type sync:** `transpile_types` (TranspilerAgent). Coordinator sets `architecture_layout`, optional `verify_workspace` + `verify_command`. Agent may only write `target_path`; `preserve_paths` are read-only. Pre-flight: `scout_context` → `evaluate_agent_performance` → `transpile_types`.

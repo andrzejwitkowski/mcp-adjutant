@@ -74,6 +74,16 @@ fn test_transpiler_tool_set_invoke_report_error() {
         .expect("invoke report_error");
     assert!(out.is_terminal);
     assert_eq!(out.output, "Compilation failed");
+    assert!(tools.invoke("report_error", &json!({})).is_err());
+}
+
+#[test]
+fn test_parse_triage_arguments_rejects_non_string_path() {
+    assert!(parse_transpiler_triage_arguments(&json!({
+        "target_paths": ["ok.rs", 42],
+        "error_context": "err"
+    }))
+    .is_err());
 }
 
 #[test]
