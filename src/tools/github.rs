@@ -48,16 +48,13 @@ pub struct PrState {
 }
 
 fn run_gh_capture(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh")
-        .args(args)
-        .output()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "gh CLI not found; install GitHub CLI".into()
-            } else {
-                format!("failed to spawn gh: {err}")
-            }
-        })?;
+    let output = Command::new("gh").args(args).output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            "gh CLI not found; install GitHub CLI".into()
+        } else {
+            format!("failed to spawn gh: {err}")
+        }
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -114,8 +111,8 @@ pub fn gh_pr_state(pr_number: u64) -> Result<PrState, String> {
         "--json",
         "number,title,state,mergeable,headRefName,baseRefName,url",
     ])?;
-    let view: GhPrView = serde_json::from_str(&view_json)
-        .map_err(|err| format!("parse pr view json: {err}"))?;
+    let view: GhPrView =
+        serde_json::from_str(&view_json).map_err(|err| format!("parse pr view json: {err}"))?;
 
     let checks_json = run_gh_capture(&[
         "pr",

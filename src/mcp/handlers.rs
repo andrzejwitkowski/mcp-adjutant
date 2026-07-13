@@ -8,9 +8,9 @@ use serde_json::{json, Value};
 use crate::agent::{
     analyze_log_at_path, default_builder_agent, default_transformer_agent, format_triage_success,
     run_scout_with_cache, run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator,
-    BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner,
-    TriageAgent, WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
-    BABYSITTER_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TriageAgent,
+    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -20,8 +20,8 @@ use crate::jobs::{
 };
 use crate::llm::{
     create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
-    create_scout_llm_client, create_transformer_llm_client,
-    create_triage_llm_client, create_web_fetcher_llm_client,
+    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
+    create_web_fetcher_llm_client,
 };
 use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
@@ -725,8 +725,8 @@ pub async fn handle_analyze_log(
             let config = Arc::clone(&config);
             let log_path = log_path_raw.clone();
             tokio::task::spawn_blocking(move || analyze_log_at_path(&config, &log_path, false))
-            .await
-            .map_err(|err| format!("analyze_log task failed: {err}"))?
+                .await
+                .map_err(|err| format!("analyze_log task failed: {err}"))?
         },
     )
     .await
@@ -787,11 +787,10 @@ pub async fn handle_babysit_pr(
                 pr_number,
             );
 
-            let prompt = format!(
-                "{BABYSIT_PR_TOOL_NAME}\nPR #{pr_number}\n\n{BABYSITTER_SYSTEM_PROMPT}"
-            );
-            let result = AgentLoopOrchestrator::run(&agent, prompt, BABYSITTER_MAX_ITERATIONS)
-                .await?;
+            let prompt =
+                format!("{BABYSIT_PR_TOOL_NAME}\nPR #{pr_number}\n\n{BABYSITTER_SYSTEM_PROMPT}");
+            let result =
+                AgentLoopOrchestrator::run(&agent, prompt, BABYSITTER_MAX_ITERATIONS).await?;
 
             if result.is_finished && result.agent_completed {
                 return Ok(result.accumulated_data);

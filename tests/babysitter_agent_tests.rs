@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use mcp_adjutant::agent::{
-    AgentLoopOrchestrator, BabysitterAgent, BABYSITTER_SYSTEM_PROMPT, SystemBuildRunner,
-    TriageAgent, BABYSITTER_MAX_ITERATIONS,
+    AgentLoopOrchestrator, BabysitterAgent, SystemBuildRunner, TriageAgent,
+    BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
@@ -31,9 +31,7 @@ impl LlmClient for MockBabysitterLlm {
     fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
         assert_eq!(request.system_prompt, BABYSITTER_SYSTEM_PROMPT);
         let mut turns = self.turns.lock().map_err(|_| "lock poisoned")?;
-        turns
-            .pop()
-            .ok_or_else(|| "no mock turns left".to_string())
+        turns.pop().ok_or_else(|| "no mock turns left".to_string())
     }
 }
 

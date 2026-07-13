@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use super::traits::{AgentContext, AutonomousAgent};
 use super::{
-    analyze_log_at_path, build_tool_loop_message, format_triage_success, triage_passed, AgentLoopOrchestrator, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
+    analyze_log_at_path, build_tool_loop_message, format_triage_success, triage_passed,
+    AgentLoopOrchestrator, SystemBuildRunner, TriageAgent, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::resolve_workspace_path;
 use crate::domain::AdjutantConfig;
@@ -18,9 +19,7 @@ use crate::tools::{
     git_push_origin_head, LlmBuildDiscoverer,
 };
 
-pub use tools::{
-    babysitter_tool_set, parse_log_path, parse_report_body, parse_triage_arguments,
-};
+pub use tools::{babysitter_tool_set, parse_log_path, parse_report_body, parse_triage_arguments};
 
 pub const BABYSITTER_SYSTEM_PROMPT: &str = r#"You are the BabysitterAgent (PHASE_BABYSITTER), a high-level orchestrator inside mcp-adjutant. Drive the assigned GitHub PR to mergeable state (green CI, resolved actionable reviews).
 
@@ -212,9 +211,9 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> AutonomousAgent for BabysitterA
 
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
         if context.iterations >= context.max_iterations.saturating_sub(1) {
-            context.input_prompt.push_str(
-                "\nFinal turn: post report if needed, then call finalize_session.",
-            );
+            context
+                .input_prompt
+                .push_str("\nFinal turn: post report if needed, then call finalize_session.");
         } else {
             context
                 .input_prompt

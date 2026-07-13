@@ -20,10 +20,7 @@ fn babysitter_tool_set_has_six_tools() {
 #[test]
 fn parse_log_path_reads_string() {
     let arguments = json!({ "log_path": "gh-run:123" });
-    assert_eq!(
-        parse_log_path(&arguments).expect("parse"),
-        "gh-run:123"
-    );
+    assert_eq!(parse_log_path(&arguments).expect("parse"), "gh-run:123");
 }
 
 #[test]
