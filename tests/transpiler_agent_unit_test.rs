@@ -29,8 +29,14 @@ fn test_parse_transpile_types_args_valid_input() {
         parsed_args.preserve_paths,
         vec!["target/java/com/example/BaseModel.java"]
     );
-    assert_eq!(parsed_args.verify_workspace, Some("/tmp/java_project".to_string()));
-    assert_eq!(parsed_args.verify_command, Some("mvn clean install".to_string()));
+    assert_eq!(
+        parsed_args.verify_workspace,
+        Some("/tmp/java_project".to_string())
+    );
+    assert_eq!(
+        parsed_args.verify_command,
+        Some("mvn clean install".to_string())
+    );
 }
 
 #[test]
@@ -73,10 +79,7 @@ fn test_parse_transpile_types_args_missing_target_path() {
 
     let result = parse_transpile_types_args(&args);
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err(),
-        "target_path is required".to_string()
-    );
+    assert_eq!(result.unwrap_err(), "target_path is required".to_string());
 }
 
 #[test]

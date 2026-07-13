@@ -867,18 +867,18 @@ pub async fn handle_transpile_types(
             let resolved_sources: Vec<PathBuf> = parsed
                 .source_paths
                 .iter()
-                .map(|p| resolve_workspace_path(p))
+                .map(resolve_workspace_path)
                 .collect();
             let resolved_target = resolve_workspace_path(&parsed.target_path);
             let resolved_preserve: Vec<PathBuf> = parsed
                 .preserve_paths
                 .iter()
-                .map(|p| resolve_workspace_path(p))
+                .map(resolve_workspace_path)
                 .collect();
 
             let verify_ws = parsed
                 .verify_workspace
-                .map(|p| resolve_workspace_path(p))
+                .map(resolve_workspace_path)
                 .unwrap_or_else(|| default_verify_workspace(&resolved_target));
             let verify_command = parsed.verify_command;
 

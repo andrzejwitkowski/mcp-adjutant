@@ -390,7 +390,7 @@ mod tests {
         let mut file = std::fs::File::create(&path).expect("create");
         write!(file, "{}", "x".repeat(200)).expect("write");
 
-        let embedded = embed_source_files(&[path.clone()], 50).expect("embed");
+        let embedded = embed_source_files(std::slice::from_ref(&path), 50).expect("embed");
         assert!(embedded.contains("[truncated]"));
         assert!(embedded.contains("rust"));
 

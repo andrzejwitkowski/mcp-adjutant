@@ -130,7 +130,9 @@ fn fetch_gh_failed_log(run_id: &str) -> Result<(String, bool), String> {
     const GH_STDOUT_CAP: usize = MAX_LOG_BYTES.saturating_add(8192);
 
     let run_id = validate_gh_run_id(run_id)?;
+    let repo_root = mcp_workspace_root();
     let mut child = Command::new("gh")
+        .current_dir(&repo_root)
         .args(["run", "view", &run_id, "--log-failed"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
