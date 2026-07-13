@@ -16,6 +16,7 @@ pub enum AgentPhase {
     Triage,
     Babysitter,
     Evaluator,
+    LogAnalyzer,
     WebFetcher,
 }
 
@@ -120,6 +121,10 @@ impl Default for AdjutantConfig {
                 phase_profile("deepseek-chat", 2_048, 0.0),
             ),
             (
+                AgentPhase::LogAnalyzer,
+                phase_profile("deepseek-chat", 2_048, 0.0),
+            ),
+            (
                 AgentPhase::WebFetcher,
                 phase_profile("deepseek-chat", 2_048, 0.2),
             ),
@@ -206,6 +211,7 @@ mod tests {
             (AgentPhase::Triage, "deepseek-coder", 4_096, 0.0),
             (AgentPhase::Babysitter, "deepseek-chat", 4_096, 0.4),
             (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
+            (AgentPhase::LogAnalyzer, "deepseek-chat", 2_048, 0.0),
             (AgentPhase::WebFetcher, "deepseek-chat", 2_048, 0.2),
         ];
 
@@ -294,5 +300,27 @@ mod tests {
         assert_eq!(profile.max_search_hops, 3);
         assert_eq!(profile.token_budget, 8_000);
         assert!(legacy.try_get_profile(AgentPhase::WebFetcher).is_ok());
+    }
+
+    #[test]
+    fn merge_missing_from_defaults_adds_log_analyzer() {
+        let mut legacy = AdjutantConfig {
+            phases: HashMap::from([(
+                AgentPhase::Scout,
+                phase_profile("deepseek-chat", 4_096, 0.3),
+            )]),
+            ..Default::default()
+        };
+
+        assert!(legacy.try_get_profile(AgentPhase::LogAnalyzer).is_err());
+
+        legacy.merge_missing_from_defaults();
+
+        let log_analyzer = legacy
+            .try_get_profile(AgentPhase::LogAnalyzer)
+            .expect("log_analyzer profile");
+        assert_eq!(log_analyzer.model_name, "deepseek-chat");
+        assert_eq!(log_analyzer.max_tokens, 2_048);
+        assert!((log_analyzer.temperature - 0.0).abs() < f32::EPSILON);
     }
 }

@@ -68,6 +68,12 @@ pub fn create_evaluator_llm_client(config: &AdjutantConfig) -> Result<Configured
     create_llm_client_for_phase(config, AgentPhase::Evaluator)
 }
 
+pub fn create_log_analyzer_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::LogAnalyzer)
+}
+
 pub fn create_transformer_llm_client(
     config: &AdjutantConfig,
 ) -> Result<ConfiguredLlmClient, String> {
@@ -149,5 +155,15 @@ mod tests {
 
         let profile = config.get_profile(&AgentPhase::WebFetcher);
         assert_eq!(profile.model_name, "deepseek-chat");
+    }
+
+    #[test]
+    fn create_log_analyzer_llm_client_uses_log_analyzer_phase_profile() {
+        let config = AdjutantConfig::default();
+        create_log_analyzer_llm_client(&config).expect("log analyzer client");
+        assert_eq!(
+            config.get_profile(&AgentPhase::LogAnalyzer).model_name,
+            "deepseek-chat"
+        );
     }
 }

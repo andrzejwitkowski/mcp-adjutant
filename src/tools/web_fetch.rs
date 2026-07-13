@@ -150,8 +150,12 @@ pub fn web_sources_still_valid(sources: &[(String, String)]) -> bool {
     })
 }
 
+pub fn fetch_text_validated(start_url: &str) -> Result<(String, String), String> {
+    fetch_body_validated(start_url)
+}
+
 pub fn fetch_page_as_markdown(url: &str) -> Result<FetchedPage, String> {
-    let (final_url, html) = fetch_html_validated(url)?;
+    let (final_url, html) = fetch_body_validated(url)?;
     let markdown = html_to_markdown(&html);
     let content_sha256 = hash_query_text(&markdown);
 
@@ -314,7 +318,7 @@ pub fn resolve_public_host(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn fetch_html_validated(start_url: &str) -> Result<(String, String), String> {
+fn fetch_body_validated(start_url: &str) -> Result<(String, String), String> {
     let mut current = start_url.to_string();
     for hop in 0..=MAX_REDIRECTS {
         validate_fetch_url(&current)?;

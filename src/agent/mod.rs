@@ -1,5 +1,6 @@
 mod builder;
 mod evaluator;
+mod log_analyzer;
 mod orchestrator;
 mod report;
 mod scout;
@@ -15,6 +16,7 @@ pub use builder::{
     BUILDER_SYSTEM_PROMPT,
 };
 pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
+pub use log_analyzer::{llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT};
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use report::{format_triage_success, triage_passed, TRIAGE_PASS_MARKER};
 pub use scout::{

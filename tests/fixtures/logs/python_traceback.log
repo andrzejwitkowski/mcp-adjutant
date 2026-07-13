@@ -1,0 +1,7 @@
+[2026-07-13 08:02:11] INFO werkzeug: 127.0.0.1 - - "POST /api/run" 500
+Traceback (most recent call last):
+  File "lib/handlers.py", line 24, in handle_request
+    result = process(data)
+  File "lib/service.py", line 12, in process
+    return int(data["count"])
+ValueError: invalid literal for int() with base 10: 'n/a'

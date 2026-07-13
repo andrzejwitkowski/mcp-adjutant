@@ -1,0 +1,14 @@
+[Container] 2026/07/13 09:14:01 Running command docker pull ghcr.io/org/mcp-adjutant:ci
+[Container] 2026/07/13 09:14:12 Running command cargo test --all-targets
+   Compiling mcp-adjutant v0.1.0 (/home/runner/work/mcp-adjutant/mcp-adjutant)
+[2026-07-13T09:14:15Z] DEBUG hyper: connection established
+[2026-07-13T09:14:15Z] INFO  metrics: scrape ok
+error[E0382]: borrow of moved value: `registry`
+   --> src/mcp/handlers.rs:512:17
+    |
+508 |     let registry = JobRegistry::new();
+    |         -------- move occurs because `registry` has type `JobRegistry`, which does not implement the `Copy` trait
+512 |     dispatch_async_job(&registry, uuid, "scout", || async { Ok(()) }).await?;
+    |                 ^^^^^^^^ value borrowed here after move
+error: could not compile `mcp-adjutant` (lib) due to 1 previous error
+##[error]Process completed with exit code 101.

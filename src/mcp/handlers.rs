@@ -6,10 +6,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agent::{
-    default_builder_agent, default_transformer_agent, format_triage_success, run_scout_with_cache,
-    run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator, EvaluatorAgent, ScoutAgent,
-    ScoutCacheOutcome, SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent,
-    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    default_builder_agent, default_transformer_agent, format_triage_success, llm_payload_to_core,
+    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, AgentLoopOrchestrator,
+    EvaluatorAgent, LogAnalyzerAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner,
+    TriageAgent, WebCacheOutcome, WebFetcherAgent, TRANSFORMER_MAX_ITERATIONS,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -18,10 +19,13 @@ use crate::jobs::{
     request_uuid_schema_property, run_tracked_job, JobRegistry,
 };
 use crate::llm::{
-    create_builder_llm_client, create_evaluator_llm_client, create_scout_llm_client,
-    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
+    create_builder_llm_client, create_evaluator_llm_client, create_log_analyzer_llm_client,
+    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
+    create_web_fetcher_llm_client,
 };
-use crate::tools::LlmBuildDiscoverer;
+use crate::tools::{
+    analyze_crash_log, parser_confident, resolve_log_content, to_report, LlmBuildDiscoverer,
+};
 
 pub const SCOUT_CONTEXT_TOOL_NAME: &str = "scout_context";
 pub const VERIFY_AND_TRIAGE_TOOL_NAME: &str = "verify_and_triage";
@@ -29,6 +33,7 @@ pub const GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME: &str = "generate_tests_and_s
 pub const EXECUTE_GLOBAL_REFACTOR_TOOL_NAME: &str = "execute_global_refactor";
 pub const EVALUATE_AGENT_PERFORMANCE_TOOL_NAME: &str = "evaluate_agent_performance";
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
+pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
@@ -159,6 +164,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         execute_global_refactor_schema(),
         evaluate_agent_performance_schema(),
         web_fetch_schema(),
+        analyze_log_schema(),
         query_job_status_schema(),
     ]
 }
@@ -674,6 +680,85 @@ pub async fn handle_web_fetch(
                 WebCacheOutcome::Hit(report) => Ok(format!("[CACHE HIT]\n{report}")),
                 WebCacheOutcome::Fresh(report) => Ok(report),
             }
+        },
+    )
+    .await
+}
+
+pub fn analyze_log_schema() -> Value {
+    json!({
+        "name": ANALYZE_LOG_TOOL_NAME,
+        "description": "Reads a log file or remote log source and triages the first root cause (what failed and where). Supports local paths, https:// URLs, and gh-run:<run_id> for GitHub Actions. ALWAYS call first when investigating logs, crash output, CI logs, or searching for errors in log files. Built-in parsers run first; cheap LLM fallback when needed. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "log_path": {
+                    "type": "string",
+                    "description": "Local workspace or absolute file path, https:// log URL, or gh-run:<run_id> for GitHub Actions failed-job logs."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["log_path", "request_uuid"]
+        }
+    })
+}
+
+pub async fn handle_analyze_log(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let log_path_raw = args
+        .get("log_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "log_path is required".to_string())?
+        .to_string();
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        ANALYZE_LOG_TOOL_NAME,
+        move || async move {
+            let config = Arc::clone(&config);
+            let log_path = log_path_raw.clone();
+            tokio::task::spawn_blocking(move || {
+                let resolved = resolve_log_content(&log_path)?;
+                let core = analyze_crash_log(&resolved.content);
+                let mut llm_summary = None;
+                let mut llm_fallback_error = None;
+                let mut final_core = core;
+
+                if !parser_confident(&final_core) {
+                    match create_log_analyzer_llm_client(&config)
+                        .map(|client| LogAnalyzerAgent::new(client).analyze(&resolved.content))
+                    {
+                        Ok(Ok(payload)) => {
+                            llm_summary = payload.summary.clone();
+                            let (refined, summary) = llm_payload_to_core(payload);
+                            final_core = refined;
+                            if llm_summary.is_none() {
+                                llm_summary = summary;
+                            }
+                        }
+                        Ok(Err(err)) | Err(err) => llm_fallback_error = Some(err),
+                    }
+                }
+
+                let report = to_report(
+                    final_core,
+                    log_path,
+                    resolved.kind.as_str(),
+                    resolved.truncated,
+                    llm_summary,
+                    llm_fallback_error,
+                );
+                serde_json::to_string(&report).map_err(|err| format!("serialize report: {err}"))
+            })
+            .await
+            .map_err(|err| format!("analyze_log task failed: {err}"))?
         },
     )
     .await

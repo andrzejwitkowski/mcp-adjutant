@@ -14,6 +14,7 @@ When adjutant MCP tools are available, **do not** substitute native tools for ma
 
 | Task | MCP tool | Do NOT use instead |
 | --- | --- | --- |
+| Log investigation, crash/CI log triage | `analyze_log` | Grep, Read, fastcontext on log files |
 | Repo context, tracing, impact analysis | `scout_context` | fastcontext, Grep chains, Task explore |
 | After code changes | `verify_and_triage` | manual cargo/npm, ReadLints only |
 | Tests for new/changed `src/` logic | `generate_tests_and_scaffolding` | hand-written test files |
@@ -24,6 +25,7 @@ When adjutant MCP tools are available, **do not** substitute native tools for ma
 Poll `query_job_status` until `terminal=true` for every async tool. Read the delegation skill for retry/evaluator loops and the session checklist.
 
 When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping builder after `src/` edits is a rule violation.
+When `MCP_ADJUTANT_REQUIRE_LOG_ANALYZER=true`, skipping `analyze_log` when a task touches log files is a rule violation.
 
 ## When FastContext CLI is allowed (fallback only)
 

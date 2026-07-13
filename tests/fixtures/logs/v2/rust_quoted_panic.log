@@ -1,0 +1,11 @@
+[2026-07-13T09:10:00Z] INFO  mcp_adjutant: starting job registry
+     Running tests test_storage_roundtrip
+
+thread 'test_storage_roundtrip' panicked at 'index out of bounds: the len is 3 but the index is 9', src/storage.rs:201:9:
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test storage::roundtrip ... FAILED
+
+failures:
+    storage::roundtrip
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored

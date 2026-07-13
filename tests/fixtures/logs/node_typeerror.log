@@ -1,0 +1,6 @@
+[2026-07-13T08:03:00.000Z] GET /api/v1/users 200 12ms
+[2026-07-13T08:03:01.000Z] processing batch
+
+TypeError: Cannot read properties of undefined (reading 'map')
+    at renderList (frontend/src/modules/config-ui/ConfigApp.tsx:142:18)
+    at processTicksAndRejections (node:internal/process/task_queues:95:5)

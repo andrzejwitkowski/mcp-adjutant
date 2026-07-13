@@ -14,6 +14,7 @@ const KNOWN_PHASES: &[&str] = &[
     "triage",
     "babysitter",
     "evaluator",
+    "log_analyzer",
     "web_fetcher",
 ];
 

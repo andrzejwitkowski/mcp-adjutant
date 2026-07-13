@@ -55,7 +55,9 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
 }
 
 async fn get_config(State(state): State<ConfigServerState>) -> Json<AdjutantConfig> {
-    Json(state.config.read().await.clone())
+    let mut config = state.config.read().await.clone();
+    config.merge_missing_from_defaults();
+    Json(config)
 }
 
 async fn put_config(

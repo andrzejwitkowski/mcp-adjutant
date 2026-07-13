@@ -1,0 +1,7 @@
+[2026-07-13 09:11:02] INFO uvicorn: POST /api/v2/jobs 500 Internal Server Error
+Traceback (most recent call last):
+  File "lib/handlers.py", line 41, in create_job
+    url = cfg["DATABASE_URL"]
+  File "lib/config.py", line 18, in __getitem__
+    return self._data[key]
+KeyError: 'DATABASE_URL'
