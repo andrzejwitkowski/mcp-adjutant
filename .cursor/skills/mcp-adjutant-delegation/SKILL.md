@@ -21,6 +21,7 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | `web_fetch` | WebFetcher | External docs, API specs, library behavior, comparisons |
 | `execute_global_refactor` | Transformer | Rename method/struct; propagate signature changes |
 | `evaluate_agent_performance` | Evaluator | QA a sub-agent result before trusting or re-delegating |
+| `transpile_types` | Transpiler | Cross-language API type / DTO sync (coordinator sets `architecture_layout`) |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
 
 ---
@@ -108,6 +109,7 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 | New/changed logic in logic-bearing source without builder | `generate_tests_and_scaffolding` | Hand-written test files |
 | External docs, API specs, library usage | `web_fetch` | WebSearch, WebFetch, guessing |
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
+| Cross-language API type / DTO sync | `transpile_types` (after `scout_context`) | Hand-written bindings, copy-paste structs |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
 | Poll async jobs | `query_job_status` | Guessing timeouts |
 
@@ -189,7 +191,7 @@ Poll until `terminal=true`. Parse the JSON score and critique.
 | **5–7** | **Retry 2–3 times** with progressively tighter prompts; verify key facts yourself |
 | **1–4** | **Retry 2 times** with heavily narrowed scope and explicit gaps from the critique; only then self-serve |
 
-Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**, **transformer**.
+Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**, **transformer**, **transpiler**.
 
 ### Medium-specific rules
 
@@ -230,6 +232,16 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 3. `verify_and_triage`
 4. `evaluate_agent_performance`
 
+**Cross-language type sync** — full checklist: [adjutant-transpiler/SKILL.md](../adjutant-transpiler/SKILL.md)
+
+1. `scout_context` — source types, existing bindings, naming conventions
+2. `evaluate_agent_performance` — scout output
+3. `web_fetch` — when `architecture_layout` needs external idiom docs (optional)
+4. Draft `architecture_layout` (coordinator wish)
+5. `transpile_types` — poll until `terminal=true`
+6. `evaluate_agent_performance` — transpiler report
+7. `verify_and_triage` — on `target_path`
+
 **Planning / Plan mode session (strict order):**
 
 1. `scout_context` — map affected modules, existing implementations, and gaps (always when plan spans >1 file or layout unknown)
@@ -249,6 +261,7 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 | New or changed logic in logic-bearing source | `generate_tests_and_scaffolding` per affected file |
 | Citing external library/API behavior | `web_fetch` first |
 | Propagating rename/signature across files | `execute_global_refactor` |
+| Cross-language API type / DTO sync | `transpile_types` (after `scout_context`; see [adjutant-transpiler](../adjutant-transpiler/SKILL.md)) |
 | Every sub-agent result before use | `evaluate_agent_performance` |
 
 ### Hard workflow
@@ -278,7 +291,8 @@ Before handoff on substantive work, include in your response (or internal trace)
 - [ ] verify_and_triage — Y/N
 - [ ] web_fetch — Y/N or N/A
 - [ ] execute_global_refactor — Y/N or N/A
-- [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …
+- [ ] transpile_types — Y/N or N/A (see [adjutant-transpiler](../adjutant-transpiler/SKILL.md))
+- [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …, transpiler …
 ```
 
 ### Builder ledger (hard / medium)
@@ -370,6 +384,7 @@ You may call the **same tool multiple times** on one task. Treat it as refinemen
 | `generate_tests_and_scaffolding` | Scaffold → add edge cases → tighten assertions |
 | `web_fetch` | Broad topic → narrow to API surface → verify against repo usage |
 | `execute_global_refactor` | Narrow scope_path → verify call sites → re-run triage |
+| `transpile_types` | Scout patterns → refine architecture_layout → re-sync target |
 | `evaluate_agent_performance` | Score draft → retry sub-agent → re-evaluate polished output |
 
 Use a **new `request_uuid` per attempt**. Keep a short mental log: `attempt N / tool / prompt summary / outcome`.
@@ -465,7 +480,23 @@ Use for library docs, API specs, release notes — not for in-repo code (use sco
 }
 ```
 
-`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `WebFetcher`, `Phase_3_Transformer`.
+`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`.
+
+**transpile_types**
+
+```json
+{
+  "source_paths": ["src/models/user.rs"],
+  "target_path": "frontend/src/api/types/user.ts",
+  "architecture_layout": "TypeScript + zod; preserve JSON wire names; Option → T | null",
+  "preserve_paths": ["frontend/src/api/types/index.ts"],
+  "verify_workspace": "frontend",
+  "verify_command": "npm run typecheck",
+  "request_uuid": "<uuid>"
+}
+```
+
+Full coordinator checklist: [adjutant-transpiler/SKILL.md](../adjutant-transpiler/SKILL.md). Agent may write **only** `target_path`.
 
 ---
 
@@ -506,6 +537,7 @@ flowchart TD
 - **Giving up after one weak sub-agent result** instead of retrying with a better prompt
 - **Repeating the same vague prompt** — each retry must add constraints, paths, or critique from the prior attempt
 - **Self-serving immediately** when a refined delegation round would be cheaper than loading files into context
+- **Hand-writing cross-language bindings** when `transpile_types` applies — use [adjutant-transpiler](../adjutant-transpiler/SKILL.md) pipeline instead
 
 ---
 
