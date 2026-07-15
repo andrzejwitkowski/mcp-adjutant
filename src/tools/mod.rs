@@ -24,8 +24,9 @@ pub use crash_log::{
 };
 pub use env_detector::{find_nearest_module_boundary, get_dirty_files_from_git};
 pub use github::{
-    assert_on_pr_head_branch, extract_run_id_from_link, failed_run_ids, format_pr_state_markdown,
-    gh_post_comment, gh_pr_state, git_push_origin_head, PrCheck, PrState,
+    assert_on_pr_head_branch, ci_checks_blocking, extract_run_id_from_link, failed_run_ids,
+    format_pr_state_markdown, gh_post_comment, gh_pr_state, git_push_origin_head,
+    review_comment_paths, PrCheck, PrReviewComment, PrState,
 };
 pub use lang::{
     detect_file_language, detect_project_languages, language_from_extension, FileLanguageReport,

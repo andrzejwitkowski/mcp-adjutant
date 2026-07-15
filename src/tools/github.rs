@@ -112,6 +112,48 @@ pub fn failed_run_ids(checks: &[PrCheck]) -> Vec<u64> {
         .collect()
 }
 
+fn check_is_blocking(check: &PrCheck) -> bool {
+    if check.bucket.eq_ignore_ascii_case("fail") {
+        return true;
+    }
+    if check.state.eq_ignore_ascii_case("FAILURE") || check.state.eq_ignore_ascii_case("FAILED") {
+        return true;
+    }
+    if check.bucket.eq_ignore_ascii_case("pending") {
+        return true;
+    }
+    matches!(
+        check.state.to_ascii_uppercase().as_str(),
+        "IN_PROGRESS" | "PENDING" | "QUEUED" | "WAITING"
+    )
+}
+
+/// CI check names that block babysitter finalize (failed or still running).
+pub fn ci_checks_blocking(checks: &[PrCheck]) -> Vec<String> {
+    checks
+        .iter()
+        .filter(|check| check_is_blocking(check))
+        .map(|check| check.name.clone())
+        .collect()
+}
+
+/// Unique non-empty file paths from inline PR review comments.
+pub fn review_comment_paths(comments: &[PrReviewComment]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for comment in comments {
+        let Some(path) = comment.path.as_deref() else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        if !paths.iter().any(|p| p == path) {
+            paths.push(path.to_string());
+        }
+    }
+    paths
+}
+
 pub fn gh_pr_state(pr_number: u64) -> Result<PrState, String> {
     let view_json = run_gh_capture(&[
         "pr",
@@ -294,5 +336,59 @@ mod tests {
     fn extract_run_id_from_link_parses_actions_url() {
         let link = "https://github.com/owner/repo/actions/runs/123456789/job/1";
         assert_eq!(extract_run_id_from_link(link), Some(123456789));
+    }
+
+    #[test]
+    fn ci_checks_blocking_includes_fail_and_pending() {
+        let checks = vec![
+            PrCheck {
+                name: "ok".into(),
+                bucket: "pass".into(),
+                state: "SUCCESS".into(),
+                workflow: None,
+                link: None,
+            },
+            PrCheck {
+                name: "rust".into(),
+                bucket: "fail".into(),
+                state: "FAILURE".into(),
+                workflow: None,
+                link: None,
+            },
+            PrCheck {
+                name: "lint".into(),
+                bucket: "pending".into(),
+                state: "IN_PROGRESS".into(),
+                workflow: None,
+                link: None,
+            },
+        ];
+        let blocking = ci_checks_blocking(&checks);
+        assert_eq!(blocking, vec!["rust".to_string(), "lint".to_string()]);
+    }
+
+    #[test]
+    fn review_comment_paths_dedupes_file_paths() {
+        let comments = vec![
+            PrReviewComment {
+                path: Some("src/a.rs".into()),
+                line: Some(1),
+                body: "a".into(),
+            },
+            PrReviewComment {
+                path: Some("src/a.rs".into()),
+                line: Some(2),
+                body: "b".into(),
+            },
+            PrReviewComment {
+                path: None,
+                line: None,
+                body: "general".into(),
+            },
+        ];
+        assert_eq!(
+            review_comment_paths(&comments),
+            vec!["src/a.rs".to_string()]
+        );
     }
 }

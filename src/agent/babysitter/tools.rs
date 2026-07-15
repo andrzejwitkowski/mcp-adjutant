@@ -87,7 +87,12 @@ pub fn babysitter_tool_set() -> LlmToolSet {
         ))
         .register(HarnessTool::new(
             ToolDefinition::new("finalize_session", "Ends the babysitter session (terminal).")
-                .string_param("summary", "Optional one-line session summary.", false),
+                .string_param("summary", "Optional one-line session summary.", false)
+                .string_array_param(
+                    "skipped_review_paths",
+                    "Review comment file paths intentionally not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]).",
+                    false,
+                ),
             true,
         ))
 }
@@ -113,4 +118,48 @@ pub fn parse_triage_arguments(arguments: &Value) -> Result<(Vec<String>, String)
 
 pub fn parse_report_body(arguments: &Value) -> Result<String, String> {
     required_str(arguments, "report")
+}
+
+pub fn parse_finalize_arguments(
+    arguments: &Value,
+) -> Result<(Option<String>, Vec<String>), String> {
+    let summary = arguments
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let skipped_review_paths = arguments
+        .get("skipped_review_paths")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok((summary, skipped_review_paths))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_finalize_arguments_reads_optional_fields() {
+        let args = json!({
+            "summary": "done",
+            "skipped_review_paths": ["src/a.rs"]
+        });
+        let (summary, skipped) = parse_finalize_arguments(&args).expect("parse");
+        assert_eq!(summary.as_deref(), Some("done"));
+        assert_eq!(skipped, vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn parse_finalize_arguments_defaults_skipped_to_empty() {
+        let (summary, skipped) = parse_finalize_arguments(&json!({})).expect("parse");
+        assert!(summary.is_none());
+        assert!(skipped.is_empty());
+    }
 }

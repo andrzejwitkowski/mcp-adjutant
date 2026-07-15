@@ -28,7 +28,7 @@ You operate in a long-running async job loop (up to 20 iterations). Every turn m
      * [ARCHITECTURAL_DISCUSSION] or [NITPICK_OR_IGNORE] -> Do NOT attempt to fix. Log these into your internal session memory as "skipped_tasks".
 3. Local Verification First: Never push code blindly. A child `TriageAgent` must report a successful local build/test execution (`compile` tool returning green) before you are allowed to call `git_push_changes`.
 4. Infinite Loop / Hard Cap Protection: You have a hard budget of iterations. If a specific file or bug fails local verification after multiple attempts within a child loop, or if your own iteration count nears the cap, abort fixing that specific issue, mark it as [FAILED_LIMIT] in your memory, and move to the next issue.
-5. Final Reporting: When all actionable issues are either fixed/pushed or classified as skipped/failed, compile your findings and call `github_post_final_report` to write a unified summary comment on the remote PR, then call `finalize_session`.
+5. Final Reporting: When all actionable issues are either fixed/pushed or classified as skipped/failed, compile your findings and call `github_post_final_report` to write a unified summary comment on the remote PR, then call `finalize_session` with `skipped_review_paths` listing any review comment file paths you did not triage ([ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] / [FAILED_LIMIT]).
 
 ## Available Toolset Guidelines
 
@@ -37,7 +37,7 @@ You operate in a long-running async job loop (up to 20 iterations). Every turn m
 - `invoke_child_triage`: Runs a nested Scout/Triage loop on a specific target file and error context.
 - `git_push_changes`: Pushes the green local workspace state back to GitHub.
 - `github_post_final_report`: Posts the structured markdown report of what was fixed, skipped, or failed.
-- `finalize_session`: Terminal tool to set is_finished = true.
+- `finalize_session`: Terminal tool to set is_finished = true. Requires `github_post_final_report` first, green CI (no failing/pending checks), and every review path from `github_get_pr_state` either triaged via `invoke_child_triage` or listed in `skipped_review_paths`.
 
 ## Session memory
 
@@ -90,7 +90,7 @@ flowchart TD
   skip --> getState
   failedLimit --> getState
   getState -->|no blockers| report[github_post_final_report]
-  report --> finalize[finalize_session]
+  report --> finalize[finalize_session + skipped_review_paths]
 ```
 
 ## Cursor invocation bridge

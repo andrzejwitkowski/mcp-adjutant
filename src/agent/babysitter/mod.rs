@@ -1,3 +1,4 @@
+mod gates;
 mod tools;
 
 use std::path::PathBuf;
@@ -18,8 +19,11 @@ use crate::tools::{
     assert_on_pr_head_branch, format_pr_state_markdown, gh_post_comment, gh_pr_state,
     git_push_origin_head, LlmBuildDiscoverer,
 };
-
-pub use tools::{babysitter_tool_set, parse_log_path, parse_report_body, parse_triage_arguments};
+pub use gates::{check_finalize_allowed, BabysitterSession};
+pub use tools::{
+    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
+    parse_triage_arguments,
+};
 
 pub const BABYSITTER_SYSTEM_PROMPT: &str = r#"You are the BabysitterAgent (PHASE_BABYSITTER), a high-level orchestrator inside mcp-adjutant. Drive the assigned GitHub PR to mergeable state (green CI, resolved actionable reviews).
 
@@ -31,7 +35,7 @@ Orchestration rules:
 2b. CI green but review line comments exist -> invoke_child_triage on cited paths (CodeRabbit/bot inline comments are FIXABLE_ACTION by default).
 3. Review comments: [FIXABLE_ACTION] -> invoke_child_triage; [ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] -> skip (note in finalize report).
 4. Never git_push_changes until the latest invoke_child_triage observation contains [TRIAGE PASS].
-5. When done, github_post_final_report then finalize_session.
+5. When done: github_post_final_report, then finalize_session with skipped_review_paths for any review paths not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]).
 
 Available tools: github_get_pr_state, run_log_analyzer, invoke_child_triage, git_push_changes, github_post_final_report, finalize_session."#;
 
@@ -45,6 +49,7 @@ pub struct BabysitterAgent<C, TC, SC> {
     pr_number: u64,
     tools: LlmToolSet,
     triage_green: Mutex<bool>,
+    session: Mutex<BabysitterSession>,
 }
 
 impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
@@ -61,6 +66,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             pr_number,
             tools: babysitter_tool_set(),
             triage_green: Mutex::new(false),
+            session: Mutex::new(BabysitterSession::default()),
         }
     }
 
@@ -102,6 +108,9 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             "github_get_pr_state" => {
                 let state = gh_pr_state(self.pr_number)?;
                 assert_on_pr_head_branch(&state.head_ref_name)?;
+                if let Ok(mut guard) = self.session.lock() {
+                    guard.record_pr_state(&state);
+                }
                 Ok(format_pr_state_markdown(&state))
             }
             "run_log_analyzer" => {
@@ -110,6 +119,9 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             }
             "invoke_child_triage" => {
                 let (paths, error_context) = tools::parse_triage_arguments(arguments)?;
+                if let Ok(mut guard) = self.session.lock() {
+                    guard.record_triage_paths(&paths);
+                }
                 let resolved = paths
                     .into_iter()
                     .map(|path| resolve_workspace_path(&path))
@@ -133,16 +145,24 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             "github_post_final_report" => {
                 let body = tools::parse_report_body(arguments)?;
                 gh_post_comment(self.pr_number, &body)?;
+                if let Ok(mut guard) = self.session.lock() {
+                    guard.mark_report_posted();
+                }
                 Ok("report posted to PR".to_string())
             }
             "finalize_session" => {
-                let summary = arguments
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or("babysitter session complete");
+                let (summary, skipped_review_paths) = tools::parse_finalize_arguments(arguments)?;
+                let state = gh_pr_state(self.pr_number)?;
+                let session = self
+                    .session
+                    .lock()
+                    .map_err(|_| "session lock poisoned".to_string())?
+                    .clone();
+                check_finalize_allowed(&state, &session, &skipped_review_paths)?;
+                let summary = summary.unwrap_or_else(|| "babysitter session complete".to_string());
                 context.is_finished = true;
                 context.agent_completed = true;
-                Ok(summary.to_string())
+                Ok(summary)
             }
             other => Err(format!("unsupported babysitter tool: {other}")),
         }
