@@ -8,7 +8,7 @@ mod tests {
         // Remove a phase to simulate an old config
         config.phases.remove(&AgentPhase::Planner);
 
-        assert!(config.phases.get(&AgentPhase::Planner).is_none());
+        assert!(!config.phases.contains_key(&AgentPhase::Planner));
 
         config.merge_missing_from_defaults();
 
