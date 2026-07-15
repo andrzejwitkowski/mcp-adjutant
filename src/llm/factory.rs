@@ -49,7 +49,15 @@ pub fn create_llm_client_for_phase(
     config: &AdjutantConfig,
     phase: AgentPhase,
 ) -> Result<ConfiguredLlmClient, String> {
-    create_llm_client(config.try_get_profile(phase)?.clone(), phase)
+    let profile = match config.try_get_profile(phase) {
+        Ok(profile) => profile.clone(),
+        Err(_) => {
+            let mut merged = config.clone();
+            merged.merge_missing_from_defaults();
+            merged.try_get_profile(phase)?.clone()
+        }
+    };
+    create_llm_client(profile, phase)
 }
 
 pub fn create_triage_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
@@ -90,6 +98,16 @@ pub fn create_babysitter_llm_client(
     config: &AdjutantConfig,
 ) -> Result<ConfiguredLlmClient, String> {
     create_llm_client_for_phase(config, AgentPhase::Babysitter)
+}
+
+pub fn create_planner_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Planner)
+}
+
+pub fn create_planner_emit_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::PlannerEmit)
 }
 
 #[cfg(test)]
@@ -141,16 +159,13 @@ mod tests {
     }
 
     #[test]
-    fn create_triage_llm_client_missing_phase_returns_error() {
+    fn create_triage_llm_client_merges_missing_phases() {
         let config = AdjutantConfig {
             phases: HashMap::new(),
             ..Default::default()
         };
 
-        match create_triage_llm_client(&config) {
-            Err(err) => assert!(err.contains("missing profile for phase Triage")),
-            Ok(_) => panic!("expected missing triage profile error"),
-        }
+        create_triage_llm_client(&config).expect("merge backfills default triage profile");
     }
 
     #[test]

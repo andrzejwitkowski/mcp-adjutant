@@ -1,0 +1,30 @@
+{
+  "task_id": "bad-full-rewrite",
+  "architecture_summary": "Smoke-style full-file rewrites (should fail surgical gates).",
+  "pipeline": [
+    {
+      "step": 1,
+      "agent": "BuilderAgent",
+      "action": "patch_file",
+      "target_file": "src/lib.rs",
+      "goal": "Stub at lib.rs:1.",
+      "patch_content": "pub fn stub() {}\n"
+    },
+    {
+      "step": 2,
+      "agent": "BuilderAgent",
+      "action": "patch_file",
+      "target_file": "src/config_server.rs",
+      "goal": "Rewrite run() at config_server.rs:31.",
+      "patch_content": "<<<<<<< SEARCH\n// FABRICATED ANCHOR NOT PRESENT ON DISK — exercises the grounding gate.\npub fn does_not_exist_here() {}\n=======\nuse std::net::SocketAddr;\nuse std::path::{Path, PathBuf};\n#[derive(Clone)]\npub struct ConfigServerState {\n    pub config: std::sync::Arc<tokio::sync::RwLock<crate::domain::AdjutantConfig>>,\n}\npub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {\n    todo!()\n}\n>>>>>>> REPLACE\n"
+    },
+    {
+      "step": 3,
+      "agent": "BuilderAgent",
+      "action": "generate_tests",
+      "target_file": "tests/rate_limit_test.rs",
+      "goal": "Integration test for rate limit.",
+      "patch_content": ""
+    }
+  ]
+}

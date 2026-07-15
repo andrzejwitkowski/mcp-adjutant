@@ -1,0 +1,46 @@
+{
+  "task_id": "config-server-rate-limit",
+  "architecture_summary": "Split the config UI axum router at config_server.rs:35 so /api/* routes sit on a dedicated sub-router with in-memory global RateLimitState middleware (60 req/min, not per-IP), while static fallback stays unlimited. Enable axum macros feature in Cargo.toml:12 for middleware wiring — no new crates.",
+  "pipeline": [
+    {
+      "step": 1,
+      "agent": "BuilderAgent",
+      "action": "create_file",
+      "target_file": "src/config_rate_limit.rs",
+      "goal": "New middleware module; config_server.rs:35 currently has no rate limiting on the Router.",
+      "patch_content": "use std::sync::atomic::{AtomicU64, Ordering};\nuse std::sync::Arc;\n\nuse axum::body::Body;\nuse axum::http::{Request, StatusCode};\nuse axum::middleware::Next;\nuse axum::response::Response;\n\n#[derive(Clone)]\npub struct RateLimitState {\n    window_epoch: Arc<AtomicU64>,\n    count: Arc<AtomicU64>,\n    max_per_window: u64,\n}\n\nimpl RateLimitState {\n    pub fn new(max_per_window: u64) -> Self {\n        Self {\n            window_epoch: Arc::new(AtomicU64::new(0)),\n            count: Arc::new(AtomicU64::new(0)),\n            max_per_window,\n        }\n    }\n}\n\npub async fn middleware(\n    axum::Extension(state): axum::Extension<RateLimitState>,\n    req: Request<Body>,\n    next: Next,\n) -> Result<Response, StatusCode> {\n    let now = std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .unwrap_or_default()\n        .as_secs();\n    let epoch = state.window_epoch.load(Ordering::Relaxed);\n    if now.saturating_sub(epoch) >= 60 {\n        state.window_epoch.store(now, Ordering::Relaxed);\n        state.count.store(0, Ordering::Relaxed);\n    }\n    let n = state.count.fetch_add(1, Ordering::Relaxed);\n    if n >= state.max_per_window {\n        return Err(StatusCode::TOO_MANY_REQUESTS);\n    }\n    Ok(next.run(req).await)\n}\n"
+    },
+    {
+      "step": 2,
+      "agent": "BuilderAgent",
+      "action": "patch_file",
+      "target_file": "src/lib.rs",
+      "goal": "Declare config_rate_limit module; lib.rs:1 lists pub mod agent without config_rate_limit.",
+      "patch_content": "<<<<<<< SEARCH\npub mod agent;\n=======\npub mod agent;\npub mod config_rate_limit;\n>>>>>>> REPLACE\n"
+    },
+    {
+      "step": 3,
+      "agent": "BuilderAgent",
+      "action": "patch_file",
+      "target_file": "src/config_server.rs",
+      "goal": "Wire api-only router at config_server.rs:35-44; layer rate limit before fallback_service.",
+      "patch_content": "<<<<<<< SEARCH\n    let app = Router::new()\n        .route(\"/api/config\", get(get_config).put(put_config))\n        .route(\"/api/evaluations\", get(get_evaluations))\n        .route(\"/api/cache/scout\", get(get_scout_cache))\n        .route(\"/api/cache/web\", get(get_web_cache))\n        .route(\"/api/metrics/summary\", get(get_metrics_summary))\n        .route(\"/api/metrics/daily\", get(get_metrics_daily))\n        .route(\"/api/metrics/timeline\", get(get_metrics_timeline))\n        .fallback_service(serve_dir)\n        .with_state(state);\n=======\n    let limit = crate::config_rate_limit::RateLimitState::new(60);\n    let api = Router::new()\n        .route(\"/api/config\", get(get_config).put(put_config))\n        .route(\"/api/evaluations\", get(get_evaluations))\n        .route(\"/api/cache/scout\", get(get_scout_cache))\n        .route(\"/api/cache/web\", get(get_web_cache))\n        .route(\"/api/metrics/summary\", get(get_metrics_summary))\n        .route(\"/api/metrics/daily\", get(get_metrics_daily))\n        .route(\"/api/metrics/timeline\", get(get_metrics_timeline))\n        .layer(axum::Extension(limit))\n        .layer(axum::middleware::from_fn(crate::config_rate_limit::middleware))\n        .fallback_service(serve_dir)\n        .with_state(state);\n>>>>>>> REPLACE\n"
+    },
+    {
+      "step": 4,
+      "agent": "BuilderAgent",
+      "action": "patch_file",
+      "target_file": "Cargo.toml",
+      "goal": "Enable axum middleware macros; Cargo.toml:12 has axum = \"0.7\" without macros feature.",
+      "patch_content": "<<<<<<< SEARCH\naxum = \"0.7\"\n=======\naxum = { version = \"0.7\", features = [\"macros\"] }\n>>>>>>> REPLACE\n"
+    },
+    {
+      "step": 5,
+      "agent": "BuilderAgent",
+      "action": "generate_tests",
+      "target_file": "tests/config_server_rate_limit_test.rs",
+      "goal": "Integration test: burst GET /api/config at config_server.rs:35 and assert 429 after 60 requests.",
+      "patch_content": ""
+    }
+  ]
+}

@@ -7,12 +7,14 @@ use serde_json::{json, Value};
 
 use crate::agent::{
     analyze_log_at_path, default_builder_agent, default_transformer_agent,
-    default_verify_workspace, embed_source_files, format_triage_success,
-    parse_transpile_types_args, run_scout_with_cache, run_web_fetch_with_cache, triage_passed,
-    AgentLoopOrchestrator, BabysitterAgent, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
-    SystemBuildRunner, TranspilerAgent, TriageAgent, WebCacheOutcome, WebFetcherAgent,
-    BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
-    TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
+    default_verify_workspace, embed_source_files, extract_json_object, format_triage_success,
+    parse_plan_blueprint_args, parse_transpile_types_args, run_planner_hybrid,
+    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
+    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext,
+    AgentLoopOrchestrator, BabysitterAgent, CoordinatorConstraints, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome, SystemBuildRunner, TranspilerAgent,
+    TriageAgent, WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
+    BABYSITTER_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
 use crate::domain::AdjutantConfig;
@@ -22,8 +24,8 @@ use crate::jobs::{
 };
 use crate::llm::{
     create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
-    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
-    create_web_fetcher_llm_client,
+    create_planner_emit_llm_client, create_planner_llm_client, create_scout_llm_client,
+    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
 };
 use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
@@ -36,6 +38,7 @@ pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
 pub const BABYSIT_PR_TOOL_NAME: &str = "babysit_pr";
 pub const TRANSPILE_TYPES_TOOL_NAME: &str = "transpile_types";
+pub const PLAN_BLUEPRINT_TOOL_NAME: &str = "plan_blueprint";
 
 const SOURCE_EMBED_MAX_BYTES: usize = 64 * 1024;
 
@@ -171,6 +174,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         analyze_log_schema(),
         babysit_pr_schema(),
         transpile_types_schema(),
+        plan_blueprint_schema(),
         query_job_status_schema(),
     ]
 }
@@ -851,6 +855,33 @@ pub fn transpile_types_schema() -> Value {
     })
 }
 
+pub fn plan_blueprint_schema() -> Value {
+    json!({
+        "name": PLAN_BLUEPRINT_TOOL_NAME,
+        "description": "Runs the Lead Architect (PlannerAgent): analyzes a high-level feature request or bug report, scouts the repo with read-only tools, and emits a strict Blueprint JSON pipeline for downstream sub-agents (Triage/Transpiler/Builder). Optional coordinator fields plan_kind and expectation steer pipeline shape and patch style. The returned JSON is a prompt contract — the server validates shape but does not execute it. Returns immediately; fetch the result via query_job_status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "feature_request": {
+                    "type": "string",
+                    "description": "High-level feature request or bug report to design a solution for."
+                },
+                "plan_kind": {
+                    "type": "string",
+                    "enum": ["feature", "bugfix", "refactor", "sync_types"],
+                    "description": "Expected blueprint shape. Coordinator sets this so the planner picks the right pipeline template."
+                },
+                "expectation": {
+                    "type": "string",
+                    "description": "Free-form coordinator constraints: patch style (surgical vs create_file), min steps, files/deps policy, test expectations."
+                },
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["feature_request", "request_uuid"]
+        }
+    })
+}
+
 pub async fn handle_transpile_types(
     args: Value,
     config: Arc<AdjutantConfig>,
@@ -954,4 +985,148 @@ pub async fn handle_transpile_types(
         },
     )
     .await
+}
+
+pub async fn handle_plan_blueprint(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let parsed = parse_plan_blueprint_args(&args)?;
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        PLAN_BLUEPRINT_TOOL_NAME,
+        move || async move {
+            let coordinator = CoordinatorConstraints::from_args(&parsed);
+            let scout_client = create_planner_llm_client(&config)?;
+            let emit_client = create_planner_emit_llm_client(&config)?;
+
+            let result = run_planner_hybrid(scout_client, emit_client, parsed).await?;
+
+            Ok(final_blueprint_or_report(&result, &coordinator))
+        },
+    )
+    .await
+}
+
+/// Output-boundary gate before returning blueprint JSON to the coordinator.
+fn final_blueprint_or_report(
+    result: &AgentContext,
+    coordinator: &CoordinatorConstraints,
+) -> String {
+    if let Some(json) = extract_json_object(&result.accumulated_data) {
+        match validate_blueprint(json)
+            .and_then(|bp| validate_blueprint_coordinator(&bp, coordinator).map(|_| bp))
+            .and_then(|bp| validate_blueprint_grounding(&bp, &result.touched_files).map(|_| bp))
+        {
+            Ok(validated) => {
+                return serde_json::to_string_pretty(&validated)
+                    .unwrap_or_else(|_| validated.to_string());
+            }
+            Err(reason) => {
+                return format!(
+                    "Planner report (VALIDATION FAILED after {} iterations):\n\
+                     Blueprint rejected at output boundary: {reason}\n\n\
+                     Raw accumulated output:\n{}",
+                    result.iterations, result.accumulated_data
+                );
+            }
+        }
+    }
+
+    format!(
+        "Planner report (finished={}, iterations={}):\n{}",
+        result.is_finished, result.iterations, result.accumulated_data
+    )
+}
+
+#[cfg(test)]
+mod plan_blueprint_schema_tests {
+    use super::plan_blueprint_schema;
+
+    #[test]
+    fn schema_includes_coordinator_fields() {
+        let schema = plan_blueprint_schema();
+        let props = schema["input_schema"]["properties"]
+            .as_object()
+            .expect("properties");
+        assert!(props.contains_key("plan_kind"));
+        assert!(props.contains_key("expectation"));
+        let kinds = props["plan_kind"]["enum"]
+            .as_array()
+            .expect("plan_kind enum");
+        let values: Vec<_> = kinds.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(values, vec!["feature", "bugfix", "refactor", "sync_types"]);
+    }
+}
+
+#[cfg(test)]
+mod boundary_validator_tests {
+    use super::final_blueprint_or_report;
+    use crate::agent::{AgentContext, CoordinatorConstraints, PlanBlueprintArgs, PlanKind};
+    use crate::cache::resolve_workspace_path;
+
+    fn ctx(data: &str) -> AgentContext {
+        AgentContext {
+            input_prompt: String::new(),
+            accumulated_data: data.to_string(),
+            iterations: 10,
+            max_iterations: 20,
+            is_finished: false,
+            agent_completed: false,
+            touched_files: Vec::new(),
+            last_tool_call: None,
+        }
+    }
+
+    fn constraints() -> CoordinatorConstraints {
+        CoordinatorConstraints::from_args(&PlanBlueprintArgs {
+            feature_request: "x".to_string(),
+            plan_kind: Some(PlanKind::Feature),
+            expectation: Some("surgical patches only".to_string()),
+        })
+    }
+
+    #[test]
+    fn boundary_returns_validated_json_when_completed() {
+        let golden = include_str!("../../tests/fixtures/golden-rate-limit-blueprint.json");
+        let mut c = ctx(golden);
+        c.agent_completed = true;
+        c.is_finished = true;
+        c.touched_files = vec![
+            resolve_workspace_path("src/lib.rs"),
+            resolve_workspace_path("src/config_server.rs"),
+            resolve_workspace_path("Cargo.toml"),
+        ];
+        let out = final_blueprint_or_report(&c, &CoordinatorConstraints::none());
+        assert!(out.contains("\"task_id\""), "{out}");
+        assert!(!out.contains("VALIDATION FAILED"), "{out}");
+    }
+
+    #[test]
+    fn boundary_flags_invalid_json_even_when_agent_completed() {
+        let mut c = ctx("{\"task_id\":\"leaked-draft\",\"architecture_summary\":\"x\",\"pipeline\":[{\"step\":1,\"agent\":\"BuilderAgent\",\"action\":\"patch_file\",\"target_file\":\"src/lib.rs\",\"goal\":\"Wire at lib.rs:1.\",\"patch_content\":\"fn x() { ... }\\n\"},{\"step\":2,\"agent\":\"BuilderAgent\",\"action\":\"generate_tests\",\"target_file\":\"tests/x_test.rs\",\"goal\":\".\",\"patch_content\":\"\"}]}");
+        c.agent_completed = true;
+        c.is_finished = true;
+        let out = final_blueprint_or_report(&c, &constraints());
+        assert!(out.contains("VALIDATION FAILED"), "{out}");
+    }
+
+    #[test]
+    fn boundary_flags_invalid_json_on_iteration_cap() {
+        // Planner burned iterations, left an ungrounded patch in prose JSON.
+        let raw = r#"{"task_id":"leaked-draft","architecture_summary":"x","pipeline":[{"step":1,"agent":"BuilderAgent","action":"patch_file","target_file":"src/lib.rs","goal":"Wire at lib.rs:1.","patch_content":"<<<<<<< SEARCH\n// FABRICATED\n=======\nfn x() { ... }\n>>>>>>> REPLACE\n"},{"step":2,"agent":"BuilderAgent","action":"generate_tests","target_file":"tests/x_test.rs","goal":".","patch_content":""}]}"#;
+        let out = final_blueprint_or_report(&ctx(raw), &constraints());
+        assert!(out.contains("VALIDATION FAILED"), "{out}");
+        assert!(out.contains("output boundary"), "{out}");
+    }
+
+    #[test]
+    fn boundary_falls_back_to_report_when_no_json() {
+        let out = final_blueprint_or_report(&ctx("just prose, no json"), &constraints());
+        assert!(out.contains("Planner report"), "{out}");
+    }
 }

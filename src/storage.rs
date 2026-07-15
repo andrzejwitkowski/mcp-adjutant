@@ -16,6 +16,8 @@ const KNOWN_PHASES: &[&str] = &[
     "evaluator",
     "log_analyzer",
     "web_fetcher",
+    "planner",
+    "planner_emit",
 ];
 
 pub fn load_from_file(path: &Path) -> Result<AdjutantConfig, AdjutantConfigError> {
@@ -39,6 +41,15 @@ pub fn migrate_config_value(value: &mut Value) {
     if phases.contains_key("transformer") && !phases.contains_key("pruner") {
         if let Some(transformer) = phases.remove("transformer") {
             phases.insert("pruner".to_string(), transformer);
+        }
+    }
+
+    // New installs often have scout/builder tuned but no planner rows yet.
+    if !phases.contains_key("planner") {
+        if let Some(scout) = phases.get("scout").cloned() {
+            phases.insert("planner".to_string(), scout);
+        } else if let Some(builder) = phases.get("builder").cloned() {
+            phases.insert("planner".to_string(), builder);
         }
     }
 

@@ -47,6 +47,16 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     title: 'Babysitter',
     hint: 'PR orchestration — CI, reviews, push when green',
   },
+  {
+    phase: 'planner',
+    title: 'Planner (scout)',
+    hint: 'Cheap read-only scouting before blueprint emit',
+  },
+  {
+    phase: 'planner_emit',
+    title: 'Planner (emit)',
+    hint: 'Stronger model for final Blueprint JSON synthesis',
+  },
 ]
 
 const DEFAULT_PROFILE: PhaseProfile = {
@@ -65,6 +75,9 @@ const PHASE_DEFAULT_OVERRIDES: Partial<
   log_analyzer: { max_tokens: 2048, temperature: 0 },
   web_fetcher: { max_tokens: 2048, temperature: 0.2 },
   babysitter: { max_tokens: 4096, temperature: 0.4 },
+  builder: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.2 },
+  planner: { max_tokens: 4096, temperature: 0.3 },
+  planner_emit: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.1 },
 }
 
 function defaultProfileFor(phase: AgentPhase): PhaseProfile {
@@ -88,6 +101,8 @@ const KNOWN_PHASES: AgentPhase[] = [
   'log_analyzer',
   'web_fetcher',
   'babysitter',
+  'planner',
+  'planner_emit',
 ]
 
 function defaultWebFetcher(): WebFetcherProfile {
@@ -137,6 +152,11 @@ function withDisplayedPhases(loaded: AdjutantConfig): AdjutantConfig {
   const phases = migrateLegacyPhases(loaded.phases as Record<string, PhaseProfile>) as Partial<
     Record<AgentPhase, PhaseProfile>
   >
+  if (!phases.planner && phases.scout) {
+    phases.planner = { ...phases.scout }
+  } else if (!phases.planner && phases.builder) {
+    phases.planner = { ...phases.builder }
+  }
   for (const { phase } of AGENT_PHASES) {
     if (!phases[phase]) {
       phases[phase] = defaultProfileFor(phase)

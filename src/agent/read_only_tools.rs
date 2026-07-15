@@ -1,0 +1,260 @@
+use serde_json::Value;
+
+use crate::cache::{mcp_workspace_root, resolve_workspace_path};
+use crate::llm::{required_str, LlmTool, LlmToolSet, ToolDefinition};
+use crate::tools::{
+    detect_file_language, detect_project_languages, read_file_range, run_ripgrep, AstUsageFinder,
+};
+
+/// Read-only repo tools shared by Scout and Planner scout phase.
+pub fn read_only_tool_set() -> LlmToolSet {
+    LlmToolSet::new()
+        .register(DetectLanguageTool::new())
+        .register(RipgrepTool::new())
+        .register(AstCallsTool::new())
+        .register(ReadFileTool::new())
+}
+
+/// Scout-phase planner tools: read-only inspection + verbatim SEARCH anchor helper.
+pub fn planner_scout_tool_set() -> LlmToolSet {
+    read_only_tool_set().register(ExtractSearchAnchorTool::new())
+}
+
+struct DetectLanguageTool {
+    definition: ToolDefinition,
+}
+
+impl DetectLanguageTool {
+    fn new() -> Self {
+        Self {
+            definition: ToolDefinition::new(
+                "detect_language",
+                "Detects file or project language from extension, markers (Cargo.toml, package.json, ...), and content heuristics.",
+            )
+            .string_param("path", "Path to a file or project directory.", true)
+            .enum_param(
+                "scope",
+                "file = single file, project = scan the repo directory.",
+                &["file", "project"],
+                true,
+            ),
+        }
+    }
+}
+
+impl LlmTool for DetectLanguageTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
+    }
+
+    fn invoke(&self, arguments: &Value) -> Result<String, String> {
+        let path = required_str(arguments, "path")?;
+        let scope = required_str(arguments, "scope")?;
+        let path = resolve_workspace_path(path);
+        let report = match scope.as_str() {
+            "file" => serde_json::to_string(&detect_file_language(&path)?),
+            "project" => serde_json::to_string(&detect_project_languages(&path)?),
+            other => {
+                return Err(format!(
+                    "detect_language scope must be file|project, got: {other}"
+                ))
+            }
+        }
+        .map_err(|err| format!("failed to serialize language report: {err}"))?;
+        Ok(report)
+    }
+}
+
+struct RipgrepTool {
+    definition: ToolDefinition,
+}
+
+impl RipgrepTool {
+    fn new() -> Self {
+        Self {
+            definition: ToolDefinition::new(
+                "ripgrep",
+                "Broad text search: runs ripgrep with line context.",
+            )
+            .string_param("pattern", "Search pattern passed to ripgrep.", true),
+        }
+    }
+}
+
+impl LlmTool for RipgrepTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
+    }
+
+    fn invoke(&self, arguments: &Value) -> Result<String, String> {
+        let pattern = required_str(arguments, "pattern")?;
+        // ponytail: always search MCP workspace — LLM-provided roots have caused permission errors
+        let root = mcp_workspace_root();
+        run_ripgrep(&pattern, &root)
+    }
+}
+
+struct AstCallsTool {
+    definition: ToolDefinition,
+}
+
+impl AstCallsTool {
+    fn new() -> Self {
+        Self {
+            definition: ToolDefinition::new(
+                "ast_calls",
+                "AST scalpel: returns physical line numbers of method calls (excluding comments and strings).",
+            )
+            .string_param(
+                "file",
+                "Path to the source file (e.g. .rs, .py, .java, .kt, .sql, .c, .cpp).",
+                true,
+            )
+            .string_param("method", "Called method/function name.", true),
+        }
+    }
+}
+
+impl LlmTool for AstCallsTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
+    }
+
+    fn invoke(&self, arguments: &Value) -> Result<String, String> {
+        let file = required_str(arguments, "file")?;
+        let method = required_str(arguments, "method")?;
+        let file = resolve_workspace_path(&file);
+        let lines = AstUsageFinder::find_calls_in_file(&file, &method)?;
+        if lines.is_empty() {
+            Ok("No call sites found.".to_string())
+        } else {
+            Ok(format!("Call sites at lines: {lines:?}"))
+        }
+    }
+}
+
+pub(crate) struct ReadFileTool {
+    definition: ToolDefinition,
+}
+
+impl ReadFileTool {
+    pub(crate) fn new() -> Self {
+        Self {
+            definition: ToolDefinition::new(
+                "read_file",
+                "Reads a file slice by line numbers (1-based, inclusive).",
+            )
+            .string_param("file", "Path to the file.", true)
+            .integer_param("start", "First line (>= 1).", true)
+            .integer_param("end", "Last line (>= start).", true),
+        }
+    }
+}
+
+impl LlmTool for ReadFileTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
+    }
+
+    fn invoke(&self, arguments: &Value) -> Result<String, String> {
+        let file = required_str(arguments, "file")?;
+        let path = resolve_workspace_path(&file);
+        let mut start = required_usize(arguments, "start")?;
+        let mut end = required_usize(arguments, "end")?;
+        // ponytail: clamp LLM line numbers (JSON f64 / huge end values) to file bounds
+        let line_count = std::fs::read_to_string(&path)
+            .map(|content| content.lines().count())
+            .unwrap_or(0)
+            .max(1);
+        end = end.min(line_count);
+        start = start.clamp(1, end);
+        read_file_range(&path, start, end)
+    }
+}
+
+struct ExtractSearchAnchorTool {
+    definition: ToolDefinition,
+}
+
+impl ExtractSearchAnchorTool {
+    fn new() -> Self {
+        Self {
+            definition: ToolDefinition::new(
+                "extract_search_anchor",
+                "Returns a SEARCH/REPLACE hunk template with the SEARCH block copied verbatim from disk — paste your REPLACE lines after =======.",
+            )
+            .string_param("file", "Path to the file.", true)
+            .integer_param("start", "First line of anchor (>= 1).", true)
+            .integer_param("end", "Last line of anchor (>= start).", true),
+        }
+    }
+}
+
+impl LlmTool for ExtractSearchAnchorTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.definition
+    }
+
+    fn invoke(&self, arguments: &Value) -> Result<String, String> {
+        let file = required_str(arguments, "file")?;
+        let path = resolve_workspace_path(&file);
+        let mut start = required_usize(arguments, "start")?;
+        let mut end = required_usize(arguments, "end")?;
+        let line_count = std::fs::read_to_string(&path)
+            .map(|content| content.lines().count())
+            .unwrap_or(0)
+            .max(1);
+        end = end.min(line_count);
+        start = start.clamp(1, end);
+        let anchor = read_file_range(&path, start, end)?;
+        Ok(format!(
+            "Copy this hunk into patch_content (fill in REPLACE after =======):\n<<<<<<< SEARCH\n{anchor}\n=======\n(your REPLACE lines)\n>>>>>>> REPLACE"
+        ))
+    }
+}
+
+pub(crate) fn required_usize(arguments: &Value, key: &str) -> Result<usize, String> {
+    let value = arguments
+        .get(key)
+        .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))?;
+    let n = match value {
+        Value::Number(num) => num.as_u64().or_else(|| {
+            num.as_f64()
+                .filter(|f| f.is_finite() && *f >= 1.0)
+                .map(|f| f as u64)
+        }),
+        Value::String(text) => text.parse::<u64>().ok(),
+        _ => None,
+    }
+    .ok_or_else(|| format!("tool argument '{key}' must be a positive integer"))?;
+    if n == 0 {
+        return Err(format!("tool argument '{key}' must be >= 1"));
+    }
+    usize::try_from(n).map_err(|_| format!("tool argument '{key}' is too large"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planner_scout_tool_set_registers_five_tools() {
+        let tools = planner_scout_tool_set();
+        let names: Vec<_> = tools
+            .definitions()
+            .into_iter()
+            .map(|tool| tool.name.clone())
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "detect_language".to_string(),
+                "ripgrep".to_string(),
+                "ast_calls".to_string(),
+                "read_file".to_string(),
+                "extract_search_anchor".to_string(),
+            ]
+        );
+    }
+}

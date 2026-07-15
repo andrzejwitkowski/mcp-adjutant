@@ -19,13 +19,15 @@ pub use tools::{
 
 pub use agent::{
     babysitter_tool_set, builder_tool_set, default_transformer_agent, find_refactor_targets,
-    llm_payload_to_core, path_under_scope, scout_tool_set, transformer_tool_set, AgentContext,
+    llm_payload_to_core, path_under_scope, scout_tool_set, transformer_tool_set,
+    validate_blueprint, validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext,
     AgentLoopOrchestrator, AutonomousAgent, BabysitterAgent, BuildCommandRunner, BuilderAgent,
-    DefaultBuilderAgent, DefaultTransformerAgent, EvaluatorAgent, LogAnalyzerAgent, ScoutAgent,
-    ScoutModelTurn, ScoutToolCall, SystemBuildRunner, TextPrunerMock, TransformerAgent,
-    TranspilerAgent, TriageAgent, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
-    BABYSITTER_SYSTEM_PROMPT, BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT,
-    LOG_ANALYZER_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    CoordinatorConstraints, DefaultBuilderAgent, DefaultTransformerAgent, EvaluatorAgent,
+    LogAnalyzerAgent, PlanBlueprintArgs, PlanKind, PlannerAgent, ScoutAgent, ScoutModelTurn,
+    ScoutToolCall, SystemBuildRunner, TextPrunerMock, TransformerAgent, TranspilerAgent,
+    TriageAgent, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT, LOG_ANALYZER_SYSTEM_PROMPT,
+    PLANNER_MAX_ITERATIONS, PLANNER_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
     TRANSFORMER_SYSTEM_PROMPT, TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT,
     TRIAGE_SYSTEM_PROMPT, WEB_FETCHER_SYSTEM_PROMPT,
 };

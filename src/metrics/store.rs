@@ -167,30 +167,33 @@ impl MetricsStore {
         mcp_tool: &str,
         request_uuid: Option<String>,
     ) -> Result<(), String> {
-        let Some(phase) = mcp_tool_to_phase(mcp_tool) else {
+        let phases = phases_for_mcp_tool(mcp_tool);
+        if phases.is_empty() {
             return Ok(());
-        };
+        }
         let created_at = current_unix_timestamp()?;
         let utc_date = utc_date_from_secs(created_at);
         let request_uuid =
             request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
 
-        self.conn
-            .execute(
-                "INSERT INTO agent_runs (
+        for phase in phases {
+            self.conn
+                .execute(
+                    "INSERT INTO agent_runs (
                     id, session_id, request_uuid, mcp_tool, agent_phase, created_at, utc_date
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    new_event_id(),
-                    session_id(),
-                    request_uuid,
-                    mcp_tool,
-                    phase_label(phase),
-                    created_at,
-                    utc_date,
-                ],
-            )
-            .map_err(|err| format!("record agent run: {err}"))?;
+                    params![
+                        new_event_id(),
+                        session_id(),
+                        request_uuid.clone(),
+                        mcp_tool,
+                        phase_label(phase),
+                        created_at,
+                        utc_date,
+                    ],
+                )
+                .map_err(|err| format!("record agent run: {err}"))?;
+        }
         Ok(())
     }
 }
@@ -231,17 +234,18 @@ pub fn record_agent_run(mcp_tool: &str, request_uuid: Option<String>) {
     }
 }
 
-fn mcp_tool_to_phase(mcp_tool: &str) -> Option<AgentPhase> {
+fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
     match mcp_tool {
-        "scout_context" => Some(AgentPhase::Scout),
-        "verify_and_triage" => Some(AgentPhase::Triage),
-        "generate_tests_and_scaffolding" => Some(AgentPhase::Builder),
-        "evaluate_agent_performance" => Some(AgentPhase::Evaluator),
-        "analyze_log" => Some(AgentPhase::LogAnalyzer),
-        "web_fetch" => Some(AgentPhase::WebFetcher),
-        "execute_global_refactor" => Some(AgentPhase::Transformer),
-        "babysit_pr" => Some(AgentPhase::Babysitter),
-        _ => None,
+        "scout_context" => vec![AgentPhase::Scout],
+        "verify_and_triage" => vec![AgentPhase::Triage],
+        "generate_tests_and_scaffolding" => vec![AgentPhase::Builder],
+        "evaluate_agent_performance" => vec![AgentPhase::Evaluator],
+        "analyze_log" => vec![AgentPhase::LogAnalyzer],
+        "web_fetch" => vec![AgentPhase::WebFetcher],
+        "execute_global_refactor" => vec![AgentPhase::Transformer],
+        "babysit_pr" => vec![AgentPhase::Babysitter],
+        "plan_blueprint" => vec![AgentPhase::Planner, AgentPhase::PlannerEmit],
+        _ => vec![],
     }
 }
 
@@ -336,6 +340,46 @@ mod tests {
 
         drop(store);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn record_agent_run_maps_plan_blueprint_to_planner_and_emit() {
+        let dir =
+            std::env::temp_dir().join(format!("metrics-plan-blueprint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let db_path = dir.join("metrics.db");
+
+        let store = Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")));
+        init("session-plan-blueprint".to_string(), Arc::clone(&store));
+
+        store
+            .lock()
+            .expect("lock")
+            .record_agent_run("plan_blueprint", Some("req-planner-1".to_string()))
+            .expect("run");
+
+        {
+            let store = store.lock().expect("lock");
+            let conn = store.connection();
+            let run_rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))
+                .expect("count runs");
+            assert_eq!(run_rows, 2);
+
+            let mut phases: Vec<String> = Vec::new();
+            let mut stmt = conn
+                .prepare("SELECT agent_phase FROM agent_runs ORDER BY agent_phase")
+                .expect("prepare");
+            let rows = stmt.query_map([], |row| row.get(0)).expect("query");
+            for row in rows {
+                phases.push(row.expect("row"));
+            }
+            assert_eq!(phases, vec!["planner", "planner_emit"]);
+        }
+
+        drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

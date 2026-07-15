@@ -58,10 +58,14 @@ impl<C: LlmClient> EvaluatorAgent<C> {
     }
 
     fn build_user_message(&self) -> String {
-        format!(
+        let mut message = format!(
             "AGENT: {}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
             self.target_agent, self.original_task, self.received_output
-        )
+        );
+        if let Some(rubric) = planner_evaluation_rubric(&self.target_agent) {
+            message.push_str(rubric);
+        }
+        message
     }
 
     fn parse_evaluation_response(raw: &str) -> Result<EvaluationPayload, String> {
@@ -77,6 +81,23 @@ impl<C: LlmClient> EvaluatorAgent<C> {
 
         serde_json::from_str(json_body)
             .map_err(|err| format!("failed to parse evaluator JSON response: {err}"))
+    }
+}
+
+fn planner_evaluation_rubric(target_agent: &str) -> Option<&'static str> {
+    if target_agent.to_ascii_lowercase().contains("planner") {
+        Some(
+            "\n\nPLANNER RUBRIC (override generic scout rubric):\n\
+             - 9-10: Multi-step pipeline (create_file for new logic + patch_file SEARCH/REPLACE wiring hunks + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, architecture_summary matches code\n\
+             - 7-8: Correct pipeline structure with grounded SEARCH/REPLACE hunks and generate_tests; minor API/style issues in create_file only\n\
+             - 5-6: Schema-valid but single-step feature, missing generate_tests, ungrounded SEARCH blocks, logic dumped into REPLACE (>15 lines), or comment sketches\n\
+             - 1-4: Hallucinated modules, empty patches, wrong agents, or full-function rewrites instead of hunks\n\
+             Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6.\n\
+             patch_file MUST use SEARCH/REPLACE hunks (not paste-ready full-file rewrites). create_file holds new logic.\n\
+             Score down if blueprint violates stated coordinator plan_kind or expectations.",
+        )
+    } else {
+        None
     }
 }
 
@@ -148,7 +169,16 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_json_object, EvaluatorAgent};
+    use super::{extract_json_object, planner_evaluation_rubric, EvaluatorAgent};
+
+    #[test]
+    fn planner_evaluation_rubric_appended_for_planner_agent() {
+        let rubric = planner_evaluation_rubric("PlannerAgent").expect("rubric");
+        assert!(rubric.contains("PLANNER RUBRIC"));
+        assert!(rubric.contains("SEARCH/REPLACE"));
+        assert!(!rubric.contains("paste-ready patches"));
+        assert!(planner_evaluation_rubric("ScoutAgent").is_none());
+    }
 
     #[test]
     fn extract_json_object_finds_object_inside_prose() {

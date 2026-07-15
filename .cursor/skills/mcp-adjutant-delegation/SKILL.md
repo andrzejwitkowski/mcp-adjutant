@@ -22,6 +22,7 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | `execute_global_refactor` | Transformer | Rename method/struct; propagate signature changes |
 | `evaluate_agent_performance` | Evaluator | QA a sub-agent result before trusting or re-delegating |
 | `transpile_types` | Transpiler | Cross-language API type / DTO sync (coordinator sets `architecture_layout`) |
+| `plan_blueprint` | Planner | Feature/bugfix/refactor blueprint JSON before Builder/Transpiler execution |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
 
 ---
@@ -110,6 +111,7 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 | External docs, API specs, library usage | `web_fetch` | WebSearch, WebFetch, guessing |
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
 | Cross-language API type / DTO sync | `transpile_types` (after `scout_context`) | Hand-written bindings, copy-paste structs |
+| Implementation blueprint before multi-step build | `plan_blueprint` (after `scout_context` when repo context needed) | Premium agent drafting full patch pipelines from scratch |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
 | Poll async jobs | `query_job_status` | Guessing timeouts |
 
@@ -248,7 +250,15 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 2. `web_fetch` — when the plan cites external library/API behavior
 3. `analyze_log` — when the plan depends on CI/log evidence
 4. `evaluate_agent_performance` — on scout/web/log outputs (score ≥ 7)
-5. Premium writes the plan from verified adjutant evidence — not from manual Grep chains
+5. `plan_blueprint` — when execution needs a multi-step Builder/Transpiler pipeline; set `plan_kind` and `expectation` so the cheap planner matches coordinator intent
+6. `evaluate_agent_performance` — on planner blueprint (score ≥ 7); include `plan_kind` / `expectation` in `original_task`
+7. Premium integrates blueprint or writes the plan from verified adjutant evidence — not from manual Grep chains
+
+**Coordinator fields for `plan_blueprint`:**
+
+- **`plan_kind`** (optional): `feature` | `bugfix` | `refactor` | `sync_types` — set whenever task type is known
+- **`expectation`** (optional): free-form constraints the cheap planner won't infer (patch style, min steps, files/deps policy). Example: "surgical patches from read_file excerpts only; do not rewrite entire config_server.rs"
+- **Enforced at `emit_blueprint`:** when either field is set, `validate_blueprint_coordinator` runs after schema validation — wrong agents, `create_file` on bugfix, full-file `patch_file` hunks (>50% of on-disk file or >80 non-empty lines when surgical), and manifest block rewrites are **rejected** and the planner soft-retries (same as other blueprint rejections)
 
 ### Hard rules (non-negotiable)
 
@@ -292,6 +302,7 @@ Before handoff on substantive work, include in your response (or internal trace)
 - [ ] web_fetch — Y/N or N/A
 - [ ] execute_global_refactor — Y/N or N/A
 - [ ] transpile_types — Y/N or N/A (see [adjutant-transpiler](../adjutant-transpiler/SKILL.md))
+- [ ] plan_blueprint — Y/N or N/A (set plan_kind + expectation when delegating blueprint)
 - [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …, transpiler …
 ```
 
@@ -497,6 +508,19 @@ Use for library docs, API specs, release notes — not for in-repo code (use sco
 ```
 
 Full coordinator checklist: [adjutant-transpiler/SKILL.md](../adjutant-transpiler/SKILL.md). Agent may write **only** `target_path`.
+
+**plan_blueprint**
+
+```json
+{
+  "feature_request": "Add tower-governor rate limiting to config server API routes, 10 req/s per IP.",
+  "plan_kind": "feature",
+  "expectation": "Surgical patches only — read_file then patch minimal hunks in config_server.rs and one line in Cargo.toml. No full-file rewrites. Pipeline: Cargo.toml dep → config_server.rs layer → generate_tests integration test.",
+  "request_uuid": "<uuid>"
+}
+```
+
+When evaluating the planner, include `plan_kind` and `expectation` in `evaluate_agent_performance.original_task`. Coordinator rejections surface as `Blueprint rejected: pipeline[N]: …` from `emit_blueprint` before the evaluator runs.
 
 ---
 
