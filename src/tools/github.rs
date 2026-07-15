@@ -200,12 +200,13 @@ pub fn format_pr_state_markdown(state: &PrState) -> String {
                 None => path.to_string(),
             };
             let body = comment.body.trim();
-            let preview: String = body.chars().take(300).collect();
-            let suffix = if body.chars().count() > 300 {
-                "…"
-            } else {
-                ""
-            };
+            let mut chars = body.chars();
+            let preview: String = chars
+                .by_ref()
+                .take(300)
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .collect();
+            let suffix = if chars.next().is_some() { "…" } else { "" };
             out.push_str(&format!("- `{loc}` — {preview}{suffix}\n"));
         }
     }

@@ -1,29 +1,29 @@
 {
   "task_id": "bad-full-rewrite",
-  "architecture_summary": "Smoke-style full-file rewrites (should fail surgical gates).",
+  "architecture_summary": "Grounded blueprint with equal-size wholesale hunks (should fail minimality gate).",
   "pipeline": [
     {
       "step": 1,
       "agent": "BuilderAgent",
       "action": "patch_file",
       "target_file": "src/lib.rs",
-      "goal": "Stub at lib.rs:1.",
-      "patch_content": "pub fn stub() {}\n"
+      "goal": "Stub wiring at lib.rs:1.",
+      "patch_content": "<<<<<<< SEARCH\npub mod agent;\n=======\npub mod agent;\npub mod stub;\n>>>>>>> REPLACE\n"
     },
     {
       "step": 2,
       "agent": "BuilderAgent",
       "action": "patch_file",
       "target_file": "src/config_server.rs",
-      "goal": "Rewrite run() at config_server.rs:31.",
-      "patch_content": "<<<<<<< SEARCH\n// FABRICATED ANCHOR NOT PRESENT ON DISK — exercises the grounding gate.\npub fn does_not_exist_here() {}\n=======\nuse std::net::SocketAddr;\nuse std::path::{Path, PathBuf};\n#[derive(Clone)]\npub struct ConfigServerState {\n    pub config: std::sync::Arc<tokio::sync::RwLock<crate::domain::AdjutantConfig>>,\n}\npub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {\n    todo!()\n}\n>>>>>>> REPLACE\n"
+      "goal": "Rewrite routes at config_server.rs:35.",
+      "patch_content": "<<<<<<< SEARCH\n    let app = Router::new()\n        .route(\"/api/config\", get(get_config).put(put_config))\n        .route(\"/api/evaluations\", get(get_evaluations))\n=======\n    let app = axum::Router::new()\n        .route(\"/api/metrics/summary\", get(get_metrics_summary))\n        .route(\"/api/metrics/daily\", get(get_metrics_daily))\n>>>>>>> REPLACE\n"
     },
     {
       "step": 3,
       "agent": "BuilderAgent",
       "action": "generate_tests",
       "target_file": "tests/rate_limit_test.rs",
-      "goal": "Integration test for rate limit.",
+      "goal": "Integration test for rate limit at config_server.rs:35.",
       "patch_content": ""
     }
   ]

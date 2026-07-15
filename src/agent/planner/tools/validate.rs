@@ -319,8 +319,25 @@ fn validate_hunk_minimality(idx: usize, target: &str, hunks: &[Hunk]) -> Result<
                 "pipeline[{idx}]: REPLACE adds {extra} non-empty lines over {search_lines}-line SEARCH in {target} (max +{SURGICAL_MAX_NEW_LINES}) — move the extra logic into a create_file step for a new module, keep patch_file as wiring-only hunks"
             ));
         }
+        if search_lines >= 2
+            && search_lines == replace_lines
+            && count_preserved_search_lines(&hunk.search, &hunk.replace) == 0
+        {
+            return Err(format!(
+                "pipeline[{idx}]: REPLACE rewrites every SEARCH line in {target} — keep at least one verbatim SEARCH line or use create_file for large changes"
+            ));
+        }
     }
     Ok(())
+}
+
+fn count_preserved_search_lines(search: &str, replace: &str) -> usize {
+    search
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| replace.lines().any(|r| r.trim() == *line))
+        .count()
 }
 
 fn count_nonempty_lines(text: &str) -> usize {
@@ -717,5 +734,24 @@ mod tests {
         };
         let step = json!({});
         validate_hunk_grounding(0, "f.rs", &[hunk], file_body, &step).expect("crlf normalize");
+    }
+
+    #[test]
+    fn hunk_minimality_rejects_wholesale_equal_size_rewrite() {
+        let hunks = vec![Hunk {
+            search: "line one\nline two\n".to_string(),
+            replace: "alpha\nbeta\n".to_string(),
+        }];
+        let err = validate_hunk_minimality(0, "f.rs", &hunks).unwrap_err();
+        assert!(err.contains("rewrites every SEARCH line"), "{err}");
+    }
+
+    #[test]
+    fn hunk_minimality_allows_single_line_rewrite() {
+        let hunks = vec![Hunk {
+            search: "axum = \"0.7\"\n".to_string(),
+            replace: "axum = { version = \"0.7\", features = [\"macros\"] }\n".to_string(),
+        }];
+        validate_hunk_minimality(0, "Cargo.toml", &hunks).expect("single-line ok");
     }
 }

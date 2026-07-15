@@ -117,10 +117,5 @@ fn golden_blueprint_passes_surgical_feature_constraints() {
 #[test]
 fn bad_full_rewrite_fails_surgical_constraints() {
     let err = validate_blueprint(BAD_FULL_REWRITE).unwrap_err();
-    assert!(
-        err.contains("SEARCH block not found")
-            || err.contains("SEARCH/REPLACE")
-            || err.contains("hunk"),
-        "{err}"
-    );
+    assert!(err.contains("rewrites every SEARCH line"), "{err}");
 }

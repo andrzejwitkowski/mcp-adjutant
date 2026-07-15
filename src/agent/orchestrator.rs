@@ -76,19 +76,36 @@ impl AgentLoopOrchestrator {
                 .collect::<Vec<_>>()
                 .join("\n- ")
         };
-        if context.accumulated_data.is_empty() {
+        let observations = strip_prior_iteration_cap(&context.accumulated_data);
+        if observations.is_empty() {
             context.accumulated_data = format!(
                 "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}\n",
                 context.iterations, context.max_iterations
             );
         } else {
             context.accumulated_data = format!(
-                "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}\n\n{}",
-                context.iterations, context.max_iterations, context.accumulated_data
+                "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}\n\n{observations}",
+                context.iterations, context.max_iterations
             );
         }
         context.is_finished = true;
     }
+}
+
+/// Drop a prior iteration-cap header so `resume()` does not nest cap blocks.
+fn strip_prior_iteration_cap(data: &str) -> &str {
+    const MARKER: &str = "iteration limit after";
+    if !data.contains(MARKER) {
+        return data;
+    }
+    let Some(idx) = data.find("Touched files:\n") else {
+        return data;
+    };
+    let tail = &data[idx..];
+    let Some(blank) = tail.find("\n\n") else {
+        return data;
+    };
+    tail[blank + 2..].trim_start()
 }
 
 pub fn build_tool_loop_message(context: &AgentContext) -> String {
@@ -397,5 +414,13 @@ mod tests {
         assert!(!result.agent_completed);
         assert_eq!(result.iterations, 2);
         assert!(result.accumulated_data.contains("scout notes"));
+    }
+
+    #[test]
+    fn strip_prior_iteration_cap_removes_nested_header() {
+        let capped = "## builder report (iteration limit after 2 of 3 turns)\n\nbuilder did not finalize; partial evidence only.\nWorkspace: /tmp\nTouched files:\n- (none)\n\nTool: read_file\nObservation:\nline 1\n";
+        let stripped = strip_prior_iteration_cap(capped);
+        assert!(stripped.starts_with("Tool: read_file"));
+        assert!(!stripped.contains("iteration limit after"));
     }
 }

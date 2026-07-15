@@ -556,46 +556,38 @@ fn coordinator_bugfix_rejects_create_file() {
 
 #[test]
 fn coordinator_surgical_rejects_large_patch_ratio() {
-    // Fabricated SEARCH anchor (not on disk) → grounding rejection under the new hunk gate.
-    let patch = "<<<<<<< SEARCH\n// FABRICATED anchor not on disk\nfn fake_symbol() {}\n=======\npub const FILLER_0: u32 = 0;\npub const FILLER_1: u32 = 1;\n>>>>>>> REPLACE\n";
-    let raw = format!(
-        r#"{{
+    let raw = r#"{
         "task_id": "big-patch",
-        "architecture_summary": "Rewrite.",
+        "architecture_summary": "Wholesale equal-size rewrite.",
         "pipeline": [
-            {{
+            {
                 "step": 1,
                 "agent": "BuilderAgent",
                 "action": "patch_file",
                 "target_file": "src/lib.rs",
                 "goal": "Tiny change at lib.rs:1.",
-                "patch_content": "<<<<<<< SEARCH\npub mod agent;\n=======\npub mod agent;\npub fn x() {{}}\n>>>>>>> REPLACE\n"
-            }},
-            {{
+                "patch_content": "<<<<<<< SEARCH\npub mod agent;\n=======\npub mod agent;\npub fn x() {}\n>>>>>>> REPLACE\n"
+            },
+            {
                 "step": 2,
                 "agent": "BuilderAgent",
                 "action": "patch_file",
                 "target_file": "src/config_server.rs",
                 "goal": "Full rewrite at config_server.rs:35.",
-                "patch_content": {patch_json}
-            }},
-            {{
+                "patch_content": "<<<<<<< SEARCH\n    let app = Router::new()\n        .route(\"/api/config\", get(get_config).put(put_config))\n        .route(\"/api/evaluations\", get(get_evaluations))\n=======\n    let app = axum::Router::new()\n        .route(\"/api/metrics/summary\", get(get_metrics_summary))\n        .route(\"/api/metrics/daily\", get(get_metrics_daily))\n>>>>>>> REPLACE\n"
+            },
+            {
                 "step": 3,
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/x_test.rs",
-                "goal": "Cover rate limit behavior.",
+                "goal": "Cover rate limit behavior at config_server.rs:35.",
                 "patch_content": ""
-            }}
+            }
         ]
-    }}"#,
-        patch_json = serde_json::to_string(&patch).unwrap()
-    );
-    let err = validate_blueprint(&raw).unwrap_err();
-    assert!(
-        err.contains("SEARCH block not found") || err.contains("surgical"),
-        "{err}"
-    );
+    }"#;
+    let err = validate_blueprint(raw).unwrap_err();
+    assert!(err.contains("rewrites every SEARCH line"), "{err}");
 }
 
 #[test]
@@ -643,10 +635,9 @@ fn coordinator_manifest_single_line_dep_ok() {
 
 #[test]
 fn coordinator_manifest_dependencies_block_rejected() {
-    // Fabricated SEARCH anchor (the whole [dependencies] header is not a verbatim target) → grounding rejection.
     let raw = r#"{
         "task_id": "dep-block",
-        "architecture_summary": "Rewrite manifest.",
+        "architecture_summary": "Rewrite manifest deps block.",
         "pipeline": [
             {
                 "step": 1,
@@ -661,24 +652,21 @@ fn coordinator_manifest_dependencies_block_rejected() {
                 "agent": "BuilderAgent",
                 "action": "patch_file",
                 "target_file": "Cargo.toml",
-                "goal": "Deps at Cargo.toml:1.",
-                "patch_content": "<<<<<<< SEARCH\n[dependencies]\naxum = \"0.7\"\nserde = \"1\"\n=======\n[dependencies]\naxum = \"0.7\"\nserde = \"1\"\ntracing = \"0.1\"\n>>>>>>> REPLACE\n"
+                "goal": "Deps at Cargo.toml:11.",
+                "patch_content": "<<<<<<< SEARCH\nasync-trait = \"0.1\"\naxum = \"0.7\"\nbytemuck = { version = \"1.16\", features = [\"derive\"] }\n=======\ntracing = \"0.1\"\nserde_json = \"1\"\ntokio = { version = \"1\", features = [\"macros\"] }\n>>>>>>> REPLACE\n"
             },
             {
                 "step": 3,
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/x_test.rs",
-                "goal": "Test.",
+                "goal": "Test at lib.rs:1.",
                 "patch_content": ""
             }
         ]
     }"#;
     let err = validate_blueprint(raw).unwrap_err();
-    assert!(
-        err.contains("SEARCH block not found") || err.contains("surgical"),
-        "{err}"
-    );
+    assert!(err.contains("rewrites every SEARCH line"), "{err}");
 }
 
 #[test]

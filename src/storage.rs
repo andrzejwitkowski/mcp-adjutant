@@ -56,6 +56,8 @@ pub fn migrate_config_value(value: &mut Value) {
     if !phases.contains_key("planner_emit") {
         if let Some(builder) = phases.get("builder").cloned() {
             phases.insert("planner_emit".to_string(), builder);
+        } else if let Some(planner) = phases.get("planner").cloned() {
+            phases.insert("planner_emit".to_string(), planner);
         }
     }
 
@@ -100,6 +102,22 @@ mod tests {
         assert_eq!(
             phases.get("planner_emit").unwrap(),
             phases.get("builder").unwrap()
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_seeds_planner_emit_from_planner_when_no_builder() {
+        let mut value = json!({
+            "phases": {
+                "scout": { "model_name": "scout-model" },
+                "planner": { "model_name": "planner-model" }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("planner_emit").unwrap(),
+            phases.get("planner").unwrap()
         );
     }
 }
