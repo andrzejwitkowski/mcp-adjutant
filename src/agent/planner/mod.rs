@@ -156,13 +156,36 @@ pub fn format_emit_prompt(args: &PlanBlueprintArgs, scout: &AgentContext) -> Str
     prompt
 }
 
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+fn tail_from_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut start = s.len().saturating_sub(max_bytes);
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
+}
+
 fn condense_scout_evidence(accumulated: &str) -> String {
     const MAX_BYTES: usize = 24_000;
+    const HALF: usize = 12_000;
     if accumulated.len() <= MAX_BYTES {
         return accumulated.to_string();
     }
-    let head = &accumulated[..12_000];
-    let tail = &accumulated[accumulated.len().saturating_sub(12_000)..];
+    let head = truncate_to_char_boundary(accumulated, HALF);
+    let tail = tail_from_char_boundary(accumulated, HALF);
     format!("{head}\n\n...[scout evidence truncated]...\n\n{tail}")
 }
 
@@ -280,9 +303,7 @@ impl<C: LlmClient> PlannerHybridAgent<C> {
 
 fn record_planner_touched_file(context: &mut AgentContext, tool_name: &str, args: &Value) {
     let Some(path) = (match tool_name {
-        "read_file" | "ast_calls" | "extract_search_anchor" => {
-            args.get("file").and_then(Value::as_str)
-        }
+        "read_file" | "extract_search_anchor" => args.get("file").and_then(Value::as_str),
         _ => None,
     }) else {
         return;
@@ -460,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn record_touched_file_tracks_read_file_and_ast_calls() {
+    fn record_touched_file_tracks_read_file_only() {
         let mut ctx = AgentContext {
             input_prompt: String::new(),
             accumulated_data: String::new(),
@@ -475,6 +496,13 @@ mod tests {
         record_planner_touched_file(&mut ctx, "read_file", &args);
         assert_eq!(ctx.touched_files.len(), 1);
         assert!(ctx.touched_files[0].ends_with("src/main.rs"));
+
+        record_planner_touched_file(&mut ctx, "ast_calls", &args);
+        assert_eq!(
+            ctx.touched_files.len(),
+            1,
+            "ast_calls must not count as read_file grounding"
+        );
 
         record_planner_touched_file(&mut ctx, "ripgrep", &args);
         assert_eq!(
@@ -532,5 +560,15 @@ mod tests {
     fn condense_scout_evidence_passes_short_input_unchanged() {
         let short = "scout observations";
         assert_eq!(condense_scout_evidence(short), short);
+    }
+
+    #[test]
+    fn condense_scout_evidence_truncates_on_char_boundary() {
+        let mut s = "x".repeat(11_997);
+        s.push('🦀');
+        s.push_str(&"y".repeat(12_000));
+        let out = condense_scout_evidence(&s);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        assert!(out.contains("truncated"));
     }
 }

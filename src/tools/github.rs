@@ -33,6 +33,8 @@ struct GhPrView {
 pub struct PrReviewComment {
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
+    pub line: Option<u32>,
     pub body: String,
 }
 
@@ -188,10 +190,23 @@ pub fn format_pr_state_markdown(state: &PrState) -> String {
     }
 
     if !state.review_comments.is_empty() {
-        out.push_str("\n### Review line comments\n");
+        out.push_str(
+            "\n### Actionable review comments (treat as FIXABLE_ACTION unless clearly nitpick)\n",
+        );
         for comment in &state.review_comments {
             let path = comment.path.as_deref().unwrap_or("(general)");
-            out.push_str(&format!("- `{path}`: {}\n", comment.body.trim()));
+            let loc = match comment.line {
+                Some(line) => format!("{path}:{line}"),
+                None => path.to_string(),
+            };
+            let body = comment.body.trim();
+            let preview: String = body.chars().take(300).collect();
+            let suffix = if body.chars().count() > 300 {
+                "…"
+            } else {
+                ""
+            };
+            out.push_str(&format!("- `{loc}` — {preview}{suffix}\n"));
         }
     }
 
@@ -245,4 +260,38 @@ pub fn git_push_origin_head() -> Result<String, String> {
         return Ok(format!("{stdout}{stderr}").trim().to_string());
     }
     Err(format!("git push failed:\n{stdout}{stderr}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_review_comment_includes_line_and_preview() {
+        let state = PrState {
+            number: 27,
+            title: "Hybrid planner".to_string(),
+            state: "OPEN".to_string(),
+            mergeable: Some("MERGEABLE".to_string()),
+            head_ref_name: "feat/x".to_string(),
+            base_ref_name: "main".to_string(),
+            url: "https://example.com/pull/27".to_string(),
+            checks: Vec::new(),
+            review_comments: vec![PrReviewComment {
+                path: Some("src/foo.rs".to_string()),
+                line: Some(166),
+                body: "fix this bug".repeat(50),
+            }],
+        };
+        let md = format_pr_state_markdown(&state);
+        assert!(md.contains("Actionable review comments"));
+        assert!(md.contains("src/foo.rs:166"));
+        assert!(md.contains('…'));
+    }
+
+    #[test]
+    fn extract_run_id_from_link_parses_actions_url() {
+        let link = "https://github.com/owner/repo/actions/runs/123456789/job/1";
+        assert_eq!(extract_run_id_from_link(link), Some(123456789));
+    }
 }

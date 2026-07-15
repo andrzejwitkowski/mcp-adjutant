@@ -202,13 +202,11 @@ fn planner_emit_from_builder(builder: &PhaseProfile) -> PhaseProfile {
         .get(&AgentPhase::PlannerEmit)
         .cloned()
         .expect("default planner_emit profile");
-    if builder.provider != Provider::DeepSeek || builder.base_url != emit.base_url {
-        emit.provider = builder.provider.clone();
-        emit.api_key = builder.api_key.clone();
-        emit.base_url = builder.base_url.clone();
-        if builder.provider == Provider::OpenRouter {
-            emit.model_name = "google/gemini-2.5-flash".to_string();
-        }
+    emit.provider = builder.provider.clone();
+    emit.api_key = builder.api_key.clone();
+    emit.base_url = builder.base_url.clone();
+    if builder.provider == Provider::OpenRouter {
+        emit.model_name = "google/gemini-2.5-flash".to_string();
     }
     emit
 }
@@ -287,6 +285,22 @@ mod tests {
         assert_eq!(emit.model_name, "google/gemini-2.5-flash");
         assert_eq!(emit.max_tokens, 8_192);
         assert!((emit.temperature - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn planner_emit_from_builder_copies_deepseek_transport() {
+        let builder = PhaseProfile {
+            provider: Provider::DeepSeek,
+            api_key: Some("sk-deepseek".to_string()),
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            model_name: "deepseek-coder".to_string(),
+            max_tokens: 8_192,
+            temperature: 0.2,
+        };
+        let emit = super::planner_emit_from_builder(&builder);
+        assert_eq!(emit.api_key, builder.api_key);
+        assert_eq!(emit.base_url, builder.base_url);
+        assert_eq!(emit.provider, Provider::DeepSeek);
     }
 
     #[test]

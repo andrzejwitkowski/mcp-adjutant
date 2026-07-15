@@ -53,6 +53,12 @@ pub fn migrate_config_value(value: &mut Value) {
         }
     }
 
+    if !phases.contains_key("planner_emit") {
+        if let Some(builder) = phases.get("builder").cloned() {
+            phases.insert("planner_emit".to_string(), builder);
+        }
+    }
+
     phases.retain(|key, _| KNOWN_PHASES.contains(&key.as_str()));
 }
 
@@ -66,4 +72,34 @@ pub fn save_to_file(config: &AdjutantConfig, path: &Path) -> Result<(), Adjutant
     let contents = serde_json::to_string_pretty(config)?;
     fs::write(path, contents)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::migrate_config_value;
+
+    #[test]
+    fn migrate_config_value_seeds_planner_emit_from_builder() {
+        let mut value = json!({
+            "phases": {
+                "builder": {
+                    "provider": "deepseek",
+                    "api_key": "sk-test",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model_name": "deepseek-coder",
+                    "max_tokens": 8192,
+                    "temperature": 0.2
+                }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(phases.contains_key("planner_emit"));
+        assert_eq!(
+            phases.get("planner_emit").unwrap(),
+            phases.get("builder").unwrap()
+        );
+    }
 }

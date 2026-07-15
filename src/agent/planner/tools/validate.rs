@@ -273,7 +273,9 @@ fn validate_hunk_grounding(
                 "pipeline[{idx}]: empty SEARCH block in {target} — call read_file or extract_search_anchor on {target} and copy the anchor verbatim"
             ));
         }
-        if !file_body.contains(&hunk.search) {
+        let file = file_body.replace("\r\n", "\n");
+        let search = hunk.search.replace("\r\n", "\n");
+        if !file.contains(&search) {
             let preview: String = hunk.search.chars().take(60).collect();
             let hint = grounding_fix_hint(step, target);
             return Err(format!(
@@ -477,14 +479,7 @@ fn is_new_source_module(path: &str) -> bool {
 }
 
 fn path_matches_target(touched: &Path, target: &str) -> bool {
-    let norm = target.replace('\\', "/");
-    touched
-        .to_string_lossy()
-        .replace('\\', "/")
-        .ends_with(&norm)
-        || touched
-            .file_name()
-            .is_some_and(|name| name == Path::new(target).file_name().unwrap_or_default())
+    resolve_workspace_path(target) == *touched
 }
 
 fn validate_step(idx: usize, step: &Value) -> Result<(), String> {
@@ -617,12 +612,20 @@ fn check_body_quality(idx: usize, body: &str) -> Result<(), String> {
             "pipeline[{idx}]: patch body is a comment sketch — write paste-ready production code"
         ));
     }
-    if body.contains("...") {
+    if body.lines().any(is_ellipsis_sketch_line) {
         return Err(format!(
             "pipeline[{idx}]: patch body contains ellipsis sketch ('...')"
         ));
     }
     Ok(())
+}
+
+fn is_ellipsis_sketch_line(line: &str) -> bool {
+    let t = line.trim();
+    if t == "..." || t.ends_with(" ...") || t.starts_with("... ") {
+        return true;
+    }
+    t.contains("{ ... }") || t.contains("{...}")
 }
 
 fn validate_agent_action_routing(idx: usize, agent: &str, action: &str) -> Result<(), String> {
@@ -683,4 +686,36 @@ pub(crate) fn is_kebab_case(id: &str) -> bool {
         && !id.starts_with('-')
         && !id.ends_with('-')
         && !id.contains("--")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn is_ellipsis_sketch_line_allows_spread_syntax() {
+        assert!(!is_ellipsis_sketch_line("return { ...obj };"));
+        assert!(is_ellipsis_sketch_line("fn run() { ... }"));
+        assert!(is_ellipsis_sketch_line("..."));
+    }
+
+    #[test]
+    fn path_matches_target_requires_exact_workspace_path() {
+        let touched = resolve_workspace_path("src/lib.rs");
+        assert!(path_matches_target(&touched, "src/lib.rs"));
+        assert!(!path_matches_target(&touched, "lib.rs"));
+    }
+
+    #[test]
+    fn hunk_grounding_normalizes_crlf() {
+        let file_body = "fn foo() {\r\n    let x = 1;\r\n}\r\n";
+        let hunk = Hunk {
+            search: "    let x = 1;\n".to_string(),
+            replace: "    let x = 2;\n".to_string(),
+        };
+        let step = json!({});
+        validate_hunk_grounding(0, "f.rs", &[hunk], file_body, &step).expect("crlf normalize");
+    }
 }

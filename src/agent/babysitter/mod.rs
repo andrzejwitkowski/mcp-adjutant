@@ -28,6 +28,7 @@ Every turn: reply with a short Thought, then call exactly ONE tool.
 Orchestration rules:
 1. Start with github_get_pr_state.
 2. CI failure -> run_log_analyzer on gh-run:<id> from state, then invoke_child_triage for straightforward compile/lint errors.
+2b. CI green but review line comments exist -> invoke_child_triage on cited paths (CodeRabbit/bot inline comments are FIXABLE_ACTION by default).
 3. Review comments: [FIXABLE_ACTION] -> invoke_child_triage; [ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] -> skip (note in finalize report).
 4. Never git_push_changes until the latest invoke_child_triage observation contains [TRIAGE PASS].
 5. When done, github_post_final_report then finalize_session.
