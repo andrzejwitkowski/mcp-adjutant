@@ -12,7 +12,10 @@ fn test_migrate_config_value_transformer_to_pruner() {
 
     let phases = config_json.get("phases").unwrap().as_object().unwrap();
 
-    assert!(phases.contains_key("pruner"), "transformer should migrate to pruner");
+    assert!(
+        phases.contains_key("pruner"),
+        "transformer should migrate to pruner"
+    );
     assert!(
         !phases.contains_key("transformer"),
         "Should have removed transformer"
@@ -32,6 +35,9 @@ fn test_migrate_config_value_missing_planner_inherits_builder() {
 
     let phases = config_json.get("phases").unwrap().as_object().unwrap();
 
-    assert!(phases.contains_key("planner"), "planner should inherit builder");
+    assert!(
+        phases.contains_key("planner"),
+        "planner should inherit builder"
+    );
     assert_eq!(phases["planner"]["model"], "claude-3");
 }

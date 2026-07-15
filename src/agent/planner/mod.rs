@@ -22,8 +22,7 @@ pub const PLANNER_EMIT_MAX_ITERATIONS: u32 = 3;
 pub const PLANNER_JSON_FIX_ITERATIONS: u32 = 4;
 pub const PLANNER_JSON_FIX_ROUNDS: u32 = 2;
 
-pub const PLANNER_MAX_ITERATIONS: u32 =
-    PLANNER_SCOUT_MAX_ITERATIONS + PLANNER_EMIT_MAX_ITERATIONS;
+pub const PLANNER_MAX_ITERATIONS: u32 = PLANNER_SCOUT_MAX_ITERATIONS + PLANNER_EMIT_MAX_ITERATIONS;
 
 pub const PLANNER_SCOUT_SYSTEM_PROMPT: &str = r#"You are the Lead Software Architect (PLANNER scout phase). Gather repo evidence only — you do NOT emit the blueprint yet.
 
@@ -192,12 +191,8 @@ pub async fn run_planner_hybrid<C: LlmClient>(
         touched_files: scout_ctx.touched_files,
         last_tool_call: None,
     };
-    emit_ctx = AgentLoopOrchestrator::resume(
-        &emit_agent,
-        emit_ctx,
-        PLANNER_EMIT_MAX_ITERATIONS,
-    )
-    .await?;
+    emit_ctx =
+        AgentLoopOrchestrator::resume(&emit_agent, emit_ctx, PLANNER_EMIT_MAX_ITERATIONS).await?;
 
     for _ in 0..PLANNER_JSON_FIX_ROUNDS {
         if emit_ctx.agent_completed {
@@ -211,12 +206,9 @@ pub async fn run_planner_hybrid<C: LlmClient>(
         emit_ctx.input_prompt.push_str(&format!(
             "\n\nBLUEPRINT JSON FIX REQUIRED: {reason}\nCall emit_blueprint with valid Blueprint JSON (schema in system prompt). Do not paste JSON in chat prose."
         ));
-        emit_ctx = AgentLoopOrchestrator::resume(
-            &emit_agent,
-            emit_ctx,
-            PLANNER_JSON_FIX_ITERATIONS,
-        )
-        .await?;
+        emit_ctx =
+            AgentLoopOrchestrator::resume(&emit_agent, emit_ctx, PLANNER_JSON_FIX_ITERATIONS)
+                .await?;
     }
 
     Ok(emit_ctx)
@@ -358,12 +350,8 @@ impl<C: LlmClient> AutonomousAgent for PlannerHybridAgent<C> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        let called = run_single_tool_turn(
-            &self.client,
-            &self.tools,
-            self.system_prompt(),
-            context,
-        )?;
+        let called =
+            run_single_tool_turn(&self.client, &self.tools, self.system_prompt(), context)?;
         if let Some((tool_name, args)) = called {
             record_planner_touched_file(context, &tool_name, &args);
             if matches!(self.phase, PlannerLoopPhase::Emit) && context.agent_completed {
@@ -489,7 +477,11 @@ mod tests {
         assert!(ctx.touched_files[0].ends_with("src/main.rs"));
 
         record_planner_touched_file(&mut ctx, "ripgrep", &args);
-        assert_eq!(ctx.touched_files.len(), 1, "ripgrep should not record paths");
+        assert_eq!(
+            ctx.touched_files.len(),
+            1,
+            "ripgrep should not record paths"
+        );
     }
 
     #[test]

@@ -114,7 +114,10 @@ fn planner_emit_tool_set_includes_emit_and_read_file_only() {
         .into_iter()
         .map(|t| t.name.clone())
         .collect();
-    assert_eq!(names, vec!["read_file".to_string(), "emit_blueprint".to_string()]);
+    assert_eq!(
+        names,
+        vec!["read_file".to_string(), "emit_blueprint".to_string()]
+    );
 }
 
 #[test]
@@ -225,10 +228,7 @@ fn validate_rejects_invalid_action_value() {
 
 #[test]
 fn validate_rejects_placeholder_in_patch_content() {
-    let raw = valid_blueprint().replace(
-        "pub struct Cache {}",
-        "// implement logic here",
-    );
+    let raw = valid_blueprint().replace("pub struct Cache {}", "// implement logic here");
     let err = validate_blueprint(&raw).unwrap_err();
     assert!(err.contains("placeholder"), "{err}");
 }

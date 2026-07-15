@@ -189,9 +189,8 @@ pub fn validate_patch_hunks(pipeline: &[Value]) -> Result<(), String> {
 
         let hunks = parse_hunks(patch).map_err(|err| format!("pipeline[{idx}]: {err}"))?;
         let abs = resolve_workspace_path(target);
-        let file_body = std::fs::read_to_string(&abs).map_err(|err| {
-            format!("pipeline[{idx}]: cannot read {target} for hunk gate: {err}")
-        })?;
+        let file_body = std::fs::read_to_string(&abs)
+            .map_err(|err| format!("pipeline[{idx}]: cannot read {target} for hunk gate: {err}"))?;
 
         validate_hunk_grounding(idx, target, &hunks, &file_body, step)?;
         validate_hunk_minimality(idx, target, &hunks)?;
@@ -596,8 +595,9 @@ fn validate_step(idx: usize, step: &Value) -> Result<(), String> {
 /// For `create_file` or non-hunk patches, checks run on the whole string.
 fn validate_patch_body_quality(idx: usize, action: &str, patch: &str) -> Result<(), String> {
     if action == "patch_file" {
-        let hunks = parse_hunks(patch)
-            .map_err(|err| format!("pipeline[{idx}]: {err} — patch_file must use SEARCH/REPLACE hunks"))?;
+        let hunks = parse_hunks(patch).map_err(|err| {
+            format!("pipeline[{idx}]: {err} — patch_file must use SEARCH/REPLACE hunks")
+        })?;
         for hunk in &hunks {
             check_body_quality(idx, &hunk.replace)?;
         }
