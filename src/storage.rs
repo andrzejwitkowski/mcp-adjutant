@@ -120,4 +120,24 @@ mod tests {
             phases.get("planner").unwrap()
         );
     }
+
+    #[test]
+    fn migrate_config_value_scout_builder_inherits_builder_for_planner_emit() {
+        let mut value = json!({
+            "phases": {
+                "scout": { "model_name": "scout-model" },
+                "builder": { "model_name": "builder-coder" }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("planner_emit").and_then(|v| v.get("model_name")),
+            Some(&json!("builder-coder"))
+        );
+        assert_eq!(
+            phases.get("planner").and_then(|v| v.get("model_name")),
+            Some(&json!("scout-model"))
+        );
+    }
 }
