@@ -17,13 +17,7 @@ impl BabysitterSession {
     }
 
     pub fn record_triage_paths(&mut self, paths: &[String]) {
-        for path in paths {
-            self.review_paths_handled.insert(path.clone());
-        }
-    }
-
-    pub fn mark_report_posted(&mut self) {
-        self.report_posted = true;
+        self.review_paths_handled.extend(paths.iter().cloned());
     }
 }
 
@@ -32,10 +26,9 @@ pub fn uncovered_review_paths(
     handled: &HashSet<String>,
     skipped: &[String],
 ) -> Vec<String> {
-    let skipped_set: HashSet<_> = skipped.iter().cloned().collect();
     let mut uncovered: Vec<_> = seen
         .iter()
-        .filter(|path| !handled.contains(*path) && !skipped_set.contains(*path))
+        .filter(|path| !handled.contains(*path) && !skipped.iter().any(|skip| skip == *path))
         .cloned()
         .collect();
     uncovered.sort();
@@ -130,6 +123,50 @@ mod tests {
         };
         let err = check_finalize_allowed(&state, &session, &[]).unwrap_err();
         assert!(err.contains("CI not green"));
+    }
+
+    #[test]
+    fn check_finalize_rejects_without_report() {
+        let state = PrState {
+            number: 1,
+            title: "t".into(),
+            state: "OPEN".into(),
+            mergeable: None,
+            head_ref_name: "feat".into(),
+            base_ref_name: "main".into(),
+            url: "u".into(),
+            checks: vec![],
+            review_comments: vec![],
+        };
+        let session = BabysitterSession::default();
+        let err = check_finalize_allowed(&state, &session, &[]).unwrap_err();
+        assert!(err.contains("github_post_final_report"));
+    }
+
+    #[test]
+    fn check_finalize_allows_handled_paths() {
+        let state = PrState {
+            number: 1,
+            title: "t".into(),
+            state: "OPEN".into(),
+            mergeable: None,
+            head_ref_name: "feat".into(),
+            base_ref_name: "main".into(),
+            url: "u".into(),
+            checks: vec![],
+            review_comments: vec![PrReviewComment {
+                path: Some("src/foo.rs".into()),
+                line: Some(1),
+                body: "fix".into(),
+            }],
+        };
+        let mut session = BabysitterSession {
+            report_posted: true,
+            ..Default::default()
+        };
+        session.record_pr_state(&state);
+        session.record_triage_paths(&["src/foo.rs".to_string()]);
+        assert!(check_finalize_allowed(&state, &session, &[]).is_ok());
     }
 
     #[test]

@@ -16,9 +16,8 @@ mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
 pub use babysitter::{
-    babysitter_tool_set, check_finalize_allowed, parse_finalize_arguments, parse_log_path,
-    parse_report_body, parse_triage_arguments, BabysitterAgent, BabysitterSession,
-    BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
+    parse_triage_arguments, BabysitterAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
 };
 pub use builder::{
     builder_tool_set, default_builder_agent, BuilderAgent, DefaultBuilderAgent,

@@ -19,7 +19,8 @@ use crate::tools::{
     assert_on_pr_head_branch, format_pr_state_markdown, gh_post_comment, gh_pr_state,
     git_push_origin_head, LlmBuildDiscoverer,
 };
-pub use gates::{check_finalize_allowed, BabysitterSession};
+use gates::{check_finalize_allowed, BabysitterSession};
+
 pub use tools::{
     babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
     parse_triage_arguments,
@@ -108,9 +109,11 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             "github_get_pr_state" => {
                 let state = gh_pr_state(self.pr_number)?;
                 assert_on_pr_head_branch(&state.head_ref_name)?;
-                if let Ok(mut guard) = self.session.lock() {
-                    guard.record_pr_state(&state);
-                }
+                let mut guard = self
+                    .session
+                    .lock()
+                    .map_err(|_| "session lock poisoned".to_string())?;
+                guard.record_pr_state(&state);
                 Ok(format_pr_state_markdown(&state))
             }
             "run_log_analyzer" => {
@@ -119,7 +122,11 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             }
             "invoke_child_triage" => {
                 let (paths, error_context) = tools::parse_triage_arguments(arguments)?;
-                if let Ok(mut guard) = self.session.lock() {
+                {
+                    let mut guard = self
+                        .session
+                        .lock()
+                        .map_err(|_| "session lock poisoned".to_string())?;
                     guard.record_triage_paths(&paths);
                 }
                 let resolved = paths
@@ -145,9 +152,11 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             "github_post_final_report" => {
                 let body = tools::parse_report_body(arguments)?;
                 gh_post_comment(self.pr_number, &body)?;
-                if let Ok(mut guard) = self.session.lock() {
-                    guard.mark_report_posted();
-                }
+                let mut guard = self
+                    .session
+                    .lock()
+                    .map_err(|_| "session lock poisoned".to_string())?;
+                guard.report_posted = true;
                 Ok("report posted to PR".to_string())
             }
             "finalize_session" => {
@@ -156,8 +165,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                 let session = self
                     .session
                     .lock()
-                    .map_err(|_| "session lock poisoned".to_string())?
-                    .clone();
+                    .map_err(|_| "session lock poisoned".to_string())?;
                 check_finalize_allowed(&state, &session, &skipped_review_paths)?;
                 let summary = summary.unwrap_or_else(|| "babysitter session complete".to_string());
                 context.is_finished = true;

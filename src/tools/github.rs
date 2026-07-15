@@ -128,7 +128,6 @@ fn check_is_blocking(check: &PrCheck) -> bool {
     )
 }
 
-/// CI check names that block babysitter finalize (failed or still running).
 pub fn ci_checks_blocking(checks: &[PrCheck]) -> Vec<String> {
     checks
         .iter()
@@ -137,7 +136,6 @@ pub fn ci_checks_blocking(checks: &[PrCheck]) -> Vec<String> {
         .collect()
 }
 
-/// Unique non-empty file paths from inline PR review comments.
 pub fn review_comment_paths(comments: &[PrReviewComment]) -> Vec<String> {
     let mut paths = Vec::new();
     for comment in comments {
