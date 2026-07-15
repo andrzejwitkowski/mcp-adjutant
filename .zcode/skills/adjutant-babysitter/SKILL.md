@@ -93,11 +93,11 @@ flowchart TD
   report --> finalize[finalize_session + skipped_review_paths]
 ```
 
-## ZCode invocation bridge
+## Cursor invocation bridge
 
-When `babysit_pr` MCP is available, prefer it for the full 20-turn BabysitterAgent loop (native harness tools). Otherwise map harness tools to ZCode + MCP equivalents. **Do not** read raw CI logs with Grep/Read — use `analyze_log` per delegation skill.
+When `babysit_pr` MCP is available, prefer it for the full 20-turn BabysitterAgent loop (native harness tools). Otherwise map harness tools to Cursor + MCP equivalents. **Do not** read raw CI logs with Grep/Read — use `analyze_log` per delegation skill.
 
-| Harness tool | Native (`babysit_pr`) | ZCode fallback |
+| Harness tool | Native (`babysit_pr`) | Cursor fallback |
 | --- | --- | --- |
 | (full loop) | MCP `babysit_pr` with `pr_number`; poll `query_job_status` | Skill steps below |
 | `github_get_pr_state` | built-in | `gh pr view --json …`, `gh pr checks --json …`, `gh api` for review threads |
@@ -115,7 +115,7 @@ When `babysit_pr` MCP is available, prefer it for the full 20-turn BabysitterAge
 
 ## Required companion skills
 
-- [`.zcode/skills/mcp-adjutant-delegation/SKILL.md`](../mcp-adjutant-delegation/SKILL.md) — hard delegation (including planning phases), builder gate, `analyze_log` before log reads
+- [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](../mcp-adjutant-delegation/SKILL.md) — hard delegation (including planning phases), builder gate, `analyze_log` before log reads
 - `loop-on-ci` — `gh pr checks` as CI source of truth; watch with `--watch --fail-fast`
 
 ## Future hook
