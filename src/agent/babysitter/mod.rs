@@ -17,7 +17,7 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
 use crate::tools::{
     assert_on_pr_head_branch, format_pr_state_markdown, gh_post_comment, gh_pr_state,
-    git_push_origin_head, LlmBuildDiscoverer,
+    git_push_origin_head, review_comment_paths, LlmBuildDiscoverer,
 };
 use gates::{check_finalize_allowed, BabysitterSession};
 
@@ -113,7 +113,9 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                     .session
                     .lock()
                     .map_err(|_| "session lock poisoned".to_string())?;
-                guard.record_pr_state(&state);
+                for path in review_comment_paths(&state.review_comments) {
+                    guard.review_paths_seen.insert(path);
+                }
                 Ok(format_pr_state_markdown(&state))
             }
             "run_log_analyzer" => {
@@ -127,7 +129,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                         .session
                         .lock()
                         .map_err(|_| "session lock poisoned".to_string())?;
-                    guard.record_triage_paths(&paths);
+                    guard.review_paths_handled.extend(paths.iter().cloned());
                 }
                 let resolved = paths
                     .into_iter()

@@ -1,24 +1,12 @@
 use std::collections::HashSet;
 
-use crate::tools::{ci_checks_blocking, review_comment_paths, PrState};
+use crate::tools::{ci_checks_blocking, PrState};
 
 #[derive(Debug, Clone, Default)]
 pub struct BabysitterSession {
     pub report_posted: bool,
     pub review_paths_seen: HashSet<String>,
     pub review_paths_handled: HashSet<String>,
-}
-
-impl BabysitterSession {
-    pub fn record_pr_state(&mut self, state: &PrState) {
-        for path in review_comment_paths(&state.review_comments) {
-            self.review_paths_seen.insert(path);
-        }
-    }
-
-    pub fn record_triage_paths(&mut self, paths: &[String]) {
-        self.review_paths_handled.extend(paths.iter().cloned());
-    }
 }
 
 pub fn uncovered_review_paths(
@@ -81,7 +69,13 @@ pub fn check_finalize_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::{PrCheck, PrReviewComment};
+    use crate::tools::{review_comment_paths, PrCheck, PrReviewComment};
+
+    fn seed_review_paths(session: &mut BabysitterSession, state: &PrState) {
+        for path in review_comment_paths(&state.review_comments) {
+            session.review_paths_seen.insert(path);
+        }
+    }
 
     #[test]
     fn uncovered_paths_excludes_handled_and_skipped() {
@@ -164,8 +158,10 @@ mod tests {
             report_posted: true,
             ..Default::default()
         };
-        session.record_pr_state(&state);
-        session.record_triage_paths(&["src/foo.rs".to_string()]);
+        seed_review_paths(&mut session, &state);
+        session
+            .review_paths_handled
+            .insert("src/foo.rs".to_string());
         assert!(check_finalize_allowed(&state, &session, &[]).is_ok());
     }
 
@@ -190,7 +186,7 @@ mod tests {
             report_posted: true,
             ..Default::default()
         };
-        session.record_pr_state(&state);
+        seed_review_paths(&mut session, &state);
         let err = check_finalize_allowed(&state, &session, &[]).unwrap_err();
         assert!(err.contains("src/foo.rs"));
     }
@@ -216,7 +212,7 @@ mod tests {
             report_posted: true,
             ..Default::default()
         };
-        session.record_pr_state(&state);
+        seed_review_paths(&mut session, &state);
         assert!(check_finalize_allowed(&state, &session, &["src/foo.rs".to_string()]).is_ok());
     }
 }

@@ -77,17 +77,15 @@ impl AgentLoopOrchestrator {
                 .join("\n- ")
         };
         let observations = strip_prior_iteration_cap(&context.accumulated_data);
-        if observations.is_empty() {
-            context.accumulated_data = format!(
-                "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}\n",
-                context.iterations, context.max_iterations
-            );
+        let header = format!(
+            "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}",
+            context.iterations, context.max_iterations
+        );
+        context.accumulated_data = if observations.is_empty() {
+            format!("{header}\n")
         } else {
-            context.accumulated_data = format!(
-                "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}\n\n{observations}",
-                context.iterations, context.max_iterations
-            );
-        }
+            format!("{header}\n\n{observations}")
+        };
         context.is_finished = true;
     }
 }

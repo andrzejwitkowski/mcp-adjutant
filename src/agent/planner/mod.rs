@@ -156,26 +156,23 @@ pub fn format_emit_prompt(args: &PlanBlueprintArgs, scout: &AgentContext) -> Str
     prompt
 }
 
-fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
+fn take_char_boundary(s: &str, max_bytes: usize, from_end: bool) -> &str {
     if s.len() <= max_bytes {
         return s;
     }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
+    if from_end {
+        let mut start = s.len().saturating_sub(max_bytes);
+        while start < s.len() && !s.is_char_boundary(start) {
+            start += 1;
+        }
+        &s[start..]
+    } else {
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
     }
-    &s[..end]
-}
-
-fn tail_from_char_boundary(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut start = s.len().saturating_sub(max_bytes);
-    while start < s.len() && !s.is_char_boundary(start) {
-        start += 1;
-    }
-    &s[start..]
 }
 
 fn condense_scout_evidence(accumulated: &str) -> String {
@@ -184,8 +181,8 @@ fn condense_scout_evidence(accumulated: &str) -> String {
     if accumulated.len() <= MAX_BYTES {
         return accumulated.to_string();
     }
-    let head = truncate_to_char_boundary(accumulated, HALF);
-    let tail = tail_from_char_boundary(accumulated, HALF);
+    let head = take_char_boundary(accumulated, HALF, false);
+    let tail = take_char_boundary(accumulated, HALF, true);
     format!("{head}\n\n...[scout evidence truncated]...\n\n{tail}")
 }
 

@@ -462,37 +462,52 @@ fn goal_has_line_citation(goal: &str) -> bool {
     })
 }
 
-fn is_dependency_manifest(path: &str) -> bool {
-    matches!(
-        path.rsplit('/').next().unwrap_or(path),
-        "Cargo.toml" | "package.json" | "go.mod" | "pyproject.toml" | "Gemfile" | "pom.xml"
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepPathKind {
+    DependencyManifest,
+    ModuleEntry,
+    TestOutput,
+    Other,
+}
+
+fn step_path_kind(path: &str) -> StepPathKind {
+    match path.rsplit('/').next().unwrap_or(path) {
+        "Cargo.toml" | "package.json" | "go.mod" | "pyproject.toml" | "Gemfile" | "pom.xml" => {
+            StepPathKind::DependencyManifest
+        }
+        "lib.rs" | "mod.rs" | "__init__.py" | "index.ts" | "index.tsx" | "index.js" => {
+            StepPathKind::ModuleEntry
+        }
+        _ => {
+            let norm = path.replace('\\', "/");
+            if ["/tests/", "/test/", "/__tests__/", "/spec/", "/specs/"]
+                .iter()
+                .any(|seg| norm.contains(seg))
+                || norm.starts_with("tests/")
+                || norm.starts_with("test/")
+            {
+                StepPathKind::TestOutput
+            } else {
+                StepPathKind::Other
+            }
+        }
+    }
 }
 
 fn is_module_entry_file(path: &str) -> bool {
-    matches!(
-        path.rsplit('/').next().unwrap_or(path),
-        "lib.rs" | "mod.rs" | "__init__.py" | "index.ts" | "index.tsx" | "index.js"
-    )
+    step_path_kind(path) == StepPathKind::ModuleEntry
 }
 
-/// ponytail: test output convention — tests live under these dirs across stacks.
 fn is_test_output_path(path: &str) -> bool {
-    let norm = path.replace('\\', "/");
-    ["/tests/", "/test/", "/__tests__/", "/spec/", "/specs/"]
-        .iter()
-        .any(|seg| norm.contains(seg))
-        || norm.starts_with("tests/")
-        || norm.starts_with("test/")
+    step_path_kind(path) == StepPathKind::TestOutput
 }
 
 fn is_new_source_module(path: &str) -> bool {
-    !is_dependency_manifest(path)
+    step_path_kind(path) == StepPathKind::Other
         && path.contains('.')
         && !path.ends_with(".md")
         && !path.ends_with(".json")
         && !path.contains("/tests/")
-        && !is_module_entry_file(path)
 }
 
 fn path_matches_target(touched: &Path, target: &str) -> bool {

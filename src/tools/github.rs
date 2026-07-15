@@ -100,23 +100,22 @@ pub fn extract_run_id_from_link(link: &str) -> Option<u64> {
         .ok()
 }
 
+fn check_is_failed(check: &PrCheck) -> bool {
+    check.bucket.eq_ignore_ascii_case("fail")
+        || check.state.eq_ignore_ascii_case("FAILURE")
+        || check.state.eq_ignore_ascii_case("FAILED")
+}
+
 pub fn failed_run_ids(checks: &[PrCheck]) -> Vec<u64> {
     checks
         .iter()
-        .filter(|check| {
-            check.bucket.eq_ignore_ascii_case("fail")
-                || check.state.eq_ignore_ascii_case("FAILURE")
-                || check.state.eq_ignore_ascii_case("FAILED")
-        })
+        .filter(|check| check_is_failed(check))
         .filter_map(|check| check.link.as_deref().and_then(extract_run_id_from_link))
         .collect()
 }
 
 fn check_is_blocking(check: &PrCheck) -> bool {
-    if check.bucket.eq_ignore_ascii_case("fail") {
-        return true;
-    }
-    if check.state.eq_ignore_ascii_case("FAILURE") || check.state.eq_ignore_ascii_case("FAILED") {
+    if check_is_failed(check) {
         return true;
     }
     if check.bucket.eq_ignore_ascii_case("pending") {
