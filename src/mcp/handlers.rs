@@ -17,7 +17,10 @@ use crate::agent::{
     TRANSFORMER_MAX_ITERATIONS, TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT,
     TRIAGE_SYSTEM_PROMPT,
 };
-use crate::cache::{mcp_workspace_root, resolve_workspace_path, ProjectCacheManager};
+use crate::cache::{
+    mcp_workspace_root, parse_workspace_root_arg, resolve_workspace_path,
+    with_thread_workspace_root, workspace_root_schema_property, ProjectCacheManager,
+};
 use crate::domain::AdjutantConfig;
 use crate::jobs::{
     accepted_job_response, parse_request_uuid, query_job_status_schema,
@@ -63,6 +66,7 @@ pub fn scout_context_schema() -> Value {
                     "type": "boolean",
                     "description": "When true, bypass the semantic cache lookup and scout fresh. Successful runs are still stored in the cache."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["query", "request_uuid"]
@@ -82,6 +86,7 @@ pub fn verify_and_triage_schema() -> Value {
                     "items": { "type": "string" },
                     "description": "Paths to check. If empty, the agent uses git status."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["request_uuid"]
@@ -101,6 +106,7 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
                     "type": "string",
                     "enum": ["unit", "integration", "factory"]
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["source_file_path", "test_type", "request_uuid"]
@@ -127,6 +133,7 @@ pub fn execute_global_refactor_schema() -> Value {
                     "type": "string",
                     "description": "Optional directory scope; only files under this path are gathered, codemodded, verified, and triaged."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["method_name", "refactor_instruction", "request_uuid"]
@@ -153,9 +160,10 @@ pub fn evaluate_agent_performance_schema() -> Value {
                     "type": "string",
                     "description": "Raw result/report the agent returned."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "project_path": {
                     "type": "string",
-                    "description": "Optional project file or directory path where the evaluation is stored (defaults to the MCP working directory)."
+                    "description": "Legacy alias for workspace_root. Optional project file or directory path where the evaluation is stored (defaults to the MCP working directory)."
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
@@ -195,6 +203,7 @@ pub fn web_fetch_schema() -> Value {
                     "type": "boolean",
                     "description": "When true, bypass the semantic cache lookup and fetch fresh web content. Successful runs are still stored in the cache."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["search_phrase", "request_uuid"]
@@ -206,6 +215,7 @@ async fn dispatch_async_job<F, Fut>(
     registry: &JobRegistry,
     request_uuid: String,
     tool_name: &str,
+    workspace_root: Option<PathBuf>,
     work: F,
 ) -> Result<String, String>
 where
@@ -217,7 +227,7 @@ where
     let accepted_uuid = request_uuid.clone();
     let tool = tool_name.to_string();
     tokio::spawn(async move {
-        run_tracked_job(registry, request_uuid, tool, work).await;
+        run_tracked_job(registry, request_uuid, tool, workspace_root, work).await;
     });
     Ok(accepted_job_response(&accepted_uuid, tool_name))
 }
@@ -285,6 +295,7 @@ pub async fn handle_scout_context(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -301,6 +312,7 @@ pub async fn handle_scout_context(
         registry,
         request_uuid,
         SCOUT_CONTEXT_TOOL_NAME,
+        workspace_root,
         move || async move {
             let cache_manager =
                 Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
@@ -329,13 +341,19 @@ pub async fn handle_verify_and_triage(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let target_paths: Vec<PathBuf> = args
+    let workspace_root = parse_workspace_root_arg(&args)?;
+    let target_path_raws: Vec<String> = args
         .get("target_paths")
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item.as_str().map(resolve_workspace_path))
+                .filter_map(|item| {
+                    item.as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(str::to_string)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -344,7 +362,12 @@ pub async fn handle_verify_and_triage(
         registry,
         request_uuid,
         VERIFY_AND_TRIAGE_TOOL_NAME,
+        workspace_root,
         move || async move {
+            let target_paths: Vec<PathBuf> = target_path_raws
+                .iter()
+                .map(|path| resolve_workspace_path(path))
+                .collect();
             let triage_client = create_triage_llm_client(&config)?;
             let scout_client = create_scout_llm_client(&config)?;
             let discoverer = LlmBuildDiscoverer::new(scout_client);
@@ -404,6 +427,7 @@ pub async fn handle_generate_tests_and_scaffolding(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let source_file_path = args
         .get("source_file_path")
         .and_then(Value::as_str)
@@ -429,6 +453,7 @@ pub async fn handle_generate_tests_and_scaffolding(
         registry,
         request_uuid,
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+        workspace_root,
         move || async move {
             let source_path = resolve_workspace_path(&source_file_path);
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
@@ -502,6 +527,7 @@ pub async fn handle_execute_global_refactor(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let method_name = args
         .get("method_name")
         .and_then(Value::as_str)
@@ -516,18 +542,22 @@ pub async fn handle_execute_global_refactor(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "refactor_instruction is required".to_string())?
         .to_string();
-    let scope_path = args
+    let scope_path_raw = args
         .get("scope_path")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(resolve_workspace_path);
+        .map(str::to_string);
 
     dispatch_async_job(
         registry,
         request_uuid,
         EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+        workspace_root,
         move || async move {
+            let scope_path = scope_path_raw
+                .as_ref()
+                .map(|path| resolve_workspace_path(path));
             let transformer_client = create_transformer_llm_client(&config)?;
             let codemod_client = create_transformer_llm_client(&config)?;
             let scout_client = create_scout_llm_client(&config)?;
@@ -578,6 +608,7 @@ pub async fn handle_evaluate_agent_performance(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let target_agent = args
         .get("target_agent")
         .and_then(Value::as_str)
@@ -602,19 +633,13 @@ pub async fn handle_evaluate_agent_performance(
         .ok_or_else(|| "received_output is required".to_string())?
         .to_string();
 
-    let cache_start = args
-        .get("project_path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(mcp_workspace_root);
-
     dispatch_async_job(
         registry,
         request_uuid,
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+        workspace_root,
         move || async move {
+            let cache_start = mcp_workspace_root();
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
             let client = create_evaluator_llm_client(&config)?;
             let agent = EvaluatorAgent::new(
@@ -651,6 +676,7 @@ pub async fn handle_web_fetch(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let search_phrase = args
         .get("search_phrase")
         .and_then(Value::as_str)
@@ -667,6 +693,7 @@ pub async fn handle_web_fetch(
         registry,
         request_uuid,
         WEB_FETCH_TOOL_NAME,
+        workspace_root,
         move || async move {
             let web_profile = config.web_fetcher.clone().unwrap_or_default();
             let cache_manager =
@@ -707,6 +734,7 @@ pub fn analyze_log_schema() -> Value {
                     "type": "string",
                     "description": "Local workspace or absolute file path, https:// log URL, or gh-run:<run_id> for GitHub Actions failed-job logs."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["log_path", "request_uuid"]
@@ -720,6 +748,7 @@ pub async fn handle_analyze_log(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let log_path_raw = args
         .get("log_path")
         .and_then(Value::as_str)
@@ -732,12 +761,16 @@ pub async fn handle_analyze_log(
         registry,
         request_uuid,
         ANALYZE_LOG_TOOL_NAME,
+        workspace_root,
         move || async move {
+            let root = mcp_workspace_root();
             let config = Arc::clone(&config);
             let log_path = log_path_raw.clone();
-            tokio::task::spawn_blocking(move || analyze_log_at_path(&config, &log_path, false))
-                .await
-                .map_err(|err| format!("analyze_log task failed: {err}"))?
+            tokio::task::spawn_blocking(move || {
+                with_thread_workspace_root(root, || analyze_log_at_path(&config, &log_path, false))
+            })
+            .await
+            .map_err(|err| format!("analyze_log task failed: {err}"))?
         },
     )
     .await
@@ -754,6 +787,7 @@ pub fn babysit_pr_schema() -> Value {
                     "type": "integer",
                     "description": "GitHub pull request number in the current repository."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["pr_number", "request_uuid"]
@@ -767,6 +801,7 @@ pub async fn handle_babysit_pr(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let pr_number = args
         .get("pr_number")
         .and_then(Value::as_u64)
@@ -776,6 +811,7 @@ pub async fn handle_babysit_pr(
         registry,
         request_uuid,
         BABYSIT_PR_TOOL_NAME,
+        workspace_root,
         move || async move {
             let pr_state = gh_pr_state(pr_number)?;
             assert_on_pr_head_branch(&pr_state.head_ref_name)?;
@@ -849,6 +885,7 @@ pub fn transpile_types_schema() -> Value {
                     "type": "string",
                     "description": "Optional verification shell command (e.g. npm run typecheck, cargo check, mypy pkg). Triage auto-discovers when omitted."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["source_paths", "target_path", "architecture_layout", "request_uuid"]
@@ -876,6 +913,7 @@ pub fn plan_blueprint_schema() -> Value {
                     "type": "string",
                     "description": "Free-form coordinator constraints: patch style (surgical vs create_file), min steps, files/deps policy, test expectations."
                 },
+                "workspace_root": workspace_root_schema_property()["workspace_root"],
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["feature_request", "request_uuid"]
@@ -889,12 +927,14 @@ pub async fn handle_transpile_types(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let parsed = parse_transpile_types_args(&args)?;
 
     dispatch_async_job(
         registry,
         request_uuid,
         TRANSPILE_TYPES_TOOL_NAME,
+        workspace_root,
         move || async move {
             let resolved_sources: Vec<PathBuf> = parsed
                 .source_paths
@@ -994,12 +1034,14 @@ pub async fn handle_plan_blueprint(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = parse_workspace_root_arg(&args)?;
     let parsed = parse_plan_blueprint_args(&args)?;
 
     dispatch_async_job(
         registry,
         request_uuid,
         PLAN_BLUEPRINT_TOOL_NAME,
+        workspace_root,
         move || async move {
             let coordinator = CoordinatorConstraints::from_args(&parsed);
             let scout_client = create_planner_llm_client(&config)?;
@@ -1061,6 +1103,33 @@ mod plan_blueprint_schema_tests {
             .expect("plan_kind enum");
         let values: Vec<_> = kinds.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(values, vec!["feature", "bugfix", "refactor", "sync_types"]);
+    }
+}
+
+#[cfg(test)]
+mod workspace_root_schema_tests {
+    use super::registered_mcp_tools;
+    use crate::jobs::QUERY_JOB_STATUS_TOOL_NAME;
+
+    #[test]
+    fn repo_tools_include_workspace_root_except_query_status() {
+        for tool in registered_mcp_tools() {
+            let name = tool["name"].as_str().expect("name");
+            let props = tool["input_schema"]["properties"]
+                .as_object()
+                .expect("properties");
+            if name == QUERY_JOB_STATUS_TOOL_NAME {
+                assert!(
+                    !props.contains_key("workspace_root"),
+                    "{name} should not take workspace_root"
+                );
+            } else {
+                assert!(
+                    props.contains_key("workspace_root"),
+                    "{name} missing workspace_root"
+                );
+            }
+        }
     }
 }
 

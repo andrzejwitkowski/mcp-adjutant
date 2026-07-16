@@ -1,9 +1,25 @@
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
+
+thread_local! {
+    // ponytail: bridge JobContext into spawn_blocking (task_local does not cross threads)
+    static THREAD_WORKSPACE_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Run `f` with a thread-local workspace root (for blocking threads outside tokio task_local).
+pub fn with_thread_workspace_root<R>(root: PathBuf, f: impl FnOnce() -> R) -> R {
+    THREAD_WORKSPACE_ROOT.with(|cell| {
+        let prev = cell.replace(Some(root));
+        let out = f();
+        *cell.borrow_mut() = prev;
+        out
+    })
+}
 
 pub const ADJUTANT_DIR: &str = ".adjutant";
 const CACHE_DB_FILE: &str = "cache.db";
@@ -67,8 +83,14 @@ const MIGRATIONS: &[&str] = &[
     );",
 ];
 
-/// MCP workspace root: env override, then walk up from cwd to find the repo root.
+/// MCP workspace root: job override, then thread override, then env, then walk up from cwd.
 pub fn mcp_workspace_root() -> PathBuf {
+    if let Some(root) = crate::metrics::current_job_context().and_then(|ctx| ctx.workspace_root) {
+        return root;
+    }
+    if let Some(root) = THREAD_WORKSPACE_ROOT.with(|cell| cell.borrow().clone()) {
+        return root;
+    }
     std::env::var("MCP_ADJUTANT_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -77,6 +99,47 @@ pub fn mcp_workspace_root() -> PathBuf {
             find_project_root(&start)
                 .unwrap_or_else(|_| find_project_root(&manifest).unwrap_or(start))
         })
+}
+
+/// Parse optional `workspace_root` from MCP tool args (evaluate also accepts `project_path`).
+/// Missing/empty → `Ok(None)`. Non-directory or missing path → `Err`.
+pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathBuf>, String> {
+    let raw = args
+        .get("workspace_root")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            args.get("project_path")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    let path = PathBuf::from(raw);
+    let meta = fs::metadata(&path).map_err(|err| {
+        format!("workspace_root must be an existing directory ({raw}): {err}")
+    })?;
+    if !meta.is_dir() {
+        return Err(format!("workspace_root must be a directory, got file: {raw}"));
+    }
+    Ok(Some(
+        fs::canonicalize(&path).unwrap_or(path),
+    ))
+}
+
+/// Shared MCP schema property for per-request project root.
+pub fn workspace_root_schema_property() -> serde_json::Value {
+    serde_json::json!({
+        "workspace_root": {
+            "type": "string",
+            "description": "Absolute path of the project this job should operate on. Required when one MCP process serves multiple repos; defaults to MCP_ADJUTANT_PROJECT_ROOT / process cwd."
+        }
+    })
 }
 
 /// Resolve a path under [`mcp_workspace_root`], rejecting `..` escapes.
@@ -323,5 +386,73 @@ mod tests {
         let root = mcp_workspace_root();
         std::env::set_current_dir(original).expect("restore cwd");
         assert_eq!(root, manifest);
+    }
+
+    #[test]
+    fn parse_workspace_root_arg_missing_is_none() {
+        let args = serde_json::json!({});
+        assert_eq!(parse_workspace_root_arg(&args).expect("ok"), None);
+    }
+
+    #[test]
+    fn parse_workspace_root_arg_rejects_missing_path() {
+        let args = serde_json::json!({ "workspace_root": "/tmp/mcp-adjutant-no-such-dir-xyz" });
+        let err = parse_workspace_root_arg(&args).expect_err("missing");
+        assert!(err.contains("workspace_root"), "{err}");
+    }
+
+    #[test]
+    fn parse_workspace_root_arg_accepts_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-ws-root-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let args = serde_json::json!({ "workspace_root": dir.to_string_lossy() });
+        let got = parse_workspace_root_arg(&args).expect("ok").expect("some");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(got.is_absolute());
+    }
+
+    #[test]
+    fn parse_workspace_root_arg_accepts_project_path_alias() {
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-ws-alias-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let args = serde_json::json!({ "project_path": dir.to_string_lossy() });
+        let got = parse_workspace_root_arg(&args).expect("ok").expect("some");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(got.is_absolute());
+    }
+
+    #[tokio::test]
+    async fn mcp_workspace_root_prefers_job_context_override() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
+        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant-env-fallback");
+        let override_root = PathBuf::from("/tmp/mcp-adjutant-job-override");
+        crate::metrics::with_job_context_async(
+            crate::metrics::JobContext {
+                request_uuid: Some("ws-1".into()),
+                mcp_tool: Some("scout_context".into()),
+                workspace_root: Some(override_root.clone()),
+            },
+            || async {
+                assert_eq!(mcp_workspace_root(), override_root);
+            },
+        )
+        .await;
+        assert_eq!(
+            mcp_workspace_root(),
+            PathBuf::from("/tmp/mcp-adjutant-env-fallback")
+        );
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
     }
 }

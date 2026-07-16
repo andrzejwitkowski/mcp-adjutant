@@ -1,7 +1,11 @@
+use std::path::PathBuf;
+
 #[derive(Debug, Clone)]
 pub struct JobContext {
     pub request_uuid: Option<String>,
     pub mcp_tool: Option<String>,
+    /// Per-job project root override for multi-repo MCP processes.
+    pub workspace_root: Option<PathBuf>,
 }
 
 tokio::task_local! {
@@ -30,6 +34,7 @@ mod tests {
             JobContext {
                 request_uuid: Some("job-1".to_string()),
                 mcp_tool: Some("scout_context".to_string()),
+                workspace_root: None,
             },
             || async {
                 let ctx = current_job_context().expect("context");

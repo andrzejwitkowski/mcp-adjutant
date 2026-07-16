@@ -248,6 +248,7 @@ pub async fn run_tracked_job<F, Fut>(
     registry: JobRegistry,
     request_uuid: String,
     tool_name: String,
+    workspace_root: Option<std::path::PathBuf>,
     work: F,
 ) where
     F: FnOnce() -> Fut + Send + 'static,
@@ -260,6 +261,7 @@ pub async fn run_tracked_job<F, Fut>(
     let ctx = crate::metrics::JobContext {
         request_uuid: Some(request_uuid.clone()),
         mcp_tool: Some(tool_name.clone()),
+        workspace_root,
     };
 
     let work_handle = tokio::spawn(crate::metrics::with_job_context_async(ctx, work));
@@ -380,6 +382,7 @@ mod tests {
             registry.clone(),
             "job-1".to_string(),
             "scout_context".to_string(),
+            None,
             || async {
                 panic!("boom");
             },
