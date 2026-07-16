@@ -104,12 +104,14 @@ pub fn mcp_workspace_root() -> PathBuf {
 /// Parse optional `workspace_root` from MCP tool args (evaluate also accepts `project_path`).
 /// Missing/empty → `Ok(None)`. Non-directory or missing path → `Err`.
 pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathBuf>, String> {
-    let raw = ["workspace_root", "project_path"].into_iter().find_map(|key| {
-        args.get(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    });
+    let raw = ["workspace_root", "project_path"]
+        .into_iter()
+        .find_map(|key| {
+            args.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
 
     let Some(raw) = raw else {
         return Ok(None);
