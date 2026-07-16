@@ -66,3 +66,16 @@
  """
  Given a ranked maintainability finding that says “extract X from oversized file Y”, move the named symbols into a new sibling module, update mod.rs re-exports, keep behavior identical, and run verify_and_triage on the touched paths. Do not invent extra abstractions beyond the extract.
  """
+
+---
+### 🤖 AUDIT ENTRY: Babysit PR #28 rustfmt
+* **Date**: 2026-07-16
+* **What I Did (Waste Analysis)**: Fixed CI fmt on `parse_workspace_root_arg` after deslop push. Reasoning waste: **Low**.
+* **The Delegation Gap**: `analyze_log` → `cargo fmt` → push is fully mechanical once the analyzer names the file.
+* **Proposed Sub-Agent / Skill**:
+ * **Agent Name**: `CiFmtClippyFixer`
+ * **Required MCP Tools**: `[analyze_log, verify_and_triage, git]`
+ * **Gemini Flash Lite System Prompt**:
+ """
+ When CI fails on cargo fmt: run cargo fmt on the reported paths, verify fmt --check, commit, push. Do not change logic.
+ """
