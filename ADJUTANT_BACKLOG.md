@@ -42,14 +42,27 @@
  """
 
 ---
-### 🤖 AUDIT ENTRY: Clippy babysit for PR #28
+### 🤖 AUDIT ENTRY: Deslop + schema extract
 * **Date**: 2026-07-16
-* **What I Did (Waste Analysis)**: Fixed CI clippy/fmt on workspace_root PR. Reasoning waste: **Low**.
-* **The Delegation Gap**: Applying rustfmt + redundant_closure replacements is mechanical; a FmtClippyAgent could own CI reds of that class end-to-end.
+* **What I Did (Waste Analysis)**: Removed builder-generated dead-weight tests and duplicate backlog; extracted MCP tool schemas from handlers into `src/mcp/schemas.rs`; simplified `workspace_root_schema_property` / `parse_workspace_root_arg`. Reasoning waste: **Low**.
+* **The Delegation Gap**: Moving schema JSON blocks into a dedicated module is mechanical file surgery.
 * **Proposed Sub-Agent / Skill**:
- * **Agent Name**: `CiFmtClippyFixer`
- * **Required MCP Tools**: `[analyze_log, verify_and_triage, git]`
+ * **Agent Name**: `ModuleExtractAgent`
+ * **Required MCP Tools**: `[read_file, file_patch, verify_and_triage]`
  * **Gemini Flash Lite System Prompt**:
  """
- When CI fails on cargo fmt or clippy with -D warnings: run cargo fmt; apply clippy suggestions that are mechanical (redundant_closure, needless_borrow, etc.); for await_holding_lock on test-only env mutexes, add a one-line allow with a short reason. Do not change product logic. Commit and push only after cargo fmt --check and cargo clippy --all-targets -- -D warnings pass locally.
+ Extract a coherent cluster of related functions (e.g. all MCP tool schemas) from an oversized Rust module into a sibling file. Preserve pub exports via mod.rs re-exports. Do not change behavior. Run cargo check afterward.
+ """
+
+---
+### 🤖 AUDIT ENTRY: Thermonuclear review follow-up (workspace_root)
+* **Date**: 2026-07-16
+* **What I Did (Waste Analysis)**: Applied thermo finding (handlers >1k) by extracting schemas; left dual task/thread workspace override as necessary. Reasoning waste: **Low**.
+* **The Delegation Gap**: Repeating the same “read skill → list findings → apply one extract” loop is checklist work for a ReviewApplyAgent after the human picks severity.
+* **Proposed Sub-Agent / Skill**:
+ * **Agent Name**: `ThermoExtractApplier`
+ * **Required MCP Tools**: `[scout_context, verify_and_triage, file_patch]`
+ * **Gemini Flash Lite System Prompt**:
+ """
+ Given a ranked maintainability finding that says “extract X from oversized file Y”, move the named symbols into a new sibling module, update mod.rs re-exports, keep behavior identical, and run verify_and_triage on the touched paths. Do not invent extra abstractions beyond the extract.
  """

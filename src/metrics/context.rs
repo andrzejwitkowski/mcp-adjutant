@@ -4,7 +4,6 @@ use std::path::PathBuf;
 pub struct JobContext {
     pub request_uuid: Option<String>,
     pub mcp_tool: Option<String>,
-    /// Per-job project root override for multi-repo MCP processes.
     pub workspace_root: Option<PathBuf>,
 }
 

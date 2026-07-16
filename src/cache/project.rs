@@ -104,17 +104,12 @@ pub fn mcp_workspace_root() -> PathBuf {
 /// Parse optional `workspace_root` from MCP tool args (evaluate also accepts `project_path`).
 /// Missing/empty → `Ok(None)`. Non-directory or missing path → `Err`.
 pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathBuf>, String> {
-    let raw = args
-        .get("workspace_root")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            args.get("project_path")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        });
+    let raw = ["workspace_root", "project_path"].into_iter().find_map(|key| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
 
     let Some(raw) = raw else {
         return Ok(None);
@@ -131,13 +126,11 @@ pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathB
     Ok(Some(fs::canonicalize(&path).unwrap_or(path)))
 }
 
-/// Shared MCP schema property for per-request project root.
+/// Shared MCP schema property object for per-request project root (place under `properties.workspace_root`).
 pub fn workspace_root_schema_property() -> serde_json::Value {
     serde_json::json!({
-        "workspace_root": {
-            "type": "string",
-            "description": "Absolute path of the project this job should operate on. Required when one MCP process serves multiple repos; defaults to MCP_ADJUTANT_PROJECT_ROOT / process cwd."
-        }
+        "type": "string",
+        "description": "Absolute path of the project this job should operate on. Required when one MCP process serves multiple repos; defaults to MCP_ADJUTANT_PROJECT_ROOT / process cwd."
     })
 }
 
