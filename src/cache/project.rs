@@ -121,15 +121,14 @@ pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathB
     };
 
     let path = PathBuf::from(raw);
-    let meta = fs::metadata(&path).map_err(|err| {
-        format!("workspace_root must be an existing directory ({raw}): {err}")
-    })?;
+    let meta = fs::metadata(&path)
+        .map_err(|err| format!("workspace_root must be an existing directory ({raw}): {err}"))?;
     if !meta.is_dir() {
-        return Err(format!("workspace_root must be a directory, got file: {raw}"));
+        return Err(format!(
+            "workspace_root must be a directory, got file: {raw}"
+        ));
     }
-    Ok(Some(
-        fs::canonicalize(&path).unwrap_or(path),
-    ))
+    Ok(Some(fs::canonicalize(&path).unwrap_or(path)))
 }
 
 /// Shared MCP schema property for per-request project root.
@@ -436,7 +435,10 @@ mod tests {
     #[tokio::test]
     async fn mcp_workspace_root_prefers_job_context_override() {
         let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
-        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant-env-fallback");
+        std::env::set_var(
+            "MCP_ADJUTANT_PROJECT_ROOT",
+            "/tmp/mcp-adjutant-env-fallback",
+        );
         let override_root = PathBuf::from("/tmp/mcp-adjutant-job-override");
         crate::metrics::with_job_context_async(
             crate::metrics::JobContext {
