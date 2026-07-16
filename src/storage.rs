@@ -16,6 +16,8 @@ const KNOWN_PHASES: &[&str] = &[
     "evaluator",
     "log_analyzer",
     "web_fetcher",
+    "planner",
+    "planner_emit",
 ];
 
 pub fn load_from_file(path: &Path) -> Result<AdjutantConfig, AdjutantConfigError> {
@@ -42,6 +44,23 @@ pub fn migrate_config_value(value: &mut Value) {
         }
     }
 
+    // New installs often have scout/builder tuned but no planner rows yet.
+    if !phases.contains_key("planner") {
+        if let Some(scout) = phases.get("scout").cloned() {
+            phases.insert("planner".to_string(), scout);
+        } else if let Some(builder) = phases.get("builder").cloned() {
+            phases.insert("planner".to_string(), builder);
+        }
+    }
+
+    if !phases.contains_key("planner_emit") {
+        if let Some(builder) = phases.get("builder").cloned() {
+            phases.insert("planner_emit".to_string(), builder);
+        } else if let Some(planner) = phases.get("planner").cloned() {
+            phases.insert("planner_emit".to_string(), planner);
+        }
+    }
+
     phases.retain(|key, _| KNOWN_PHASES.contains(&key.as_str()));
 }
 
@@ -55,4 +74,70 @@ pub fn save_to_file(config: &AdjutantConfig, path: &Path) -> Result<(), Adjutant
     let contents = serde_json::to_string_pretty(config)?;
     fs::write(path, contents)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::migrate_config_value;
+
+    #[test]
+    fn migrate_config_value_seeds_planner_emit_from_builder() {
+        let mut value = json!({
+            "phases": {
+                "builder": {
+                    "provider": "deepseek",
+                    "api_key": "sk-test",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model_name": "deepseek-coder",
+                    "max_tokens": 8192,
+                    "temperature": 0.2
+                }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(phases.contains_key("planner_emit"));
+        assert_eq!(
+            phases.get("planner_emit").unwrap(),
+            phases.get("builder").unwrap()
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_seeds_planner_emit_from_planner_when_no_builder() {
+        let mut value = json!({
+            "phases": {
+                "scout": { "model_name": "scout-model" },
+                "planner": { "model_name": "planner-model" }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("planner_emit").unwrap(),
+            phases.get("planner").unwrap()
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_scout_builder_inherits_builder_for_planner_emit() {
+        let mut value = json!({
+            "phases": {
+                "scout": { "model_name": "scout-model" },
+                "builder": { "model_name": "builder-coder" }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("planner_emit").and_then(|v| v.get("model_name")),
+            Some(&json!("builder-coder"))
+        );
+        assert_eq!(
+            phases.get("planner").and_then(|v| v.get("model_name")),
+            Some(&json!("scout-model"))
+        );
+    }
 }

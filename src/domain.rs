@@ -18,6 +18,8 @@ pub enum AgentPhase {
     Evaluator,
     LogAnalyzer,
     WebFetcher,
+    Planner,
+    PlannerEmit,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,6 +130,15 @@ impl Default for AdjutantConfig {
                 AgentPhase::WebFetcher,
                 phase_profile("deepseek-chat", 2_048, 0.2),
             ),
+            // ponytail: planner scout uses chat; emit phase uses coder (see PlannerEmit)
+            (
+                AgentPhase::Planner,
+                phase_profile("deepseek-chat", 4_096, 0.3),
+            ),
+            (
+                AgentPhase::PlannerEmit,
+                phase_profile("deepseek-coder", 8_192, 0.1),
+            ),
         ]
         .into_iter()
         .collect();
@@ -165,6 +176,17 @@ impl AdjutantConfig {
 
     /// Fills in phase profiles present in defaults but missing from a persisted config.
     pub fn merge_missing_from_defaults(&mut self) {
+        if !self.phases.contains_key(&AgentPhase::Planner) {
+            if let Some(scout) = self.phases.get(&AgentPhase::Scout).cloned() {
+                self.phases.insert(AgentPhase::Planner, scout);
+            }
+        }
+        if !self.phases.contains_key(&AgentPhase::PlannerEmit) {
+            if let Some(builder) = self.phases.get(&AgentPhase::Builder) {
+                self.phases
+                    .insert(AgentPhase::PlannerEmit, planner_emit_from_builder(builder));
+            }
+        }
         for (phase, profile) in AdjutantConfig::default().phases {
             self.phases.entry(phase).or_insert(profile);
         }
@@ -172,6 +194,21 @@ impl AdjutantConfig {
             self.web_fetcher = Some(WebFetcherProfile::default());
         }
     }
+}
+
+fn planner_emit_from_builder(builder: &PhaseProfile) -> PhaseProfile {
+    let mut emit = AdjutantConfig::default()
+        .phases
+        .get(&AgentPhase::PlannerEmit)
+        .cloned()
+        .expect("default planner_emit profile");
+    emit.provider = builder.provider.clone();
+    emit.api_key = builder.api_key.clone();
+    emit.base_url = builder.base_url.clone();
+    if builder.provider == Provider::OpenRouter {
+        emit.model_name = "google/gemini-2.5-flash".to_string();
+    }
+    emit
 }
 
 fn phase_profile(model_name: &str, max_tokens: u32, temperature: f32) -> PhaseProfile {
@@ -213,6 +250,8 @@ mod tests {
             (AgentPhase::Evaluator, "deepseek-chat", 2_048, 0.0),
             (AgentPhase::LogAnalyzer, "deepseek-chat", 2_048, 0.0),
             (AgentPhase::WebFetcher, "deepseek-chat", 2_048, 0.2),
+            (AgentPhase::Planner, "deepseek-chat", 4_096, 0.3),
+            (AgentPhase::PlannerEmit, "deepseek-coder", 8_192, 0.1),
         ];
 
         for (phase, model_name, max_tokens, temperature) in expected_models {
@@ -227,6 +266,41 @@ mod tests {
 
         assert_eq!(config.server_port, 3_000);
         assert!(!config.storage_path.is_empty());
+    }
+
+    #[test]
+    fn planner_emit_from_builder_uses_openrouter_slug_when_builder_is_openrouter() {
+        let builder = PhaseProfile {
+            provider: Provider::OpenRouter,
+            api_key: Some("sk-test".to_string()),
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            model_name: "google/gemini-3.1-flash-lite".to_string(),
+            max_tokens: 8_192,
+            temperature: 0.2,
+        };
+        let emit = super::planner_emit_from_builder(&builder);
+        assert_eq!(emit.provider, Provider::OpenRouter);
+        assert_eq!(emit.base_url, builder.base_url);
+        assert_eq!(emit.api_key, builder.api_key);
+        assert_eq!(emit.model_name, "google/gemini-2.5-flash");
+        assert_eq!(emit.max_tokens, 8_192);
+        assert!((emit.temperature - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn planner_emit_from_builder_copies_deepseek_transport() {
+        let builder = PhaseProfile {
+            provider: Provider::DeepSeek,
+            api_key: Some("sk-deepseek".to_string()),
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            model_name: "deepseek-coder".to_string(),
+            max_tokens: 8_192,
+            temperature: 0.2,
+        };
+        let emit = super::planner_emit_from_builder(&builder);
+        assert_eq!(emit.api_key, builder.api_key);
+        assert_eq!(emit.base_url, builder.base_url);
+        assert_eq!(emit.provider, Provider::DeepSeek);
     }
 
     #[test]
@@ -259,6 +333,16 @@ mod tests {
             legacy.get_profile(&AgentPhase::Builder).model_name,
             "deepseek-coder"
         );
+        let planner = legacy
+            .try_get_profile(AgentPhase::Planner)
+            .expect("planner profile");
+        assert_eq!(planner.model_name, "deepseek-chat");
+        assert_eq!(planner.max_tokens, 4_096);
+        let planner_emit = legacy
+            .try_get_profile(AgentPhase::PlannerEmit)
+            .expect("planner_emit profile");
+        assert_eq!(planner_emit.model_name, "deepseek-coder");
+        assert_eq!(planner_emit.max_tokens, 8_192);
     }
 
     #[test]

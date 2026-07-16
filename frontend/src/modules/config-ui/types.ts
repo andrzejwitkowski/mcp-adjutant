@@ -9,6 +9,8 @@ export type AgentPhase =
   | 'log_analyzer'
   | 'web_fetcher'
   | 'babysitter'
+  | 'planner'
+  | 'planner_emit'
 
 export interface PhaseProfile {
   provider: Provider

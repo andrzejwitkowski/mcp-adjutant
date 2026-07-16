@@ -3,6 +3,8 @@ mod builder;
 mod evaluator;
 mod log_analyzer;
 mod orchestrator;
+mod planner;
+mod read_only_tools;
 mod report;
 mod scout;
 mod text_pruner_mock;
@@ -14,8 +16,8 @@ mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
 pub use babysitter::{
-    babysitter_tool_set, parse_log_path, parse_report_body, parse_triage_arguments,
-    BabysitterAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
+    parse_triage_arguments, BabysitterAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
 };
 pub use builder::{
     builder_tool_set, default_builder_agent, BuilderAgent, DefaultBuilderAgent,
@@ -26,6 +28,14 @@ pub use log_analyzer::{
     analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT,
 };
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
+pub use planner::{
+    extract_json_object, format_emit_prompt, format_scout_prompt, parse_plan_blueprint_args,
+    planner_emit_tool_set, planner_scout_tool_set, run_planner_hybrid, validate_blueprint,
+    validate_blueprint_coordinator, validate_blueprint_grounding, CoordinatorConstraints,
+    PlanBlueprintArgs, PlanKind, PlannerAgent, PlannerHybridAgent, PLANNER_EMIT_MAX_ITERATIONS,
+    PLANNER_EMIT_SYSTEM_PROMPT, PLANNER_MAX_ITERATIONS, PLANNER_SCOUT_MAX_ITERATIONS,
+    PLANNER_SCOUT_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
+};
 pub use report::{format_triage_success, triage_passed, TRIAGE_PASS_MARKER};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,

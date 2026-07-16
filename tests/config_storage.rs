@@ -205,3 +205,28 @@ fn save_creates_missing_parent_directories() {
 
     std::fs::remove_dir_all(&temp_dir).ok();
 }
+
+#[test]
+fn parse_config_json_copies_builder_to_planner_when_missing() {
+    let raw = r#"{
+        "phases": {
+            "builder": {
+                "provider": "open_router",
+                "api_key": null,
+                "base_url": "https://openrouter.ai/api/v1",
+                "model_name": "google/gemini-3.1-flash-lite",
+                "max_tokens": 8192,
+                "temperature": 0.2
+            }
+        },
+        "server_port": 3000,
+        "storage_path": "/tmp/config.json"
+    }"#;
+
+    let config = mcp_adjutant::storage::parse_config_json(raw).expect("parse config");
+    let planner = config.get_profile(&AgentPhase::Planner);
+    let builder = config.get_profile(&AgentPhase::Builder);
+    assert_eq!(planner.model_name, builder.model_name);
+    assert_eq!(planner.base_url, builder.base_url);
+    assert_eq!(planner.max_tokens, builder.max_tokens);
+}

@@ -38,6 +38,8 @@ const PHASE_COLORS: Record<string, string> = {
   evaluator: '#ff6b6b',
   log_analyzer: '#e85d75',
   web_fetcher: '#20b2aa',
+  planner: '#6c5ce7',
+  planner_emit: '#a29bfe',
 }
 
 function phaseColor(phase: string) {
