@@ -366,7 +366,7 @@ pub async fn handle_verify_and_triage(
         move || async move {
             let target_paths: Vec<PathBuf> = target_path_raws
                 .iter()
-                .map(|path| resolve_workspace_path(path))
+                .map(resolve_workspace_path)
                 .collect();
             let triage_client = create_triage_llm_client(&config)?;
             let scout_client = create_scout_llm_client(&config)?;
@@ -555,9 +555,7 @@ pub async fn handle_execute_global_refactor(
         EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
         workspace_root,
         move || async move {
-            let scope_path = scope_path_raw
-                .as_ref()
-                .map(|path| resolve_workspace_path(path));
+            let scope_path = scope_path_raw.as_ref().map(resolve_workspace_path);
             let transformer_client = create_transformer_llm_client(&config)?;
             let codemod_client = create_transformer_llm_client(&config)?;
             let scout_client = create_scout_llm_client(&config)?;

@@ -433,6 +433,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_TEST_LOCK must span env mutation + await
     async fn mcp_workspace_root_prefers_job_context_override() {
         let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
         std::env::set_var(
