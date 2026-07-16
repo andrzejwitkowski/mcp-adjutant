@@ -27,3 +27,16 @@
  6. Do not invent new abstractions; follow the first updated handler as the template.
  7. Run cargo check on touched files mentally: every dispatch_async_job call must have the new argument.
  """
+
+---
+### 🤖 AUDIT ENTRY: Clippy babysit for PR #28
+* **Date**: 2026-07-16
+* **What I Did (Waste Analysis)**: Fixed CI clippy/fmt on workspace_root PR. Reasoning waste: **Low**.
+* **The Delegation Gap**: Applying rustfmt + redundant_closure replacements is mechanical; a FmtClippyAgent could own CI reds of that class end-to-end.
+* **Proposed Sub-Agent / Skill**:
+ * **Agent Name**: `CiFmtClippyFixer`
+ * **Required MCP Tools**: `[analyze_log, verify_and_triage, git]`
+ * **Gemini Flash Lite System Prompt**:
+ """
+ When CI fails on cargo fmt or clippy with -D warnings: run cargo fmt; apply clippy suggestions that are mechanical (redundant_closure, needless_borrow, etc.); for await_holding_lock on test-only env mutexes, add a one-line allow with a short reason. Do not change product logic. Commit and push only after cargo fmt --check and cargo clippy --all-targets -- -D warnings pass locally.
+ """
