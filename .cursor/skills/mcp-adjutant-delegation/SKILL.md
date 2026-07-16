@@ -277,11 +277,12 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 ### Hard workflow
 
 1. Generate a fresh `request_uuid` per tool call.
-2. Fire the tool; immediately poll `query_job_status` (do not guess timeouts).
-3. On `terminal=true` with `status=completed`, run `evaluate_agent_performance`.
-4. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
-5. Integrate verified results into your response; cite what the sub-agent found/changed.
-6. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
+2. Pass **`workspace_root`** (absolute path of the open project) on every repo-touching tool except `query_job_status`. Required when one MCP process serves multiple repos; falls back to `MCP_ADJUTANT_PROJECT_ROOT` / process cwd when omitted.
+3. Fire the tool; immediately poll `query_job_status` (do not guess timeouts).
+4. On `terminal=true` with `status=completed`, run `evaluate_agent_performance`.
+5. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
+6. Integrate verified results into your response; cite what the sub-agent found/changed.
+7. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
 
 ### Hard exceptions (still do yourself)
 
@@ -415,17 +416,19 @@ Stop iterating only when **one** of these is true:
 
 ## Tool argument quick reference
 
+**Multi-project / shared MCP:** always include `"workspace_root": "<absolute path to open project>"` on every tool below except `query_job_status`. Do not rely on a hardcoded `MCP_ADJUTANT_PROJECT_ROOT` in `~/.cursor/mcp.json`.
+
 **analyze_log**
 
 ```json
-{ "log_path": "target/debug/test.log", "request_uuid": "<uuid>" }
+{ "log_path": "target/debug/test.log", "workspace_root": "/absolute/path/to/project", "request_uuid": "<uuid>" }
 ```
 
 Remote sources (same tool — babysitter/CI):
 
 ```json
-{ "log_path": "gh-run:12345678901", "request_uuid": "<uuid>" }
-{ "log_path": "https://example.com/artifacts/build.log", "request_uuid": "<uuid>" }
+{ "log_path": "gh-run:12345678901", "workspace_root": "/absolute/path/to/project", "request_uuid": "<uuid>" }
+{ "log_path": "https://example.com/artifacts/build.log", "workspace_root": "/absolute/path/to/project", "request_uuid": "<uuid>" }
 ```
 
 After `gh pr checks` fails: `gh run view <run-id> --log-failed` → pass `gh-run:<run-id>` to `analyze_log` instead of pasting raw log text.
@@ -433,7 +436,7 @@ After `gh pr checks` fails: `gh run view <run-id> --log-failed` → pass `gh-run
 **scout_context**
 
 ```json
-{ "query": "Where is LlmUsage defined? List file:line under src/metrics/ and src/llm/", "request_uuid": "<uuid>" }
+{ "query": "Where is LlmUsage defined? List file:line under src/metrics/ and src/llm/", "workspace_root": "/absolute/path/to/project", "request_uuid": "<uuid>" }
 ```
 
 Prefer symbol/module paths over natural-language phrases (e.g. `LlmUsage`, `record_llm_call`, not "token metrics state").
@@ -441,7 +444,7 @@ Prefer symbol/module paths over natural-language phrases (e.g. `LlmUsage`, `reco
 **verify_and_triage**
 
 ```json
-{ "target_paths": ["src/foo.rs"], "request_uuid": "<uuid>" }
+{ "target_paths": ["src/foo.rs"], "workspace_root": "/absolute/path/to/project", "request_uuid": "<uuid>" }
 ```
 
 Omit `target_paths` or pass `[]` to use git dirty files.

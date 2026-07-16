@@ -282,6 +282,7 @@ mod tests {
             JobContext {
                 request_uuid: Some("req-1".to_string()),
                 mcp_tool: Some("scout_context".to_string()),
+                workspace_root: None,
             },
             || async {
                 store
@@ -312,6 +313,7 @@ mod tests {
             JobContext {
                 request_uuid: Some("req-1".to_string()),
                 mcp_tool: Some("verify_and_triage".to_string()),
+                workspace_root: None,
             },
             || async {
                 store
