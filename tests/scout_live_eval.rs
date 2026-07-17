@@ -126,6 +126,7 @@ async fn handler_scout_context_returns_cache_hit_prefix() {
         json!({
             "query": PROMPTS[0].1,
             "request_uuid": request_uuid,
+            "workspace_root": repo,
         }),
         config,
         &registry,

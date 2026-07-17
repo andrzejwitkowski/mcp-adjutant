@@ -128,11 +128,17 @@ pub fn parse_workspace_root_arg(args: &serde_json::Value) -> Result<Option<PathB
     Ok(Some(fs::canonicalize(&path).unwrap_or(path)))
 }
 
+/// Require absolute `workspace_root` (or legacy `project_path`) for cache-writing MCP tools.
+pub fn require_workspace_root_arg(args: &serde_json::Value) -> Result<PathBuf, String> {
+    parse_workspace_root_arg(args)?
+        .ok_or_else(|| "workspace_root is required (absolute path of the open project)".to_string())
+}
+
 /// Shared MCP schema property object for per-request project root (place under `properties.workspace_root`).
 pub fn workspace_root_schema_property() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
-        "description": "Absolute path of the project this job should operate on. Required when one MCP process serves multiple repos; defaults to MCP_ADJUTANT_PROJECT_ROOT / process cwd."
+        "description": "Absolute path of the project this job must operate on. Required on every tool except query_job_status when one MCP process serves multiple repos."
     })
 }
 
@@ -388,6 +394,13 @@ mod tests {
     fn parse_workspace_root_arg_missing_is_none() {
         let args = serde_json::json!({});
         assert_eq!(parse_workspace_root_arg(&args).expect("ok"), None);
+    }
+
+    #[test]
+    fn require_workspace_root_arg_rejects_missing() {
+        let args = serde_json::json!({});
+        let err = require_workspace_root_arg(&args).expect_err("required");
+        assert!(err.contains("workspace_root is required"), "{err}");
     }
 
     #[test]

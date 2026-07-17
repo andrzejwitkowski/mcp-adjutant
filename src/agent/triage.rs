@@ -408,12 +408,39 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
 
         if targets.is_empty() {
             context.is_finished = true;
-            context.input_prompt = if paths.is_empty() {
-                "No modules to check (no git changes or unknown paths).".to_string()
-            } else {
-                "Could not resolve a build command (no manifest and discovery returned no command)."
-                    .to_string()
+            let root = crate::cache::mcp_workspace_root();
+            let join = |paths: &[PathBuf]| {
+                if paths.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
             };
+            let requested = join(&self.target_paths);
+            let resolved = join(&paths);
+            context.input_prompt = if paths.is_empty() {
+                format!(
+                    "No modules to check (no git changes or unknown paths).\n\
+                     Workspace root: {}\nRequested paths: {requested}\nResolved paths: (none)\n\
+                     Discovery: no build targets.",
+                    root.display()
+                )
+            } else {
+                format!(
+                    "Could not resolve a build command (no manifest and discovery returned no command).\n\
+                     Workspace root: {}\nRequested paths: {requested}\nResolved paths: {resolved}\n\
+                     Discovery: attempted build-command discovery — no command.",
+                    root.display()
+                )
+            };
+            context.accumulated_data.push_str(&format!(
+                "\n[TRIAGE EARLY EXIT]\n{}\n",
+                context.input_prompt
+            ));
             return Ok(());
         }
 

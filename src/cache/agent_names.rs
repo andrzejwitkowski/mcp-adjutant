@@ -23,6 +23,9 @@ const ALIASES: &[(&str, &str)] = &[
     ("phase_3_transformer", "TranspilerAgent"),
     ("evaluator", "EvaluatorAgent"),
     ("evaluator_agent", "EvaluatorAgent"),
+    ("babysitter", "BabysitterAgent"),
+    ("babysitteragent", "BabysitterAgent"),
+    ("phase_babysitter", "BabysitterAgent"),
 ];
 
 pub fn normalize_agent_name(name: &str) -> String {
@@ -76,6 +79,13 @@ mod tests {
     fn normalize_maps_legacy_builder_aliases() {
         assert_eq!(normalize_agent_name("builder"), "Phase_4_Builder");
         assert_eq!(normalize_agent_name("BuilderAgent"), "Phase_4_Builder");
+    }
+
+    #[test]
+    fn normalize_maps_babysitter_aliases() {
+        assert_eq!(normalize_agent_name("babysitter"), "BabysitterAgent");
+        assert_eq!(normalize_agent_name("PHASE_BABYSITTER"), "BabysitterAgent");
+        assert_eq!(normalize_agent_name("BabysitterAgent"), "BabysitterAgent");
     }
 
     #[test]
