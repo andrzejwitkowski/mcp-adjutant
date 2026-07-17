@@ -110,11 +110,14 @@ fn strip_prior_iteration_cap(data: &str) -> &str {
 /// ponytail: keep densest recent evidence when the dump is huge
 fn last_evidence_chunk(observations: &str) -> &str {
     const MAX: usize = 2048;
-    if observations.len() > MAX {
-        &observations[observations.len() - MAX..]
-    } else {
-        observations
+    if observations.len() <= MAX {
+        return observations;
     }
+    let mut start = observations.len() - MAX;
+    while start < observations.len() && !observations.is_char_boundary(start) {
+        start += 1;
+    }
+    &observations[start..]
 }
 
 pub fn build_tool_loop_message(context: &AgentContext) -> String {
@@ -440,5 +443,15 @@ mod tests {
         assert_eq!(chunk.len(), 2048);
         assert!(chunk.chars().all(|c| c == 'x'));
         assert_eq!(last_evidence_chunk("short"), "short");
+    }
+
+    #[test]
+    fn last_evidence_chunk_respects_utf8_boundaries() {
+        // 3000 'é' (2 bytes each) so a naive byte cut at len-2048 lands mid-char
+        let big = "é".repeat(3000);
+        let chunk = last_evidence_chunk(&big);
+        assert!(chunk.len() <= 2048);
+        assert!(std::str::from_utf8(chunk.as_bytes()).is_ok());
+        assert!(!chunk.is_empty());
     }
 }

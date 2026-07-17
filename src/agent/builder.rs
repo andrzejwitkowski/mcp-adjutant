@@ -355,7 +355,7 @@ impl<
                     } else {
                         context.accumulated_data.push_str(&format!(
                             "\n[TRIAGE FAILURE]: triage did not reach expected TDD outcome\n\
-                             [BUILDER FAIL EVIDENCE]\ntest_path: {}\nno GREEN\n",
+                             test_path: {}\n",
                             path_buf.display()
                         ));
                     }
