@@ -321,6 +321,7 @@ impl ProjectCacheManager {
         score: i32,
         feedback_notes: &str,
     ) -> Result<(), String> {
+        let agent_name = super::agent_names::normalize_agent_name(agent_name);
         let created_at = current_unix_timestamp()?;
         let id = hash_query_text(&format!(
             "{agent_name}\0{original_task}\0{agent_output}\0{feedback_notes}\0{created_at}\0{}",
@@ -337,7 +338,7 @@ impl ProjectCacheManager {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     id,
-                    agent_name,
+                    agent_name.as_str(),
                     original_task,
                     agent_output,
                     score,

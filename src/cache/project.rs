@@ -163,6 +163,8 @@ pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), 
             .map_err(|err| format!("failed to run cache migration: {err}"))?;
     }
 
+    super::agent_names::backfill_evaluation_agent_names(&conn)?;
+
     Ok((project_root, conn))
 }
 

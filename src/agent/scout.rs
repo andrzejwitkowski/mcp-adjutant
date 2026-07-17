@@ -26,7 +26,13 @@ Selection rule: If you do not know the language or repo layout, use detect_langu
 
 Search strategy: Decompose the user query into code symbols (type names, function names, module paths) — not natural-language phrases. Example: search `LlmUsage`, `record_llm_call`, `metrics` instead of "token metrics implementation state".
 
-Mandatory finalize format: Your report must include file:line citations (e.g. src/metrics/store.rs:42) for every claim. If two consecutive searches return zero matches, call read_file on a likely path or finalize with partial findings.
+Workspace: Search ONLY under the workspace root stated in your prompt. If ripgrep returns zero hits, read_file a likely path under that root before concluding code is absent. Never blame config errors — adjust search paths within the workspace.
+
+Mandatory finalize format:
+- file:line citations (e.g. src/metrics/store.rs:42) for every claim
+- 2–5 line code snippets or log excerpts for each major finding (not just file names)
+- Answer every sub-question in the original task explicitly
+- Never output meta-commentary about reviews, conversations, or prior agent runs — deliver a technical trace only
 
 Efficiency: Finalize within 6 tool turns once you can answer. Do not repeat the same tool with identical arguments.
 
@@ -85,6 +91,13 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     }
 
     async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
+        if !context.input_prompt.contains("Workspace root") {
+            let root = mcp_workspace_root();
+            context.input_prompt.push_str(&format!(
+                "\n\nWorkspace root (search ONLY here): {}\n",
+                root.display()
+            ));
+        }
         if !context.input_prompt.contains("PHASE_1_SCOUT") {
             context.input_prompt.push_str("\n\n");
             context.input_prompt.push_str(SCOUT_SYSTEM_PROMPT);

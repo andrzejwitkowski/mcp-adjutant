@@ -24,6 +24,12 @@ Available tools (tool calls):
 - edit_file — replace one file line (path, line, content)
 - report_architectural_error — escalate when a fix needs an architect (msg)
 
+Evidence requirements (mandatory in your final report):
+- Workspace root path and the exact target files/modules triaged
+- Each build/test command run with exit code and a log excerpt (last ~40 lines)
+- Never claim PASS or FAIL without command output — "trust me" assertions score as failure
+- Verify triage targets match the coordinator request before reporting success
+
 Reply with a short rationale (Thought), then call exactly one tool."#;
 
 pub trait BuildCommandRunner: Send + Sync {
@@ -354,6 +360,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
     }
 
     async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
+        if !context.input_prompt.contains("Workspace root:") {
+            let root = crate::cache::mcp_workspace_root();
+            context.input_prompt.push_str(&format!(
+                "\n\nWorkspace root: {}\n",
+                root.display()
+            ));
+        }
         if !context.input_prompt.contains("PHASE_5_TRIAGE") {
             context.input_prompt.push_str("\n\n");
             context.input_prompt.push_str(TRIAGE_SYSTEM_PROMPT);

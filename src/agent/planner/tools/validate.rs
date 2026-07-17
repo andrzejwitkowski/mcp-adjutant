@@ -392,17 +392,10 @@ fn validate_blueprint_completeness(blueprint: &Value) -> Result<(), String> {
         .ok_or_else(|| "missing pipeline".to_string())?;
 
     for (idx, step) in pipeline.iter().enumerate() {
-        let action = step
-            .get("action")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if action == "generate_tests" {
-            continue;
-        }
         let goal = step.get("goal").and_then(Value::as_str).unwrap_or_default();
         if !goal_has_line_citation(goal) {
             return Err(format!(
-                "pipeline[{idx}]: goal must cite path:line evidence (e.g. config_server.rs:35)"
+                "pipeline[{idx}]: goal must cite path:line evidence (e.g. config_server.rs:35 or tests/foo_test.rs:1)"
             ));
         }
     }

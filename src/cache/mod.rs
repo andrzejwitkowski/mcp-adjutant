@@ -1,3 +1,4 @@
+pub mod agent_names;
 pub mod embedding;
 mod file_state;
 pub mod inspect;
@@ -15,6 +16,7 @@ pub use manager::{
     ProjectCacheManager, WebReportCacheLookup, WebReportRevalidation, WebSourceSnapshot,
     SEMANTIC_SIMILARITY_THRESHOLD,
 };
+pub use agent_names::{backfill_evaluation_agent_names, normalize_agent_name};
 pub use project::{
     current_unix_timestamp, hash_query_text, mcp_workspace_root, open_cache_connection,
     resolve_workspace_path, resolve_workspace_path_bounded,
