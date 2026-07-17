@@ -423,7 +423,7 @@ fn validate_rejects_goal_without_path_line_citation() {
 }
 
 #[test]
-fn validate_generate_tests_goal_exempt_from_path_line() {
+fn validate_generate_tests_goal_requires_path_line() {
     let patch = lib_rs_hunk("pub mod helper;\n");
     let raw = format!(
         r#"{{
@@ -443,7 +443,7 @@ fn validate_generate_tests_goal_exempt_from_path_line() {
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/helper_test.rs",
-                "goal": "Assert helper returns expected value.",
+                "goal": "Assert helper at tests/helper_test.rs:1.",
                 "patch_content": ""
             }}
         ]
@@ -455,6 +455,24 @@ fn validate_generate_tests_goal_exempt_from_path_line() {
         "{:?}",
         validate_blueprint(&raw).err()
     );
+}
+
+#[test]
+fn validate_rejects_generate_tests_goal_without_path_line() {
+    let raw = r#"{
+        "task_id": "bad-test-goal",
+        "architecture_summary": "Add tests.",
+        "pipeline": [{
+            "step": 1,
+            "agent": "BuilderAgent",
+            "action": "generate_tests",
+            "target_file": "tests/helper_test.rs",
+            "goal": "Assert helper returns expected value.",
+            "patch_content": ""
+        }]
+    }"#;
+    let err = validate_blueprint(raw).unwrap_err();
+    assert!(err.contains("path:line"), "{err}");
 }
 
 #[test]
@@ -521,7 +539,7 @@ fn coordinator_sync_types_rejects_builder_agent() {
             "agent": "BuilderAgent",
             "action": "generate_tests",
             "target_file": "tests/x_test.rs",
-            "goal": "Smoke.",
+            "goal": "Smoke at tests/x_test.rs:1.",
             "patch_content": ""
         }]
     }"#;
@@ -624,7 +642,7 @@ fn coordinator_manifest_single_line_dep_ok() {
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/foo_test.rs",
-                "goal": "Smoke test.",
+                "goal": "Smoke test at tests/x_test.rs:1.",
                 "patch_content": ""
             }
         ]
@@ -728,7 +746,7 @@ fn coordinator_surgical_rejects_replace_equals_search() {
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/x_test.rs",
-                "goal": "Smoke.",
+                "goal": "Smoke at tests/x_test.rs:1.",
                 "patch_content": ""
             }
         ]
@@ -772,7 +790,7 @@ fn coordinator_surgical_rejects_oversized_replace() {
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/x_test.rs",
-                "goal": "Smoke.",
+                "goal": "Smoke at tests/x_test.rs:1.",
                 "patch_content": ""
             }}
         ]
@@ -810,7 +828,7 @@ fn validate_accepts_rust_range_in_search_anchor() {
                 "agent": "BuilderAgent",
                 "action": "generate_tests",
                 "target_file": "tests/range_test.rs",
-                "goal": "Smoke.",
+                "goal": "Smoke at tests/x_test.rs:1.",
                 "patch_content": ""
             }
         ]
@@ -850,7 +868,7 @@ fn validate_rejects_generate_tests_target_not_in_tests() {
             "agent": "BuilderAgent",
             "action": "generate_tests",
             "target_file": "src/config_server.rs",
-            "goal": "Test.",
+            "goal": "Unit test at tests/foo_test.rs:1.",
             "patch_content": ""
         }]
     }"#;
@@ -868,7 +886,7 @@ fn validate_accepts_generate_tests_target_in_tests() {
             "agent": "BuilderAgent",
             "action": "generate_tests",
             "target_file": "tests/foo_test.rs",
-            "goal": "Test.",
+            "goal": "Unit test at tests/foo_test.rs:1.",
             "patch_content": ""
         }]
     }"#;

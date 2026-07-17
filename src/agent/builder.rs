@@ -30,6 +30,12 @@ Selection rule: unit tests -> write_test_suite directly (skip gather_integration
 
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED.
 
+Deliverable requirements (mandatory in your final report):
+- Repo-relative test file path and the full test source you wrote (or a diff)
+- Build command run, exit code, and a log excerpt (last ~40 lines) proving pass/fail
+- Cover every function/symbol named in the task — never skip scope without file:line proof that existing tests already cover it
+- On env/compile errors: include the error output and attempt pathing/fix before giving up
+
 Reply with a short rationale (Thought), then call tools."#;
 
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;

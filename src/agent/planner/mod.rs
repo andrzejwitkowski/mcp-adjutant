@@ -73,16 +73,16 @@ patch_content format (critical):
     let api = Router::new()
         .route("/api/config", get(get_config).put(put_config))
 >>>>>>> REPLACE
-- sync_types / generate_tests → empty string "".
+- sync_types / generate_tests → empty string "" (BuilderAgent writes tests; goal must cite tests/foo.rs:1).
 
 Hard rules:
 1. Emit only via emit_blueprint — no prose outside JSON.
-2. patch_content for patch_file MUST be SEARCH/REPLACE hunks (format above). create_file takes full contents. No comment sketches, no "...", no placeholders.
+2. patch_content for patch_file MUST be paste-ready SEARCH/REPLACE hunks (format above). create_file takes full contents. No comment sketches, no "...", no placeholders — emit_blueprint rejects ellipses.
 3. You MUST read_file every target_file before emit_blueprint (scout evidence counts; re-read if unsure).
-4. Every goal must cite path:line evidence (e.g. "Split router at config_server.rs:35").
+4. Every goal must cite path:line evidence (e.g. "Split router at config_server.rs:35"), including generate_tests goals (e.g. "tests/rate_limit_test.rs:1").
 5. sync_types and generate_tests: patch_content must be "".
 6. target_file must exist on disk (except create_file).
-7. Any patch_file/create_file work MUST end with a generate_tests step.
+7. Any patch_file/create_file work MUST end with a generate_tests step (non-optional final step).
 8. create_file for a new source module MUST include patch_file on the package entry (lib.rs, mod.rs, __init__.py, index.ts, …).
 9. When adding dependencies, patch the project manifest (Cargo.toml, package.json, go.mod, pyproject.toml, …) with a SEARCH/REPLACE hunk anchored to a real manifest line.
 10. SURGICAL: every SEARCH anchor MUST be copied verbatim from scout read_file/extract_search_anchor output. emit_blueprint rejects any SEARCH block not found on disk, any REPLACE identical to SEARCH, and any REPLACE that adds >15 lines over its SEARCH. New logic goes in a create_file step; patch_file is wiring/registration only (module declares, route registration, manifest line, struct field).

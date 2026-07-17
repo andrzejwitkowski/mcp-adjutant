@@ -29,9 +29,9 @@ fn list_evaluations_returns_newest_first() {
     let rows = list_evaluations(&conn).expect("list evaluations");
 
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].agent_name, "Builder");
+    assert_eq!(rows[0].agent_name, "Phase_4_Builder");
     assert_eq!(rows[0].score, 9);
-    assert_eq!(rows[1].agent_name, "Scout");
+    assert_eq!(rows[1].agent_name, "Phase_1_Scout");
 
     fs::remove_dir_all(&project_root).ok();
 }

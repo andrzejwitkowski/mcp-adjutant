@@ -55,3 +55,29 @@ fn store_evaluation_persists_data() {
 
     fs::remove_dir_all(&project_root).ok();
 }
+
+#[test]
+fn store_evaluation_normalizes_builder_alias() {
+    let project_root = unique_temp_project("eval-normalize");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+    cache
+        .store_evaluation("builder", "task", "output", 7, "ok")
+        .expect("store evaluation");
+
+    let db_path = project_root.join(".adjutant/cache.db");
+    let conn = Connection::open(&db_path).expect("open cache.db");
+    let agent_name: String = conn
+        .query_row(
+            "SELECT agent_name FROM agent_evaluations LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read agent_name");
+
+    assert_eq!(agent_name, "Phase_4_Builder");
+
+    fs::remove_dir_all(&project_root).ok();
+}

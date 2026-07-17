@@ -1,9 +1,11 @@
+pub mod agent_names;
 pub mod embedding;
 mod file_state;
 pub mod inspect;
 pub mod manager;
 pub mod project;
 
+pub use agent_names::{backfill_evaluation_agent_names, normalize_agent_name};
 pub use embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 pub use inspect::{
     list_evaluations, list_evaluations_page, load_cache_snapshot, load_scout_cache_page,
