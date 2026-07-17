@@ -362,10 +362,9 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
     async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
         if !context.input_prompt.contains("Workspace root:") {
             let root = crate::cache::mcp_workspace_root();
-            context.input_prompt.push_str(&format!(
-                "\n\nWorkspace root: {}\n",
-                root.display()
-            ));
+            context
+                .input_prompt
+                .push_str(&format!("\n\nWorkspace root: {}\n", root.display()));
         }
         if !context.input_prompt.contains("PHASE_5_TRIAGE") {
             context.input_prompt.push_str("\n\n");
