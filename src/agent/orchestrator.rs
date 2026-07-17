@@ -77,6 +77,7 @@ impl AgentLoopOrchestrator {
                 .join("\n- ")
         };
         let observations = strip_prior_iteration_cap(&context.accumulated_data);
+        let observations = last_evidence_chunk(observations);
         let header = format!(
             "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}",
             context.iterations, context.max_iterations
@@ -104,6 +105,16 @@ fn strip_prior_iteration_cap(data: &str) -> &str {
         return data;
     };
     tail[blank + 2..].trim_start()
+}
+
+/// ponytail: keep densest recent evidence when the dump is huge
+fn last_evidence_chunk(observations: &str) -> &str {
+    const MAX: usize = 2048;
+    if observations.len() > MAX {
+        &observations[observations.len() - MAX..]
+    } else {
+        observations
+    }
 }
 
 pub fn build_tool_loop_message(context: &AgentContext) -> String {
@@ -420,5 +431,14 @@ mod tests {
         let stripped = strip_prior_iteration_cap(capped);
         assert!(stripped.starts_with("Tool: read_file"));
         assert!(!stripped.contains("iteration limit after"));
+    }
+
+    #[test]
+    fn last_evidence_chunk_keeps_tail() {
+        let big = "x".repeat(3000);
+        let chunk = last_evidence_chunk(&big);
+        assert_eq!(chunk.len(), 2048);
+        assert!(chunk.chars().all(|c| c == 'x'));
+        assert_eq!(last_evidence_chunk("short"), "short");
     }
 }

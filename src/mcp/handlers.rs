@@ -24,7 +24,7 @@ use crate::agent::{
     TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
-    mcp_workspace_root, parse_workspace_root_arg, resolve_workspace_path,
+    mcp_workspace_root, require_workspace_root_arg, resolve_workspace_path,
     with_thread_workspace_root, ProjectCacheManager,
 };
 use crate::domain::AdjutantConfig;
@@ -47,7 +47,7 @@ async fn dispatch_async_job<F, Fut>(
     registry: &JobRegistry,
     request_uuid: String,
     tool_name: &str,
-    workspace_root: Option<PathBuf>,
+    workspace_root: PathBuf,
     work: F,
 ) -> Result<String, String>
 where
@@ -59,7 +59,7 @@ where
     let accepted_uuid = request_uuid.clone();
     let tool = tool_name.to_string();
     tokio::spawn(async move {
-        run_tracked_job(registry, request_uuid, tool, workspace_root, work).await;
+        run_tracked_job(registry, request_uuid, tool, Some(workspace_root), work).await;
     });
     Ok(accepted_job_response(&accepted_uuid, tool_name))
 }
@@ -127,7 +127,7 @@ pub async fn handle_scout_context(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -173,7 +173,7 @@ pub async fn handle_verify_and_triage(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let target_path_raws: Vec<String> = args
         .get("target_paths")
         .and_then(Value::as_array)
@@ -259,7 +259,7 @@ pub async fn handle_generate_tests_and_scaffolding(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let source_file_path = args
         .get("source_file_path")
         .and_then(Value::as_str)
@@ -359,7 +359,7 @@ pub async fn handle_execute_global_refactor(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let method_name = args
         .get("method_name")
         .and_then(Value::as_str)
@@ -438,7 +438,7 @@ pub async fn handle_evaluate_agent_performance(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let target_agent = args
         .get("target_agent")
         .and_then(Value::as_str)
@@ -506,7 +506,7 @@ pub async fn handle_web_fetch(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let search_phrase = args
         .get("search_phrase")
         .and_then(Value::as_str)
@@ -559,7 +559,7 @@ pub async fn handle_analyze_log(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let log_path_raw = args
         .get("log_path")
         .and_then(Value::as_str)
@@ -593,7 +593,7 @@ pub async fn handle_babysit_pr(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let pr_number = args
         .get("pr_number")
         .and_then(Value::as_u64)
@@ -650,7 +650,7 @@ pub async fn handle_transpile_types(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let parsed = parse_transpile_types_args(&args)?;
 
     dispatch_async_job(
@@ -757,7 +757,7 @@ pub async fn handle_plan_blueprint(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = parse_workspace_root_arg(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
     let parsed = parse_plan_blueprint_args(&args)?;
 
     dispatch_async_job(

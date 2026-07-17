@@ -21,8 +21,10 @@ Return ONE valid JSON object (no markdown fence) with this shape:
 
 Scoring guide:
 - 8–10: Output contains verifiable evidence (commands run, exit status, file:line paths, log excerpts).
-- 5–7: Correct conclusion but thin or incomplete evidence.
-- 1–4: Generic success/failure sentence with no supporting detail.
+- 5–7: Correct FAIL or PASS conclusion with verifiable evidence (cmd/exit/log/snippet/path) even if incomplete.
+- 1–4: Meta / status paraphrase with no supporting artifact.
+
+If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
 
 Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
@@ -42,16 +44,17 @@ const BUILDER_RUBRIC: &str = r#"
 BUILDER RUBRIC (override generic rubric):
 - 9-10: Delivers full test source (or diff) at a repo-relative path, build command with exit code, and log excerpt proving pass/fail; covers every function named in the task
 - 7-8: Correct test logic with file path but thin build evidence, or minor gaps in requested scope
-- 5-6: Partial scaffolding or correct diagnosis but missing test body or execution logs
-- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, env/compile error with no attempted fix, or unverifiable success claim
-Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3."#;
+- 5-6: Partial scaffolding; OR env/compile FAIL that includes error log plus attempted path/fix; OR correct diagnosis missing only full test body
+- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, or unverifiable success claim
+Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
+Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4."#;
 
 const SCOUT_RUBRIC: &str = r#"
 
 SCOUT RUBRIC (override generic rubric):
 - 9-10: file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths
 - 7-8: Correct file:line mapping but thin snippets or one missed sub-question
-- 5-6: Plausible paths without verifiable snippets, or partial answer missing key symbols
+- 5-7: Partial answer with file:line plus at least one code snippet or log excerpt
 - 1-4: Wrong repository/workspace, config/path error instead of trace, meta-commentary about a review/conversation, or summary with no file:line evidence
 Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3."#;
 
@@ -60,9 +63,18 @@ const TRIAGE_RUBRIC: &str = r#"
 TRIAGE RUBRIC (override generic rubric):
 - 9-10: PASS/FAIL backed by build command, exit code, workspace path, target files, and log excerpt for each module tested
 - 7-8: Correct verdict with logs but missing exit code or incomplete target-file list
-- 5-6: Correct diagnosis but truncated evidence
+- 5-7: Correct FAIL (or incomplete PASS diagnosis) with command + exit code + log excerpt
 - 1-4: PASS/FAIL without logs, wrong project/workspace, or generic assertion without command output
-Hard caps: PASS without log excerpt max 3; wrong target project max 2."#;
+Hard caps: PASS without log excerpt max 3; wrong target project max 2.
+Evidenced FAIL scores 5-7, not 1-4."#;
+
+const BABYSITTER_RUBRIC: &str = r#"
+
+BABYSITTER RUBRIC (override generic rubric):
+- 9-10: CI green with named checks; review paths handled or explicitly skipped; finalize completed or clear mergeable state
+- 5-7: Blocked finalize with refuse reason plus PR/check evidence (check names, review paths, gh state)
+- 1-4: Meta status with no check names, review paths, or refuse reason detail
+Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review state, not cargo/npm logs."#;
 
 #[derive(Debug, Deserialize)]
 struct EvaluationPayload {
@@ -128,6 +140,7 @@ fn agent_evaluation_rubric(target_agent: &str) -> Option<&'static str> {
         "PlannerAgent" => Some(PLANNER_RUBRIC),
         "Phase_1_Scout" => Some(SCOUT_RUBRIC),
         "Phase_5_Triage" => Some(TRIAGE_RUBRIC),
+        "BabysitterAgent" => Some(BABYSITTER_RUBRIC),
         name if name.starts_with("Phase_4_Builder") => Some(BUILDER_RUBRIC),
         _ => None,
     }
@@ -200,7 +213,9 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_evaluation_rubric, extract_json_object, EvaluatorAgent};
+    use super::{
+        agent_evaluation_rubric, extract_json_object, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+    };
 
     #[test]
     fn planner_rubric_appended_for_planner_agent() {
@@ -215,6 +230,21 @@ mod tests {
         assert!(agent_evaluation_rubric("Phase_4_Builder").is_some());
         assert!(agent_evaluation_rubric("Phase_4_Builder_GREEN").is_some());
         assert!(agent_evaluation_rubric("StringBuilder").is_none());
+        let builder = agent_evaluation_rubric("Phase_4_Builder").expect("builder");
+        assert!(builder.contains("Evidenced FAIL"));
+        let scout = agent_evaluation_rubric("Phase_1_Scout").expect("scout");
+        assert!(scout.contains("5-7: Partial answer"));
+        let triage = agent_evaluation_rubric("Phase_5_Triage").expect("triage");
+        assert!(triage.contains("Evidenced FAIL"));
+        let baby = agent_evaluation_rubric("BabysitterAgent").expect("babysitter");
+        assert!(baby.contains("BABYSITTER RUBRIC"));
+    }
+
+    #[test]
+    fn evaluator_prompt_flags_orchestrator_paraphrase() {
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("query_job_status.result"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("score ≤3"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("verifiable evidence"));
     }
 
     #[test]

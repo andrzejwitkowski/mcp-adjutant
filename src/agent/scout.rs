@@ -121,7 +121,7 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
         if context.iterations >= context.max_iterations.saturating_sub(1) {
             context.input_prompt.push_str(
-                "\nFinal turn: call finalize(report) with your best condensed markdown report.",
+                "\nFinal turn: call finalize(report) with file:line citations and 2-5 line snippets for each major finding — not file names alone.",
             );
         } else {
             context.input_prompt.push_str(

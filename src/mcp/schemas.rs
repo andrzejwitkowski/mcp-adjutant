@@ -32,7 +32,7 @@ pub fn scout_context_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["query", "request_uuid"]
+            "required": ["query", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -52,7 +52,7 @@ pub fn verify_and_triage_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["request_uuid"]
+            "required": ["workspace_root", "request_uuid"]
         }
     })
 }
@@ -72,7 +72,7 @@ pub fn generate_tests_and_scaffolding_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["source_file_path", "test_type", "request_uuid"]
+            "required": ["source_file_path", "test_type", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -99,7 +99,7 @@ pub fn execute_global_refactor_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["method_name", "refactor_instruction", "request_uuid"]
+            "required": ["method_name", "refactor_instruction", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -113,7 +113,7 @@ pub fn evaluate_agent_performance_schema() -> Value {
             "properties": {
                 "target_agent": {
                     "type": "string",
-                    "description": "Name of the agent you are evaluating (e.g. 'Phase_1_Scout')."
+                    "description": "Name of the agent you are evaluating (e.g. Phase_1_Scout, Phase_4_Builder, Phase_5_Triage, BabysitterAgent, PlannerAgent)."
                 },
                 "original_task": {
                     "type": "string",
@@ -121,7 +121,7 @@ pub fn evaluate_agent_performance_schema() -> Value {
                 },
                 "received_output": {
                     "type": "string",
-                    "description": "Raw result/report the agent returned."
+                    "description": "Paste the FULL query_job_status.result string verbatim — do not paraphrase into a one-line status. If longer than 8k chars, keep the last 8k (prefer from [TRIAGE RESULT] / Observation / evidence sections through the end)."
                 },
                 "workspace_root": workspace_root_schema_property(),
                 "project_path": {
@@ -130,7 +130,7 @@ pub fn evaluate_agent_performance_schema() -> Value {
                 },
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["target_agent", "original_task", "received_output", "request_uuid"]
+            "required": ["target_agent", "original_task", "received_output", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -153,7 +153,7 @@ pub fn web_fetch_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["search_phrase", "request_uuid"]
+            "required": ["search_phrase", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -172,7 +172,7 @@ pub fn analyze_log_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["log_path", "request_uuid"]
+            "required": ["log_path", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -191,7 +191,7 @@ pub fn babysit_pr_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["pr_number", "request_uuid"]
+            "required": ["pr_number", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -232,7 +232,7 @@ pub fn transpile_types_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["source_paths", "target_path", "architecture_layout", "request_uuid"]
+            "required": ["source_paths", "target_path", "architecture_layout", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -260,7 +260,7 @@ pub fn plan_blueprint_schema() -> Value {
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
-            "required": ["feature_request", "request_uuid"]
+            "required": ["feature_request", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -322,6 +322,14 @@ mod workspace_root_schema_tests {
                 assert!(
                     props.contains_key("workspace_root"),
                     "{name} missing workspace_root"
+                );
+                let required = tool["input_schema"]["required"]
+                    .as_array()
+                    .expect("required");
+                let req: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+                assert!(
+                    req.contains(&"workspace_root"),
+                    "{name} must require workspace_root, got {req:?}"
                 );
             }
         }

@@ -81,6 +81,7 @@ Premium agent role in planning: **synthesize** adjutant evidence into the plan. 
 - Pure re-export / barrel files with no new logic
 - Docs, lockfiles, generated `dist/` / `target/` output, CI YAML with no app logic
 - Language or layout where builder cannot target the file (say why; use that stack's normal test command via triage instead)
+- Change already covered by existing `#[cfg(test)]` / co-located module tests with no new behavior needing a new test file — document the covering test path in the N/A reason
 
 ### Builder scope
 
@@ -178,7 +179,8 @@ Call `evaluate_agent_performance` when the result will influence your next steps
 {
   "target_agent": "Phase_1_Scout",
   "original_task": "<what you asked for>",
-  "received_output": "<sub-agent result>",
+  "received_output": "<FULL query_job_status.result verbatim — never paraphrase>",
+  "workspace_root": "<absolute path to open project>",
   "request_uuid": "<new-uuid>"
 }
 ```
@@ -277,9 +279,9 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 ### Hard workflow
 
 1. Generate a fresh `request_uuid` per tool call.
-2. Pass **`workspace_root`** (absolute path of the open project) on every repo-touching tool except `query_job_status`. Required when one MCP process serves multiple repos; falls back to `MCP_ADJUTANT_PROJECT_ROOT` / process cwd when omitted.
+2. Pass **`workspace_root`** (absolute path of the open project) on **every** tool except `query_job_status`. The server **rejects** calls that omit it.
 3. Fire the tool; immediately poll `query_job_status` (do not guess timeouts).
-4. On `terminal=true` with `status=completed`, run `evaluate_agent_performance`.
+4. On `terminal=true` with `status=completed`, run `evaluate_agent_performance` with **`received_output` = the full `query_job_status.result` string verbatim** (if &gt;8k chars, keep the last 8k). Do not paraphrase into a one-line status.
 5. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
 6. Integrate verified results into your response; cite what the sub-agent found/changed.
 7. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
@@ -489,12 +491,13 @@ Use for library docs, API specs, release notes — not for in-repo code (use sco
 {
   "target_agent": "Phase_1_Scout",
   "original_task": "Find JWT middleware entry points",
-  "received_output": "<paste sub-agent output>",
+  "received_output": "<FULL query_job_status.result verbatim; if >8k keep last 8k>",
+  "workspace_root": "/absolute/path/to/project",
   "request_uuid": "<uuid>"
 }
 ```
 
-`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`.
+`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `BabysitterAgent` (for `babysit_pr`), `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`, `PlannerAgent`.
 
 **transpile_types**
 
@@ -559,6 +562,9 @@ flowchart TD
 - Using **Task/explore** or **fastcontext** when `scout_context` applies
 - Committing after edits without `verify_and_triage` (**hard** always; **medium** after substantive edits)
 - Ignoring `evaluate_agent_performance` in **medium**/**hard** and trusting unverified sub-agent output
+- **Paraphrasing** `query_job_status.result` into a one-line status for `evaluate_agent_performance.received_output` — paste the raw result
+- Calling tools **without `workspace_root`** (except `query_job_status`) — server rejects; also pollutes the wrong project cache
+- Evaluating `babysit_pr` as `Phase_5_Triage` — use `BabysitterAgent`
 - Delegating ambiguous architecture work in **low** mode
 - Stopping polling before `terminal=true`
 - **Giving up after one weak sub-agent result** instead of retrying with a better prompt

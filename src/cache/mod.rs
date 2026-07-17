@@ -19,6 +19,6 @@ pub use manager::{
 };
 pub use project::{
     current_unix_timestamp, hash_query_text, mcp_workspace_root, open_cache_connection,
-    parse_workspace_root_arg, resolve_workspace_path, resolve_workspace_path_bounded,
-    with_thread_workspace_root, workspace_root_schema_property,
+    parse_workspace_root_arg, require_workspace_root_arg, resolve_workspace_path,
+    resolve_workspace_path_bounded, with_thread_workspace_root, workspace_root_schema_property,
 };

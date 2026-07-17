@@ -1,6 +1,7 @@
 mod tools;
 
 use std::path::{Component, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -40,6 +41,8 @@ Reply with a short rationale (Thought), then call tools."#;
 
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_SCOUT_MAX_ITERATIONS: u32 = 8;
+// ponytail: blank LLM turns — nudge then evidenced FAIL; never Err the MCP job
+const EMPTY_TOOL_TURN_LIMIT: u32 = 3;
 
 fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Result<PathBuf, String> {
     let candidate = PathBuf::from(path);
@@ -64,6 +67,31 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Resul
     Ok(project_root.join(candidate))
 }
 
+/// Returns true when blank-cap reached (caller should finish).
+fn record_empty_tool_turn(
+    accumulated: &mut String,
+    thought: &str,
+    consecutive_empty: &AtomicU32,
+) -> bool {
+    if thought.is_empty() {
+        accumulated.push_str(
+            "Observation:\n(model returned no tool call — call write_test_suite with path under tests/ and content)\n",
+        );
+    } else {
+        accumulated.push_str(&format!(
+            "Thought:\n{thought}\nObservation:\n(model did not call a tool — call write_test_suite with path under tests/ and content)\n"
+        ));
+    }
+    let blanks = consecutive_empty.fetch_add(1, Ordering::Relaxed) + 1;
+    if blanks < EMPTY_TOOL_TURN_LIMIT {
+        return false;
+    }
+    accumulated.push_str(&format!(
+        "\n[BUILDER FAIL EVIDENCE]\nno tool calls for {EMPTY_TOOL_TURN_LIMIT} consecutive turns\nno GREEN\n"
+    ));
+    true
+}
+
 pub struct BuilderAgent<C, SC, TC, B, D>
 where
     SC: LlmClient,
@@ -73,6 +101,7 @@ where
     scout_agent: ScoutAgent<SC>,
     triage_agent: TriageAgent<TC, B, D>,
     tools: LlmToolSet,
+    consecutive_empty_turns: AtomicU32,
 }
 
 impl<
@@ -95,6 +124,7 @@ impl<
             scout_agent,
             triage_agent,
             tools: builder_tool_set(),
+            consecutive_empty_turns: AtomicU32::new(0),
         }
     }
 
@@ -111,6 +141,7 @@ impl<
             scout_agent,
             triage_agent,
             tools,
+            consecutive_empty_turns: AtomicU32::new(0),
         }
     }
 
@@ -208,15 +239,18 @@ impl<
         let model_turn = self.llm_client.complete(request)?;
 
         if model_turn.tool_calls.is_empty() {
-            let thought = model_turn.content.as_deref().unwrap_or("").to_string();
-            if thought.is_empty() {
-                return Err("model response missing tool call".to_string());
+            let thought = model_turn.content.as_deref().unwrap_or("");
+            if record_empty_tool_turn(
+                &mut context.accumulated_data,
+                thought,
+                &self.consecutive_empty_turns,
+            ) {
+                context.is_finished = true;
             }
-            context.accumulated_data.push_str(&format!(
-                "Thought:\n{thought}\n(model did not call a tool — continue)\n"
-            ));
             return Ok(());
         }
+
+        self.consecutive_empty_turns.store(0, Ordering::Relaxed);
 
         let thought = model_turn.content.as_deref().unwrap_or("").to_string();
         if !thought.is_empty() {
@@ -319,9 +353,11 @@ impl<
                             context.accumulated_data.push_str("\n[BUILDER GREEN OK]\n");
                         }
                     } else {
-                        context.accumulated_data.push_str(
-                            "\n[TRIAGE FAILURE]: triage did not reach expected TDD outcome\n",
-                        );
+                        context.accumulated_data.push_str(&format!(
+                            "\n[TRIAGE FAILURE]: triage did not reach expected TDD outcome\n\
+                             [BUILDER FAIL EVIDENCE]\ntest_path: {}\nno GREEN\n",
+                            path_buf.display()
+                        ));
                     }
                 }
                 other => {
@@ -334,6 +370,11 @@ impl<
     }
 
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
+        if context.iterations >= context.max_iterations.saturating_sub(1) {
+            context.input_prompt.push_str(
+                "\nFinal turn: if not GREEN, end with test path, last triage log excerpt, and explicit no GREEN — never a status-only sentence.",
+            );
+        }
         context
             .input_prompt
             .push_str("\nContinue generating tests based on the latest observation.");
@@ -378,5 +419,37 @@ mod tests {
     fn resolve_test_output_path_rejects_parent_traversal() {
         let root = PathBuf::from("/repo/demo");
         assert!(resolve_test_output_path(&root, "../escape.rs").is_err());
+    }
+
+    #[test]
+    fn empty_tool_turn_nudges_without_finishing() {
+        let counter = AtomicU32::new(0);
+        let mut data = String::new();
+        assert!(!record_empty_tool_turn(&mut data, "", &counter));
+        assert!(data.contains("no tool call"));
+        assert!(data.contains("write_test_suite"));
+        assert!(!data.contains("[BUILDER FAIL EVIDENCE]"));
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn empty_tool_turn_with_thought_still_nudges() {
+        let counter = AtomicU32::new(0);
+        let mut data = String::new();
+        assert!(!record_empty_tool_turn(&mut data, "planning", &counter));
+        assert!(data.contains("Thought:\nplanning"));
+        assert!(data.contains("did not call a tool"));
+    }
+
+    #[test]
+    fn third_empty_tool_turn_finishes_with_fail_evidence() {
+        let counter = AtomicU32::new(0);
+        let mut data = String::new();
+        assert!(!record_empty_tool_turn(&mut data, "", &counter));
+        assert!(!record_empty_tool_turn(&mut data, "", &counter));
+        assert!(record_empty_tool_turn(&mut data, "", &counter));
+        assert!(data.contains("[BUILDER FAIL EVIDENCE]"));
+        assert!(data.contains("no GREEN"));
+        assert_eq!(counter.load(Ordering::Relaxed), 3);
     }
 }

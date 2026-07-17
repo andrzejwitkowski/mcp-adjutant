@@ -493,3 +493,55 @@ async fn builder_agent_generate_test_factory_delegates_to_scout() {
 
     std::fs::remove_dir_all(&project_root).ok();
 }
+
+struct EmptyTurnBuilderLlm;
+
+impl LlmClient for EmptyTurnBuilderLlm {
+    fn complete(&self, request: LlmRequest<'_>) -> Result<LlmModelTurn, String> {
+        assert_eq!(request.system_prompt, BUILDER_SYSTEM_PROMPT);
+        Ok(LlmModelTurn {
+            content: None,
+            tool_calls: vec![],
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn builder_empty_turns_finish_with_fail_evidence_not_err() {
+    let project_root = unique_temp_project("builder-empty");
+    setup_cargo_project(&project_root);
+    let cache = Arc::new(Mutex::new(open_cache_manager(&project_root)));
+    let config = Arc::new(AdjutantConfig::default());
+    let triage_agent = TriageAgent::with_build_runner(
+        PanicTriageLlm,
+        vec![],
+        Arc::clone(&config),
+        TddRedBuildRunner,
+    );
+    let agent = BuilderAgent::new(
+        EmptyTurnBuilderLlm,
+        cache,
+        ScoutAgent::new(PanicScoutLlm),
+        triage_agent,
+    );
+
+    let result = AgentLoopOrchestrator::run(
+        &agent,
+        "PHASE_4_BUILDER\nGenerate unit test for src/lib.rs".to_string(),
+        5,
+    )
+    .await
+    .expect("empty turns must not Err the job");
+
+    assert!(result.is_finished);
+    assert!(
+        result.accumulated_data.contains("[BUILDER FAIL EVIDENCE]"),
+        "expected fail evidence, got: {}",
+        result.accumulated_data
+    );
+    assert!(result.accumulated_data.contains("write_test_suite"));
+    assert!(!result.accumulated_data.contains("[BUILDER GREEN OK]"));
+
+    std::fs::remove_dir_all(&project_root).ok();
+}
