@@ -141,9 +141,7 @@ mod tests {
         let phases = value.get("phases").unwrap().as_object().unwrap();
         assert!(phases.contains_key("git_janitor"));
         assert_eq!(
-            phases
-                .get("git_janitor")
-                .and_then(|v| v.get("api_key")),
+            phases.get("git_janitor").and_then(|v| v.get("api_key")),
             Some(&json!("sk-test-janitor"))
         );
         assert!(!phases.contains_key("unknown_phase"));

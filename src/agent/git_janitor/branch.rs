@@ -46,7 +46,11 @@ pub fn evaluate_branch_gate(
     let branch_ticket = extract_ticket(current_branch, regex);
     let context_ticket = feature_context
         .and_then(|t| extract_ticket(t, regex))
-        .or_else(|| expected_ticket.map(str::to_string).filter(|s| !s.is_empty()))
+        .or_else(|| {
+            expected_ticket
+                .map(str::to_string)
+                .filter(|s| !s.is_empty())
+        })
         .or_else(|| user_instructions.and_then(|t| extract_ticket(t, regex)));
 
     let on_default = DEFAULT_BRANCHES
@@ -57,9 +61,7 @@ pub fn evaluate_branch_gate(
         (BranchStatus::OnDefault, BranchAction::CreateBranch)
     } else if let Some(ref expected) = expected_ticket.filter(|s| !s.is_empty()) {
         match &branch_ticket {
-            Some(bt) if bt.eq_ignore_ascii_case(expected) => {
-                (BranchStatus::Ok, BranchAction::None)
-            }
+            Some(bt) if bt.eq_ignore_ascii_case(expected) => (BranchStatus::Ok, BranchAction::None),
             Some(_) => (BranchStatus::StaleFeature, BranchAction::CreateBranch),
             None => (BranchStatus::TicketMismatch, BranchAction::CreateBranch),
         }
@@ -75,13 +77,13 @@ pub fn evaluate_branch_gate(
 
     let ticket_id = context_ticket
         .clone()
-        .or(expected_ticket.map(str::to_string).filter(|s| !s.is_empty()))
+        .or(expected_ticket
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()))
         .or(branch_ticket.clone());
 
-    let suggested = suggest_branch_name(
-        ticket_id.as_deref(),
-        feature_context.or(user_instructions),
-    );
+    let suggested =
+        suggest_branch_name(ticket_id.as_deref(), feature_context.or(user_instructions));
 
     BranchGate {
         current_branch: current_branch.to_string(),
@@ -147,9 +149,7 @@ pub async fn create_git_branch(root: &Path, branch_name: &str) -> Result<String,
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        return Err(format!(
-            "git checkout -b {name} failed:\n{stdout}{stderr}"
-        ));
+        return Err(format!("git checkout -b {name} failed:\n{stdout}{stderr}"));
     }
     Ok(format!(
         "{{\"branch\":\"{name}\",\"status\":\"created\",\"previous\":\"{current}\"}}"

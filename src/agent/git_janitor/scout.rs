@@ -55,9 +55,7 @@ pub async fn gather_conventions_and_diff(
     let recent_commits = git_stdout(root, &["log", "-n", "10", "--oneline"])
         .await
         .unwrap_or_default();
-    let unstaged_diff = git_stdout(root, &["diff"])
-        .await
-        .unwrap_or_default();
+    let unstaged_diff = git_stdout(root, &["diff"]).await.unwrap_or_default();
     let staged_diff = git_stdout(root, &["diff", "--staged"])
         .await
         .unwrap_or_default();
@@ -86,10 +84,7 @@ pub async fn gather_conventions_and_diff(
 }
 
 fn load_templates(root: &Path, conventions: &GitConventions) -> Vec<TemplateSnippet> {
-    let mut paths: Vec<PathBuf> = TEMPLATE_CANDIDATES
-        .iter()
-        .map(|p| root.join(p))
-        .collect();
+    let mut paths: Vec<PathBuf> = TEMPLATE_CANDIDATES.iter().map(|p| root.join(p)).collect();
     let configured = root.join(&conventions.pr.template_file);
     if !paths.iter().any(|p| p == &configured) {
         paths.insert(0, configured);

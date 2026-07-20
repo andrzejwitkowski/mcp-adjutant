@@ -22,9 +22,7 @@ pub use conventions::{
     conventions_toml_string, extract_ticket, find_jira_ticket, merge_conventions_patch,
     write_adjutant_toml, GitConventions, GitRules, ADJUTANT_TOML,
 };
-pub use scout::{
-    format_scout_block, gather_conventions_and_diff, GitJanitorScout, ScoutInputs,
-};
+pub use scout::{format_scout_block, gather_conventions_and_diff, GitJanitorScout, ScoutInputs};
 pub use tools::{build_emit_json, git_janitor_tool_set, parse_emit_fields, parse_patch_json};
 
 pub const GIT_JANITOR_MAX_ITERATIONS: u32 = 4;
@@ -84,7 +82,9 @@ impl<C: LlmClient> GitJanitorAgent<C> {
         if let Ok(mut sug) = self.suggested_toml.lock() {
             *sug = toml.clone();
         }
-        Ok(format!("conventions updated (in-memory)\n```toml\n{toml}\n```"))
+        Ok(format!(
+            "conventions updated (in-memory)\n```toml\n{toml}\n```"
+        ))
     }
 
     fn persist_patch(&self, patch: &Value) -> Result<String, String> {

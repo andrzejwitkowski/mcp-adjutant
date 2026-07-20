@@ -294,9 +294,7 @@ fn is_git_janitor_create_branch_eval(original_task: &str, received_output: &str)
     let Some(obj) = value.as_object() else {
         return false;
     };
-    obj.contains_key("branch")
-        && obj.contains_key("status")
-        && !obj.contains_key("commit_message")
+    obj.contains_key("branch") && obj.contains_key("status") && !obj.contains_key("commit_message")
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -385,10 +383,8 @@ mod tests {
             "create_git_branch feat/GIT-1-git-janitor",
             r#"{"branch":"feat/GIT-1-git-janitor","status":"created","previous":"main"}"#
         ));
-        let rubric = git_janitor_rubric_for(
-            "Create and checkout feat/X via create_git_branch",
-            "{}",
-        );
+        let rubric =
+            git_janitor_rubric_for("Create and checkout feat/X via create_git_branch", "{}");
         assert!(rubric.contains("create_git_branch"));
         assert!(rubric.contains("previous"));
         assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
@@ -402,7 +398,10 @@ mod tests {
             out
         ));
         // even without create_git_branch in task, branch/status JSON routes correctly
-        assert!(is_git_janitor_create_branch_eval("checkout new feature branch", out));
+        assert!(is_git_janitor_create_branch_eval(
+            "checkout new feature branch",
+            out
+        ));
         let rubric = agent_evaluation_rubric("GitJanitorAgent", "checkout new feature branch", out)
             .expect("rubric");
         assert!(rubric.contains("create_git_branch"));
@@ -412,7 +411,10 @@ mod tests {
     #[test]
     fn git_janitor_prepare_rubric_when_emit_json() {
         let out = r#"{"commit_message":"feat: x","pr_title":"feat: x","pr_body":"b","changelog_entry":"c","branch_status":"ok","action_required":"none","commit_allowed":true,"suggested_branch_name":"feat/x","current_branch":"feat/x"}"#;
-        assert!(!is_git_janitor_create_branch_eval("prepare_git_copy for feature", out));
+        assert!(!is_git_janitor_create_branch_eval(
+            "prepare_git_copy for feature",
+            out
+        ));
         let rubric = git_janitor_rubric_for("prepare_git_copy for feature", out);
         assert!(rubric.contains("prepare_git_copy"));
         assert!(rubric.contains("commit_allowed"));

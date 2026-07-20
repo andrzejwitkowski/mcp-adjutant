@@ -11,7 +11,10 @@ fn parse_patch_json_parses_valid_json() {
     });
 
     let result = parse_patch_json(&args);
-    assert!(result.is_ok(), "parse_patch_json should succeed for valid JSON");
+    assert!(
+        result.is_ok(),
+        "parse_patch_json should succeed for valid JSON"
+    );
 
     let parsed = result.unwrap();
     assert!(parsed.is_object());
@@ -26,7 +29,10 @@ fn parse_patch_json_rejects_invalid_json() {
     });
 
     let result = parse_patch_json(&args);
-    assert!(result.is_err(), "parse_patch_json should fail for invalid JSON");
+    assert!(
+        result.is_err(),
+        "parse_patch_json should fail for invalid JSON"
+    );
 
     let err = result.unwrap_err();
     assert!(
@@ -46,7 +52,10 @@ fn parse_emit_fields_extracts_all_fields() {
     });
 
     let result = parse_emit_fields(&args);
-    assert!(result.is_ok(), "parse_emit_fields should succeed with all required fields");
+    assert!(
+        result.is_ok(),
+        "parse_emit_fields should succeed with all required fields"
+    );
 
     let fields = result.unwrap();
     assert_eq!(fields.commit_message, "fix: resolve issue #42");

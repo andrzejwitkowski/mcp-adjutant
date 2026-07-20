@@ -157,13 +157,7 @@ fn test_evaluate_branch_gate_expected_ticket_takes_precedence() {
 #[test]
 fn test_evaluate_branch_gate_ticket_id_extraction() {
     let conventions = GitConventions::default();
-    let gate = evaluate_branch_gate(
-        "feat/JIRA-42-my-task",
-        &conventions,
-        None,
-        None,
-        None,
-    );
+    let gate = evaluate_branch_gate("feat/JIRA-42-my-task", &conventions, None, None, None);
 
     // When no expected_ticket or context, ticket_id should come from branch
     assert_eq!(gate.ticket_id, Some("JIRA-42".to_string()));
@@ -217,13 +211,7 @@ fn test_suggest_branch_name_special_chars() {
 #[test]
 fn test_evaluate_branch_gate_empty_expected_ticket_ignored() {
     let conventions = GitConventions::default();
-    let gate = evaluate_branch_gate(
-        "feat/JIRA-123",
-        &conventions,
-        None,
-        Some(""),
-        None,
-    );
+    let gate = evaluate_branch_gate("feat/JIRA-123", &conventions, None, Some(""), None);
 
     // Empty expected_ticket should be ignored, falls through to context_ticket check
     // Since no context_ticket either, should return Ok with no action

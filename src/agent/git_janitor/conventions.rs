@@ -122,8 +122,8 @@ pub fn merge_conventions_patch(
     base: &GitConventions,
     patch: &serde_json::Value,
 ) -> Result<GitConventions, String> {
-    let mut merged = serde_json::to_value(base)
-        .map_err(|err| format!("serialize conventions: {err}"))?;
+    let mut merged =
+        serde_json::to_value(base).map_err(|err| format!("serialize conventions: {err}"))?;
     merge_json(&mut merged, patch);
     serde_json::from_value(merged).map_err(|err| format!("invalid conventions patch: {err}"))
 }
