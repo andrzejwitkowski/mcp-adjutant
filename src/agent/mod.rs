@@ -16,14 +16,17 @@ mod web_fetcher;
 
 pub use crate::tools::{BuildCommandDiscoverer, LlmBuildDiscoverer, NoopBuildDiscoverer};
 pub use babysitter::{
-    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
-    parse_triage_arguments, BabysitterAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    babysitter_tool_set, format_babysitter_result, parse_finalize_arguments, parse_log_path,
+    parse_report_body, parse_triage_arguments, BabysitterAgent, BABYSITTER_MAX_ITERATIONS,
+    BABYSITTER_SYSTEM_PROMPT,
 };
 pub use builder::{
     builder_tool_set, default_builder_agent, BuilderAgent, DefaultBuilderAgent,
     BUILDER_SYSTEM_PROMPT,
 };
-pub use evaluator::{EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT};
+pub use evaluator::{
+    format_eval_job_appendix, AgentEvalSummary, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+};
 pub use log_analyzer::{
     analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT,
 };

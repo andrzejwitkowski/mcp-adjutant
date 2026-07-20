@@ -16,7 +16,8 @@ You will receive:
 Return ONE valid JSON object (no markdown fence) with this shape:
 {
   "score": [rating from 1 to 10],
-  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]"
+  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]",
+  "desired_output": "[Full exemplar rewrite of what the agent should have produced to earn 10/10 — same modality/format as THEIR OUTPUT (scout report, builder result, triage log, etc.). Not a checklist. If score is 10, set this to an empty string \"\".]"
 }
 
 Scoring guide:
@@ -25,6 +26,8 @@ Scoring guide:
 - 1–4: Meta / status paraphrase with no supporting artifact.
 
 If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
+
+When score < 10, desired_output MUST be a complete exemplar that would earn 10/10 for ORIGINAL TASK (file:line evidence, commands, logs — match the agent rubric). When score is 10, desired_output MUST be "".
 
 Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
@@ -71,15 +74,25 @@ Evidenced FAIL scores 5-7, not 1-4."#;
 const BABYSITTER_RUBRIC: &str = r#"
 
 BABYSITTER RUBRIC (override generic rubric):
-- 9-10: CI green with named checks; review paths handled or explicitly skipped; finalize completed or clear mergeable state
-- 5-7: Blocked finalize with refuse reason plus PR/check evidence (check names, review paths, gh state)
-- 1-4: Meta status with no check names, review paths, or refuse reason detail
+- 10: Valid JSON with action, pr_number, checks (every PR check name), reviews.paths_seen/handled/skipped_paths, gh_state, report_posted, iterations
+- 9: Same fields; minor omission only
+- 5-7: Blocked with refuse_reason plus named checks and review paths
+- 1-4: Meta status, prose-only, or JSON missing check names / review paths / gh_state
 Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review state, not cargo/npm logs."#;
+
+#[derive(Debug, Clone)]
+pub struct AgentEvalSummary {
+    pub score: i32,
+    pub critique: String,
+    pub desired_output: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct EvaluationPayload {
     score: i32,
     critique: String,
+    #[serde(default)]
+    desired_output: String,
 }
 
 pub struct EvaluatorAgent<C: LlmClient> {
@@ -119,6 +132,41 @@ impl<C: LlmClient> EvaluatorAgent<C> {
         message
     }
 
+    pub async fn evaluate_once(&self) -> Result<AgentEvalSummary, String> {
+        let user_message = self.build_user_message();
+        let empty_tools = LlmToolSet::new();
+        let request = LlmRequest::new(EVALUATOR_SYSTEM_PROMPT, &user_message, &empty_tools);
+        let model_turn = self.client.complete(request)?;
+        let raw_response = model_turn
+            .content
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| "evaluator model response missing content".to_string())?;
+
+        let mut evaluation = Self::parse_evaluation_response(&raw_response)?;
+        if !(1..=10).contains(&evaluation.score) {
+            return Err(format!(
+                "evaluator score must be between 1 and 10, got {}",
+                evaluation.score
+            ));
+        }
+        normalize_desired_output(&mut evaluation)?;
+
+        let mut cache = self
+            .cache_manager
+            .lock()
+            .map_err(|_| "cache manager lock poisoned".to_string())?;
+        cache.store_evaluation(
+            &self.target_agent,
+            &self.original_task,
+            &self.received_output,
+            evaluation.score,
+            &evaluation.critique,
+            &evaluation.desired_output,
+        )?;
+
+        Ok(payload_to_summary(&evaluation))
+    }
+
     fn parse_evaluation_response(raw: &str) -> Result<EvaluationPayload, String> {
         let trimmed = raw.trim();
         let fenced = trimmed
@@ -132,6 +180,58 @@ impl<C: LlmClient> EvaluatorAgent<C> {
 
         serde_json::from_str(json_body)
             .map_err(|err| format!("failed to parse evaluator JSON response: {err}"))
+    }
+}
+
+/// Score 10 → force empty desired_output; score &lt; 10 → require non-blank exemplar.
+fn normalize_desired_output(evaluation: &mut EvaluationPayload) -> Result<(), String> {
+    if evaluation.score == 10 {
+        evaluation.desired_output.clear();
+        return Ok(());
+    }
+    let trimmed = evaluation.desired_output.trim();
+    if trimmed.is_empty() {
+        return Err(
+            "evaluator desired_output must be a non-empty 10/10 exemplar when score < 10"
+                .to_string(),
+        );
+    }
+    if trimmed.len() != evaluation.desired_output.len() {
+        evaluation.desired_output = trimmed.to_string();
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn format_evaluation_result(evaluation: &EvaluationPayload) -> String {
+    let mut out = format!(
+        "Evaluation saved. QA score: {}/10\nCritique: {}",
+        evaluation.score, evaluation.critique
+    );
+    if !evaluation.desired_output.is_empty() {
+        out.push_str("\nDesired output (10/10 exemplar):\n");
+        out.push_str(&evaluation.desired_output);
+    }
+    out
+}
+
+pub fn format_eval_job_appendix(summary: &AgentEvalSummary) -> String {
+    let mut out = format!(
+        "\n\nEvaluation: QA score {}/10\nCritique: {}",
+        summary.score, summary.critique
+    );
+    if !summary.desired_output.is_empty() {
+        out.push_str("\nDesired output (10/10 exemplar):\n");
+        out.push_str(&summary.desired_output);
+    }
+    out
+}
+
+fn payload_to_summary(evaluation: &EvaluationPayload) -> AgentEvalSummary {
+    AgentEvalSummary {
+        score: evaluation.score,
+        critique: evaluation.critique.clone(),
+        desired_output: evaluation.desired_output.clone(),
     }
 }
 
@@ -167,42 +267,21 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        // ponytail: one-shot judge — no tool loop, just ask and parse JSON
-        let user_message = self.build_user_message();
-        let empty_tools = LlmToolSet::new();
-        let request = LlmRequest::new(EVALUATOR_SYSTEM_PROMPT, &user_message, &empty_tools);
-        let model_turn = self.client.complete(request)?;
-
-        let raw_response = model_turn
-            .content
-            .filter(|text| !text.trim().is_empty())
-            .ok_or_else(|| "evaluator model response missing content".to_string())?;
-
-        let evaluation = Self::parse_evaluation_response(&raw_response)?;
-
-        if !(1..=10).contains(&evaluation.score) {
-            return Err(format!(
-                "evaluator score must be between 1 and 10, got {}",
-                evaluation.score
-            ));
-        }
-
-        let mut cache = self
-            .cache_manager
-            .lock()
-            .map_err(|_| "cache manager lock poisoned".to_string())?;
-
-        cache.store_evaluation(
-            &self.target_agent,
-            &self.original_task,
-            &self.received_output,
-            evaluation.score,
-            &evaluation.critique,
-        )?;
-
-        context.accumulated_data = format!("Evaluation saved. QA score: {}/10", evaluation.score);
+        let summary = self.evaluate_once().await?;
+        context.accumulated_data = format!(
+            "Evaluation saved. QA score: {}/10\nCritique: {}{}",
+            summary.score,
+            summary.critique,
+            if summary.desired_output.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\nDesired output (10/10 exemplar):\n{}",
+                    summary.desired_output
+                )
+            }
+        );
         context.is_finished = true;
-
         Ok(())
     }
 
@@ -214,7 +293,8 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_evaluation_rubric, extract_json_object, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+        agent_evaluation_rubric, extract_json_object, format_evaluation_result,
+        normalize_desired_output, EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
@@ -238,6 +318,7 @@ mod tests {
         assert!(triage.contains("Evidenced FAIL"));
         let baby = agent_evaluation_rubric("BabysitterAgent").expect("babysitter");
         assert!(baby.contains("BABYSITTER RUBRIC"));
+        assert!(baby.contains("Valid JSON"));
     }
 
     #[test]
@@ -245,6 +326,8 @@ mod tests {
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("query_job_status.result"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("score ≤3"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("verifiable evidence"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("desired_output"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("When score is 10, desired_output MUST be \"\""));
     }
 
     #[test]
@@ -257,13 +340,80 @@ mod tests {
     }
 
     #[test]
+    fn parse_evaluation_response_accepts_desired_output() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 6, "critique": "thin", "desired_output": "full exemplar with file:line"}"#,
+            )
+            .expect("parse with desired_output");
+        normalize_desired_output(&mut payload).expect("normalize");
+
+        assert_eq!(payload.score, 6);
+        assert_eq!(payload.critique, "thin");
+        assert_eq!(payload.desired_output, "full exemplar with file:line");
+    }
+
+    #[test]
+    fn parse_evaluation_response_score_10_clears_desired_output() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 10, "critique": "perfect", "desired_output": "should be cleared"}"#,
+            )
+            .expect("parse score 10");
+        normalize_desired_output(&mut payload).expect("normalize");
+
+        assert_eq!(payload.score, 10);
+        assert!(payload.desired_output.is_empty());
+    }
+
+    #[test]
+    fn parse_evaluation_response_rejects_empty_desired_when_score_below_10() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 5, "critique": "weak", "desired_output": "   "}"#,
+            )
+            .expect("parse");
+        let err =
+            normalize_desired_output(&mut payload).expect_err("empty desired_output must fail");
+
+        assert!(err.contains("desired_output"));
+    }
+
+    #[test]
     fn parse_evaluation_response_accepts_wrapped_prose() {
-        let payload = EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
-            "Thought: done.\n{\"score\": 8, \"critique\": \"solid\"}\n",
-        )
-        .expect("parse wrapped json");
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                "Thought: done.\n{\"score\": 8, \"critique\": \"solid\", \"desired_output\": \"exemplar\"}\n",
+            )
+            .expect("parse wrapped json");
+        normalize_desired_output(&mut payload).expect("normalize");
 
         assert_eq!(payload.score, 8);
         assert_eq!(payload.critique, "solid");
+        assert_eq!(payload.desired_output, "exemplar");
+    }
+
+    #[test]
+    fn normalize_desired_output_trims_whitespace() {
+        let mut payload = EvaluationPayload {
+            score: 4,
+            critique: "x".into(),
+            desired_output: "  exemplar  ".into(),
+        };
+        normalize_desired_output(&mut payload).expect("ok");
+        assert_eq!(payload.desired_output, "exemplar");
+    }
+
+    #[test]
+    fn format_evaluation_result_omits_desired_when_empty() {
+        let payload = EvaluationPayload {
+            score: 10,
+            critique: "perfect".into(),
+            desired_output: String::new(),
+        };
+        let text = format_evaluation_result(&payload);
+        assert!(text.contains("QA score: 10/10"));
+        assert!(text.contains("Critique: perfect"));
+        assert!(!text.contains("Desired output"));
     }
 }

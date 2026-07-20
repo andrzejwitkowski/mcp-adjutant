@@ -25,6 +25,7 @@ fn store_evaluation_persists_data() {
             agent_output,
             score,
             feedback_notes,
+            "",
         )
         .expect("store evaluation");
 
@@ -39,11 +40,20 @@ fn store_evaluation_persists_data() {
         .expect("count evaluations");
     assert_eq!(count, 1, "evaluation should be persisted");
 
-    let stored_evaluation: (String, String, String, i32, String) = conn
+    let stored_evaluation: (String, String, String, i32, String, String) = conn
         .query_row(
-            "SELECT agent_name, original_task, agent_output, score, feedback_notes FROM agent_evaluations WHERE agent_name = ?1",
+            "SELECT agent_name, original_task, agent_output, score, feedback_notes, desired_output FROM agent_evaluations WHERE agent_name = ?1",
             params![agent_name],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .expect("retrieve stored evaluation");
 
@@ -52,6 +62,7 @@ fn store_evaluation_persists_data() {
     assert_eq!(stored_evaluation.2, agent_output);
     assert_eq!(stored_evaluation.3, score);
     assert_eq!(stored_evaluation.4, feedback_notes);
+    assert_eq!(stored_evaluation.5, "");
 
     fs::remove_dir_all(&project_root).ok();
 }
@@ -64,7 +75,7 @@ fn store_evaluation_normalizes_builder_alias() {
 
     let mut cache = open_cache_manager(&project_root);
     cache
-        .store_evaluation("builder", "task", "output", 7, "ok")
+        .store_evaluation("builder", "task", "output", 7, "ok", "exemplar")
         .expect("store evaluation");
 
     let db_path = project_root.join(".adjutant/cache.db");

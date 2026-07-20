@@ -314,6 +314,7 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
             "identical output",
             6,
             "identical critique",
+            "exemplar",
         )
         .expect("first evaluation");
     cache
@@ -323,6 +324,7 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
             "identical output",
             6,
             "identical critique",
+            "exemplar",
         )
         .expect("second evaluation with same score");
 

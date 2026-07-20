@@ -8,10 +8,10 @@ pub mod project;
 pub use agent_names::{backfill_evaluation_agent_names, normalize_agent_name};
 pub use embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 pub use inspect::{
-    list_evaluations, list_evaluations_page, load_cache_snapshot, load_scout_cache_page,
-    load_web_cache_page, AgentEvaluationRow, CacheSnapshot, EvaluationsPage, ScoutCachePage,
-    WebCachePage, WebFetchDependencyRow, WebQueryRow, WebReportRow, WebSourceRow,
-    EVALUATIONS_PAGE_SIZE,
+    list_evaluations, list_evaluations_page, load_best_desired_output_exemplar,
+    load_cache_snapshot, load_scout_cache_page, load_web_cache_page, AgentEvaluationRow,
+    CacheSnapshot, EvaluationsPage, ScoutCachePage, WebCachePage, WebFetchDependencyRow,
+    WebQueryRow, WebReportRow, WebSourceRow, EVALUATIONS_PAGE_SIZE,
 };
 pub use manager::{
     ProjectCacheManager, WebReportCacheLookup, WebReportRevalidation, WebSourceSnapshot,
@@ -19,6 +19,7 @@ pub use manager::{
 };
 pub use project::{
     current_unix_timestamp, hash_query_text, mcp_workspace_root, open_cache_connection,
-    parse_workspace_root_arg, require_workspace_root_arg, resolve_workspace_path,
-    resolve_workspace_path_bounded, with_thread_workspace_root, workspace_root_schema_property,
+    parse_workspace_root_arg, require_workspace_root_arg, resolve_config_cache_root,
+    resolve_workspace_path, resolve_workspace_path_bounded, with_thread_workspace_root,
+    workspace_root_schema_property,
 };

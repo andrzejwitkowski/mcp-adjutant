@@ -95,10 +95,18 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
              SELECT p.agent_phase,
                     COALESCE(SUM(l.prompt_tokens), 0),
                     COALESCE(SUM(l.completion_tokens), 0),
-                    COALESCE((
-                        SELECT COUNT(*) FROM agent_runs r
-                        WHERE r.utc_date = ?1 AND r.agent_phase = p.agent_phase
-                    ), 0)
+                    COALESCE(
+                        NULLIF((
+                            SELECT COUNT(*) FROM agent_runs r
+                            WHERE r.utc_date = ?1 AND r.agent_phase = p.agent_phase
+                        ), 0),
+                        (
+                            SELECT COUNT(DISTINCT l2.request_uuid)
+                            FROM llm_calls l2
+                            WHERE l2.utc_date = ?1 AND l2.agent_phase = p.agent_phase
+                        ),
+                        0
+                    )
              FROM phases p
              LEFT JOIN llm_calls l
                ON l.utc_date = ?1 AND l.agent_phase = p.agent_phase
@@ -158,10 +166,18 @@ pub fn query_daily(
                         SELECT COUNT(*) FROM cache_hits c
                         WHERE c.utc_date = d.date AND c.agent_phase = d.agent_phase
                     ), 0) AS cache_hits,
-                    COALESCE((
-                        SELECT COUNT(*) FROM agent_runs r
-                        WHERE r.utc_date = d.date AND r.agent_phase = d.agent_phase
-                    ), 0) AS job_runs
+                    COALESCE(
+                        NULLIF((
+                            SELECT COUNT(*) FROM agent_runs r
+                            WHERE r.utc_date = d.date AND r.agent_phase = d.agent_phase
+                        ), 0),
+                        (
+                            SELECT COUNT(DISTINCT l2.request_uuid)
+                            FROM llm_calls l2
+                            WHERE l2.utc_date = d.date AND l2.agent_phase = d.agent_phase
+                        ),
+                        0
+                    ) AS job_runs
              FROM days d
              LEFT JOIN llm_calls l
                ON l.utc_date = d.date AND l.agent_phase = d.agent_phase

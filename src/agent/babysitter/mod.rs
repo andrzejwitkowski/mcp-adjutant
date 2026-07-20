@@ -84,6 +84,76 @@ fn check_finalize_allowed(
     Ok(())
 }
 
+fn check_status_label(check: &crate::tools::PrCheck) -> String {
+    let bucket = check.bucket.to_ascii_lowercase();
+    let state = check.state.to_ascii_lowercase();
+    if bucket.contains("pass") || state.contains("success") || state == "completed" {
+        "success".into()
+    } else if bucket.contains("fail") || state.contains("fail") {
+        "failure".into()
+    } else if bucket.contains("pend") || state.contains("progress") || state == "pending" {
+        "pending".into()
+    } else {
+        check.bucket.clone()
+    }
+}
+
+/// ponytail: deterministic JSON result — LLM summary is decorative only.
+#[allow(clippy::too_many_arguments)] // signature stability; keeping JSON builder inputs explicit
+pub fn format_babysitter_result(
+    state: &PrState,
+    report_posted: bool,
+    paths_seen: &[String],
+    paths_handled: &[String],
+    skipped_paths: &[String],
+    pr_number: u64,
+    iterations: u32,
+    summary: Option<&str>,
+    refuse_reason: Option<&str>,
+) -> Result<String, String> {
+    let action = if refuse_reason.is_some() {
+        "blocked"
+    } else {
+        "mergeable"
+    };
+    let checks: serde_json::Map<String, Value> = state
+        .checks
+        .iter()
+        .map(|check| (check.name.clone(), Value::String(check_status_label(check))))
+        .collect();
+    let mut paths_seen_sorted = paths_seen.to_vec();
+    paths_seen_sorted.sort();
+    let mut paths_handled_sorted = paths_handled.to_vec();
+    paths_handled_sorted.sort();
+    let mut skipped_sorted = skipped_paths.to_vec();
+    skipped_sorted.sort();
+    let mut value = serde_json::json!({
+        "action": action,
+        "pr_number": pr_number,
+        "checks": checks,
+        "reviews": {
+            "paths_seen": paths_seen_sorted,
+            "paths_handled": paths_handled_sorted,
+            "skipped_paths": skipped_sorted,
+        },
+        "gh_state": {
+            "mergeable": state.mergeable.as_deref().unwrap_or("unknown"),
+            "state": state.state,
+            "head": state.head_ref_name,
+        },
+        "report_posted": report_posted,
+        "iterations": iterations,
+    });
+    if let Some(reason) = refuse_reason {
+        value["refuse_reason"] = Value::String(reason.to_string());
+    }
+    if let Some(text) = summary.filter(|s| !s.is_empty()) {
+        value["summary"] = Value::String(text.to_string());
+    }
+    serde_json::to_string_pretty(&value)
+        .map_err(|err| format!("serialize babysitter result: {err}"))
+}
+
 pub use tools::{
     babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
     parse_triage_arguments,
@@ -99,7 +169,7 @@ Orchestration rules:
 2b. CI green but review line comments exist -> invoke_child_triage on cited paths (CodeRabbit/bot inline comments are FIXABLE_ACTION by default).
 3. Review comments: [FIXABLE_ACTION] -> invoke_child_triage; [ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] -> skip (note in finalize report).
 4. Never git_push_changes until the latest invoke_child_triage observation contains [TRIAGE PASS].
-5. When done: github_post_final_report, then finalize_session with skipped_review_paths for any review paths not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]).
+5. When done: github_post_final_report, then finalize_session with skipped_review_paths for any review paths not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]). The harness builds authoritative JSON on finalize — your summary is optional decoration inside it.
 
 Available tools: github_get_pr_state, run_log_analyzer, invoke_child_triage, git_push_changes, github_post_final_report, finalize_session."#;
 
@@ -132,6 +202,19 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
             triage_green: Mutex::new(false),
             session: Mutex::new(BabysitterSession::default()),
         }
+    }
+
+    pub fn session_snapshot(&self) -> (bool, Vec<String>, Vec<String>) {
+        self.session
+            .lock()
+            .map(|guard| {
+                (
+                    guard.report_posted,
+                    guard.review_paths_seen.iter().cloned().collect(),
+                    guard.review_paths_handled.iter().cloned().collect(),
+                )
+            })
+            .unwrap_or((false, Vec::new(), Vec::new()))
     }
 
     async fn run_child_triage(
@@ -232,10 +315,25 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                     .lock()
                     .map_err(|_| "session lock poisoned".to_string())?;
                 check_finalize_allowed(&state, &session, &skipped_review_paths)?;
-                let summary = summary.unwrap_or_else(|| "babysitter session complete".to_string());
+                let paths_seen: Vec<_> = session.review_paths_seen.iter().cloned().collect();
+                let paths_handled: Vec<_> = session.review_paths_handled.iter().cloned().collect();
+                let report_posted = session.report_posted;
+                drop(session);
+                let summary_text = summary.as_deref();
+                let json = format_babysitter_result(
+                    &state,
+                    report_posted,
+                    &paths_seen,
+                    &paths_handled,
+                    &skipped_review_paths,
+                    self.pr_number,
+                    context.iterations,
+                    summary_text,
+                    None,
+                )?;
                 context.is_finished = true;
                 context.agent_completed = true;
-                Ok(summary)
+                Ok(json)
             }
             other => Err(format!("unsupported babysitter tool: {other}")),
         }
@@ -326,6 +424,42 @@ mod finalize_gate_tests {
         for path in review_comment_paths(&state.review_comments) {
             session.review_paths_seen.insert(path);
         }
+    }
+
+    #[test]
+    fn format_babysitter_result_includes_named_checks() {
+        let state = PrState {
+            number: 31,
+            title: "t".into(),
+            state: "OPEN".into(),
+            mergeable: Some("MERGEABLE".into()),
+            head_ref_name: "feat".into(),
+            base_ref_name: "main".into(),
+            url: "u".into(),
+            checks: vec![PrCheck {
+                name: "Rust Backend (Check & Test)".into(),
+                bucket: "pass".into(),
+                state: "COMPLETED".into(),
+                workflow: None,
+                link: None,
+            }],
+            review_comments: vec![],
+        };
+        let json = format_babysitter_result(
+            &state,
+            true,
+            &["src/a.rs".into()],
+            &["src/a.rs".into()],
+            &[],
+            31,
+            3,
+            Some("done"),
+            None,
+        )
+        .expect("json");
+        assert!(json.contains("\"action\": \"mergeable\""), "{json}");
+        assert!(json.contains("Rust Backend (Check & Test)"), "{json}");
+        assert!(json.contains("\"paths_seen\""), "{json}");
     }
 
     #[test]
