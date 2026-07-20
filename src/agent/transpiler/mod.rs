@@ -126,9 +126,16 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
                 "Verify with: cd {} && {command}\n\n{context_block}",
                 self.verify_workspace.display()
             );
-            if let Err(err) = run_build_command(&self.verify_workspace, command) {
-                context_block.push_str("\n\nLatest verify output:\n");
-                context_block.push_str(&err);
+            match run_build_command(&self.verify_workspace, command) {
+                Ok(result) if !result.success => {
+                    context_block.push_str("\n\nLatest verify output:\n");
+                    context_block.push_str(&result.output);
+                }
+                Err(err) => {
+                    context_block.push_str("\n\nLatest verify output:\n");
+                    context_block.push_str(&err);
+                }
+                _ => {}
             }
         }
 
@@ -143,7 +150,7 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
         let extra = if !passed {
             self.verify_command.as_deref().map_or(String::new(), |cmd| {
                 match run_build_command(&self.verify_workspace, cmd) {
-                    Ok(output) => format!("\n\nVerify output:\n{output}"),
+                    Ok(result) => format!("\n\nVerify output:\n{}", result.output),
                     Err(err) => format!("\n\nVerify still failing:\n{err}"),
                 }
             })

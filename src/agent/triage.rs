@@ -12,7 +12,7 @@ use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
 use crate::tools::{
     edit_file_line, find_nearest_module_boundary, get_dirty_files_from_git, inference_anchor,
     run_build_command, snapshot_build_context, truncate_build_log, BuildCommandDiscoverer,
-    NoopBuildDiscoverer,
+    BuildResult, NoopBuildDiscoverer,
 };
 
 pub use tools::{parse_edit_file_arguments, parse_report_error_arguments, triage_tool_set};
@@ -33,13 +33,13 @@ Evidence requirements (mandatory in your final report):
 Reply with a short rationale (Thought), then call exactly one tool."#;
 
 pub trait BuildCommandRunner: Send + Sync {
-    fn run_build_command(&self, dir: &Path, command: &str) -> Result<String, String>;
+    fn run_build_command(&self, dir: &Path, command: &str) -> Result<BuildResult, String>;
 }
 
 pub struct SystemBuildRunner;
 
 impl BuildCommandRunner for SystemBuildRunner {
-    fn run_build_command(&self, dir: &Path, command: &str) -> Result<String, String> {
+    fn run_build_command(&self, dir: &Path, command: &str) -> Result<BuildResult, String> {
         run_build_command(dir, command)
     }
 }
@@ -214,9 +214,9 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
 
         for (dir, command) in targets {
             match self.build_runner.run_build_command(dir, command) {
-                Ok(output) => {
+                Ok(result) => {
                     let (body, truncated) = truncate_build_log(
-                        &output,
+                        &result.output,
                         Self::BUILD_LOG_MAX_LINES,
                         Self::BUILD_LOG_MAX_BYTES,
                     );
@@ -225,24 +225,27 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
                     } else {
                         body
                     };
-                    let step = format!("Build OK in {} (`{command}`):\n{log}\n", dir.display());
-                    context.accumulated_data.push_str(&step);
-                }
-                Err(output) => {
-                    all_ok = false;
-                    let (body, truncated) = truncate_build_log(
-                        &output,
-                        Self::BUILD_LOG_MAX_LINES,
-                        Self::BUILD_LOG_MAX_BYTES,
-                    );
-                    let log = if truncated {
-                        format!("(log truncated — showing tail)\n{body}")
+                    if result.success {
+                        let step = format!(
+                            "Workspace: {}\nCommand: `{command}`\nExit code: {}\nBuild output:\n{log}\n",
+                            dir.display(),
+                            result.exit_code,
+                        );
+                        context.accumulated_data.push_str(&step);
                     } else {
-                        body
-                    };
+                        all_ok = false;
+                        combined_errors.push(format!(
+                            "Workspace: {}\nCommand: `{command}`\nExit code: {}\nBuild FAILED:\n{log}\n",
+                            dir.display(),
+                            result.exit_code,
+                        ));
+                    }
+                }
+                Err(spawn_err) => {
+                    all_ok = false;
                     combined_errors.push(format!(
-                        "Build FAILED in {} (`{command}`):\n{log}\n",
-                        dir.display()
+                        "Workspace: {}\nCommand: `{command}`\nSpawn error: {spawn_err}\n",
+                        dir.display(),
                     ));
                 }
             }
@@ -270,15 +273,17 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
         for (dir, command) in targets {
             let (check_cmd, _) = split_check_and_test_commands(command);
             match self.build_runner.run_build_command(dir, &check_cmd) {
-                Ok(output) => {
+                Ok(result) if result.success => {
                     context.accumulated_data.push_str(&format!(
-                        "TDD RED check OK in {} (`{check_cmd}`):\n{output}\n",
-                        dir.display()
+                        "TDD RED check OK in {} (`{check_cmd}`):\nExit code: {}\n{}\n",
+                        dir.display(),
+                        result.exit_code,
+                        result.output,
                     ));
                 }
-                Err(output) => {
+                Ok(result) => {
                     let (body, truncated) = truncate_build_log(
-                        &output,
+                        &result.output,
                         Self::BUILD_LOG_MAX_LINES,
                         Self::BUILD_LOG_MAX_BYTES,
                     );
@@ -288,8 +293,15 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
                         body
                     };
                     check_failures.push(format!(
-                        "TDD RED check FAILED in {} (`{check_cmd}`):\n{log}\n",
-                        dir.display()
+                        "TDD RED check FAILED in {} (`{check_cmd}`):\nExit code: {}\n{log}\n",
+                        dir.display(),
+                        result.exit_code,
+                    ));
+                }
+                Err(spawn_err) => {
+                    check_failures.push(format!(
+                        "TDD RED check spawn error in {} (`{check_cmd}`): {spawn_err}\n",
+                        dir.display(),
                     ));
                 }
             }
@@ -311,25 +323,46 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
             let test_cmd = scope_test_command_for_paths(&base_test_cmd, &test_paths);
             let command_scoped = test_cmd != base_test_cmd;
             match self.build_runner.run_build_command(dir, &test_cmd) {
-                Ok(output) => {
+                Ok(result) if result.success => {
                     unexpected.push(format!(
-                        "TDD RED unexpected pass in {} (`{test_cmd}`):\n{output}\n",
-                        dir.display()
+                        "TDD RED unexpected pass in {} (`{test_cmd}`):\nExit code: {}\n{}\n",
+                        dir.display(),
+                        result.exit_code,
+                        result.output,
                     ));
                 }
-                Err(output) => {
-                    if is_assertion_test_failure(&output, &test_paths, command_scoped) {
+                Ok(result) => {
+                    if is_assertion_test_failure(&result.output, &test_paths, command_scoped) {
                         assertion_failures += 1;
                         context.accumulated_data.push_str(&format!(
-                            "TDD RED assertion failure (expected) in {} (`{test_cmd}`):\n{output}\n",
-                            dir.display()
+                            "TDD RED assertion failure (expected) in {} (`{test_cmd}`):\nExit code: {}\n{}\n",
+                            dir.display(),
+                            result.exit_code,
+                            result.output,
                         ));
                     } else {
+                        let (body, truncated) = truncate_build_log(
+                            &result.output,
+                            Self::BUILD_LOG_MAX_LINES,
+                            Self::BUILD_LOG_MAX_BYTES,
+                        );
+                        let log = if truncated {
+                            format!("(log truncated — showing tail)\n{body}")
+                        } else {
+                            body
+                        };
                         unexpected.push(format!(
-                            "TDD RED non-assertion failure in {} (`{test_cmd}`):\n{output}\n",
-                            dir.display()
+                            "TDD RED non-assertion failure in {} (`{test_cmd}`):\nExit code: {}\n{log}\n",
+                            dir.display(),
+                            result.exit_code,
                         ));
                     }
+                }
+                Err(spawn_err) => {
+                    unexpected.push(format!(
+                        "TDD RED spawn error in {} (`{test_cmd}`): {spawn_err}\n",
+                        dir.display(),
+                    ));
                 }
             }
         }
@@ -378,7 +411,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             .workspace
             .lock()
             .map_err(|_| "triage workspace lock poisoned".to_string())?;
-        workspace.resolved_paths = paths;
+        workspace.resolved_paths = paths.clone();
         workspace.build_targets = targets.clone();
 
         let summary: Vec<String> = targets
@@ -390,6 +423,18 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> AutonomousA
             summary.len(),
             summary.join("\n")
         );
+
+        let root = crate::cache::mcp_workspace_root();
+        let file_list: Vec<String> = paths
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
+            .collect();
+        if !file_list.is_empty() {
+            context.accumulated_data.push_str("\nTarget files:\n");
+            for f in &file_list {
+                context.accumulated_data.push_str(&format!("- {f}\n"));
+            }
+        }
 
         Ok(())
     }
