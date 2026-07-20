@@ -56,6 +56,7 @@ const MIGRATIONS: &[&str] = &[
         agent_output TEXT NOT NULL,
         score INTEGER NOT NULL,
         feedback_notes TEXT NOT NULL,
+        desired_output TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL
     );",
     "CREATE TABLE IF NOT EXISTS web_queries (
@@ -81,6 +82,7 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY(report_id) REFERENCES web_reports(id) ON DELETE CASCADE,
         FOREIGN KEY(source_id) REFERENCES web_sources(id) ON DELETE CASCADE
     );",
+    "ALTER TABLE agent_evaluations ADD COLUMN desired_output TEXT NOT NULL DEFAULT '';",
 ];
 
 /// MCP workspace root: job override, then thread override, then env, then walk up from cwd.
@@ -91,14 +93,30 @@ pub fn mcp_workspace_root() -> PathBuf {
     if let Some(root) = THREAD_WORKSPACE_ROOT.with(|cell| cell.borrow().clone()) {
         return root;
     }
-    std::env::var("MCP_ADJUTANT_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let start = std::env::current_dir().unwrap_or_else(|_| manifest.clone());
-            find_project_root(&start)
-                .unwrap_or_else(|_| find_project_root(&manifest).unwrap_or(start))
-        })
+    resolve_default_workspace_root()
+}
+
+/// Stable project root for the config UI / cache API (pinned at MCP process start).
+/// Ignores per-job overrides and invalid/unexpanded `MCP_ADJUTANT_PROJECT_ROOT` values.
+pub fn resolve_config_cache_root() -> PathBuf {
+    resolve_default_workspace_root()
+}
+
+fn resolve_default_workspace_root() -> PathBuf {
+    if let Ok(raw) = std::env::var("MCP_ADJUTANT_PROJECT_ROOT") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() && !trimmed.contains("${") {
+            let path = PathBuf::from(trimmed);
+            if path.is_dir() {
+                return fs::canonicalize(&path).unwrap_or(path);
+            }
+        }
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let start = std::env::current_dir().unwrap_or_else(|_| manifest.clone());
+    find_project_root(&start)
+        .unwrap_or_else(|_| find_project_root(&manifest).unwrap_or(start))
 }
 
 /// Parse optional `workspace_root` from MCP tool args (evaluate also accepts `project_path`).
@@ -222,8 +240,14 @@ pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), 
         .map_err(|err| format!("failed to enable SQLite foreign keys: {err}"))?;
 
     for migration in MIGRATIONS {
-        conn.execute_batch(migration)
-            .map_err(|err| format!("failed to run cache migration: {err}"))?;
+        if let Err(err) = conn.execute_batch(migration) {
+            // ponytail: ALTER ADD COLUMN re-runs every open; ignore duplicate-column on existing DBs
+            let msg = err.to_string();
+            if msg.contains("duplicate column name") {
+                continue;
+            }
+            return Err(format!("failed to run cache migration: {err}"));
+        }
     }
 
     super::agent_names::backfill_evaluation_agent_names(&conn)?;
@@ -374,6 +398,41 @@ mod tests {
             PathBuf::from("/tmp/mcp-adjutant/src/cache/project.rs")
         );
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+    }
+
+    #[test]
+    fn resolve_config_cache_root_ignores_unexpanded_template_env() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
+        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "${workspaceFolder}");
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| manifest.clone());
+        let original = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&home).expect("chdir home");
+        let root = resolve_config_cache_root();
+        std::env::set_current_dir(original).expect("restore cwd");
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        assert_eq!(root, manifest);
+    }
+
+    #[test]
+    fn resolve_config_cache_root_uses_valid_env_directory() {
+        let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-config-root-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let expected = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", dir.to_string_lossy().to_string());
+        let root = resolve_config_cache_root();
+        std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(root, expected);
     }
 
     #[test]

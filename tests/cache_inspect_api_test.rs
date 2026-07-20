@@ -18,11 +18,11 @@ fn list_evaluations_returns_newest_first() {
 
     let mut cache = open_cache_manager(&project_root);
     cache
-        .store_evaluation("Scout", "task one", "output one", 7, "ok")
+        .store_evaluation("Scout", "task one", "output one", 7, "ok", "desired one")
         .expect("first evaluation");
     thread::sleep(Duration::from_millis(1100));
     cache
-        .store_evaluation("Builder", "task two", "output two", 9, "great")
+        .store_evaluation("Builder", "task two", "output two", 9, "great", "desired two")
         .expect("second evaluation");
 
     let (_, conn) = open_cache_connection(&project_root).expect("open cache");
@@ -31,7 +31,9 @@ fn list_evaluations_returns_newest_first() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].agent_name, "Phase_4_Builder");
     assert_eq!(rows[0].score, 9);
+    assert_eq!(rows[0].desired_output, "desired two");
     assert_eq!(rows[1].agent_name, "Phase_1_Scout");
+    assert_eq!(rows[1].desired_output, "desired one");
 
     fs::remove_dir_all(&project_root).ok();
 }
@@ -124,6 +126,7 @@ fn list_evaluations_page_returns_twenty_per_page_newest_first() {
                 &format!("output {index}"),
                 (index % 10) + 1,
                 "ok",
+                "exemplar",
             )
             .expect("store evaluation");
         thread::sleep(Duration::from_millis(10));

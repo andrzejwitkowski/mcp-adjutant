@@ -61,11 +61,14 @@ export function EvaluationsView() {
   const rows = data?.items ?? []
   const avgScore =
     data?.avg_score != null ? data.avg_score.toFixed(1) : '—'
+  const cacheHint = data?.project_root
+    ? `Cache: ${data.project_root}`
+    : 'LLM-as-judge ratings from evaluate_agent_performance'
 
   return (
     <PageShell
       title="Agent evaluations"
-      subtitle="LLM-as-judge ratings from evaluate_agent_performance"
+      subtitle={cacheHint}
       actions={
         <button
           type="button"
@@ -132,6 +135,21 @@ export function EvaluationsView() {
                       <section>
                         <h3>Critique</h3>
                         <pre>{row.feedback_notes}</pre>
+                      </section>
+                      <section>
+                        <h3>Desired output (10/10)</h3>
+                        {(row.desired_output ?? '').trim() !== '' ? (
+                          <pre>{row.desired_output}</pre>
+                        ) : row.score >= 10 ? (
+                          <p className="config-app__empty">
+                            Perfect score — no exemplar needed.
+                          </p>
+                        ) : (
+                          <p className="config-app__empty">
+                            No exemplar stored (re-run evaluate_agent_performance on
+                            a current build to capture one).
+                          </p>
+                        )}
                       </section>
                     </div>
                   )}

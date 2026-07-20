@@ -14,6 +14,7 @@ pub struct AgentEvaluationRow {
     pub agent_output: String,
     pub score: i32,
     pub feedback_notes: String,
+    pub desired_output: String,
     pub created_at: i64,
 }
 
@@ -27,6 +28,8 @@ pub struct EvaluationsPage {
     pub total_count: usize,
     pub total_pages: u32,
     pub avg_score: Option<f64>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub project_root: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,7 +149,7 @@ pub struct WebCachePage {
 pub fn list_evaluations(conn: &Connection) -> Result<Vec<AgentEvaluationRow>, String> {
     let mut statement = conn
         .prepare(
-            "SELECT id, agent_name, original_task, agent_output, score, feedback_notes, created_at
+            "SELECT id, agent_name, original_task, agent_output, score, feedback_notes, desired_output, created_at
              FROM agent_evaluations
              ORDER BY created_at DESC",
         )
@@ -178,7 +181,7 @@ pub fn list_evaluations_page(
 
     let mut statement = conn
         .prepare(
-            "SELECT id, agent_name, original_task, agent_output, score, feedback_notes, created_at
+            "SELECT id, agent_name, original_task, agent_output, score, feedback_notes, desired_output, created_at
              FROM agent_evaluations
              ORDER BY created_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -200,6 +203,7 @@ pub fn list_evaluations_page(
         total_count,
         total_pages,
         avg_score,
+        project_root: String::new(),
     })
 }
 
@@ -225,7 +229,8 @@ fn map_evaluation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEvaluati
         agent_output: row.get(3)?,
         score: row.get(4)?,
         feedback_notes: row.get(5)?,
-        created_at: row.get(6)?,
+        desired_output: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }
 
