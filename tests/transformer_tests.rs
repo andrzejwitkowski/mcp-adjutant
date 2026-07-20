@@ -7,6 +7,7 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::BuildResult;
 
 struct MockTransformerLlm {
     turn: LlmModelTurn,
@@ -94,8 +95,12 @@ impl LlmClient for PanicScoutLlm {
 struct MockTriageBuildRunner;
 
 impl BuildCommandRunner for MockTriageBuildRunner {
-    fn run_build_command(&self, _dir: &Path, _command: &str) -> Result<String, String> {
-        Ok("    Finished dev [unoptimized + debuginfo] target(s)".to_string())
+    fn run_build_command(&self, _dir: &Path, _command: &str) -> Result<BuildResult, String> {
+        Ok(BuildResult {
+            exit_code: 0,
+            output: "    Finished dev [unoptimized + debuginfo] target(s)".to_string(),
+            success: true,
+        })
     }
 }
 

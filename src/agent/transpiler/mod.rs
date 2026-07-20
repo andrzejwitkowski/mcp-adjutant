@@ -150,8 +150,14 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
         let extra = if !passed {
             self.verify_command.as_deref().map_or(String::new(), |cmd| {
                 match run_build_command(&self.verify_workspace, cmd) {
-                    Ok(result) => format!("\n\nVerify output:\n{}", result.output),
-                    Err(err) => format!("\n\nVerify still failing:\n{err}"),
+                    Ok(result) if result.success => {
+                        format!("\n\nVerify output:\n{}", result.output)
+                    }
+                    Ok(result) => format!(
+                        "\n\nVerify still failing (exit {}):\n{}",
+                        result.exit_code, result.output
+                    ),
+                    Err(err) => format!("\n\nVerify spawn error:\n{err}"),
                 }
             })
         } else {
@@ -163,7 +169,7 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
         }
 
         if passed {
-            Ok(format_triage_success(&triage_ctx) + &extra)
+            Ok(format_triage_success(&triage_ctx, &[]) + &extra)
         } else {
             Ok(format!(
                 "[TRIAGE INCOMPLETE] finished={} iterations={}\n{}{}",
