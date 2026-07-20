@@ -27,3 +27,4 @@ tests/fixtures/embedding/model.onnx
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 .adjutant/
+.codegraph/

@@ -60,4 +60,6 @@ This repo runs **hard** adjutant delegation by default — see [`.cursor/skills/
 
 **PR babysitting:** invoke skill [`.cursor/skills/adjutant-babysitter/`](.cursor/skills/adjutant-babysitter/SKILL.md) or MCP tool `babysit_pr` (looped BabysitterAgent, 20 turns). Requires `gh` CLI + checkout on PR head branch.
 
+**Git commit / PR / changelog copy:** invoke skill [`.cursor/skills/adjutant-git-janitor/`](.cursor/skills/adjutant-git-janitor/SKILL.md) or MCP tools `prepare_git_copy` / `create_git_branch` (GitJanitorAgent). Call before inventing commit/PR text or committing/pushing. Branch gate may require `create_git_branch` first. Always `evaluate_agent_performance` (`GitJanitorAgent`) after each janitor tool.
+
 **Cross-language API type sync:** invoke skill [`.cursor/skills/adjutant-transpiler/`](.cursor/skills/adjutant-transpiler/SKILL.md) or MCP tool `transpile_types` (TranspilerAgent). **MCP-first pipeline:** `scout_context` → `evaluate_agent_performance` → `transpile_types` → poll `query_job_status` → `evaluate_agent_performance` → `verify_and_triage`. Coordinator sets `architecture_layout`; optional `verify_workspace` + `verify_command`. Agent may only write `target_path`; `preserve_paths` are read-only.

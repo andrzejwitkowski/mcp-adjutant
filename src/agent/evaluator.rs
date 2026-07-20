@@ -80,6 +80,24 @@ BABYSITTER RUBRIC (override generic rubric):
 - 1-4: Meta status, prose-only, or JSON missing check names / review paths / gh_state
 Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review state, not cargo/npm logs."#;
 
+const GIT_JANITOR_RUBRIC: &str = r#"
+
+GIT JANITOR RUBRIC — prepare_git_copy (override generic rubric):
+- 9-10: Valid JSON with commit_message, pr_title, pr_body, changelog_entry, branch_status, action_required, commit_allowed, suggested_branch_name, current_branch; commit_allowed false when on default/mismatched branch
+- 5-7: Missing branch gate fields or invents ticket not in scout context
+- 1-4: Not JSON / claims commit_allowed true on main/master
+Do NOT require create_git_branch-only fields (branch/status/previous) as the primary contract.
+"#;
+
+const GIT_JANITOR_CREATE_BRANCH_RUBRIC: &str = r#"
+
+GIT JANITOR RUBRIC — create_git_branch (override generic rubric):
+- 9-10: Valid JSON with branch (new name), status (e.g. created), previous (prior branch); matches the create/checkout task; no fabricated commit_message/pr_title/pr_body
+- 5-7: JSON present but missing previous or unclear status
+- 1-4: Not JSON, empty branch, or invents prepare_git_copy fields (commit_message/pr_*) as if required
+Do NOT apply the prepare_git_copy 9-field checklist — create_git_branch only creates/checks out a branch.
+"#;
+
 #[derive(Debug, Clone)]
 pub struct AgentEvalSummary {
     pub score: i32,
@@ -126,7 +144,9 @@ impl<C: LlmClient> EvaluatorAgent<C> {
             "AGENT: {canonical}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
             self.original_task, self.received_output
         );
-        if let Some(rubric) = agent_evaluation_rubric(&canonical) {
+        if let Some(rubric) =
+            select_evaluation_rubric(&canonical, &self.original_task, &self.received_output)
+        {
             message.push_str(rubric);
         }
         message
@@ -235,15 +255,48 @@ fn payload_to_summary(evaluation: &EvaluationPayload) -> AgentEvalSummary {
     }
 }
 
-fn agent_evaluation_rubric(target_agent: &str) -> Option<&'static str> {
+fn select_evaluation_rubric(
+    target_agent: &str,
+    original_task: &str,
+    received_output: &str,
+) -> Option<&'static str> {
     match target_agent {
         "PlannerAgent" => Some(PLANNER_RUBRIC),
         "Phase_1_Scout" => Some(SCOUT_RUBRIC),
         "Phase_5_Triage" => Some(TRIAGE_RUBRIC),
         "BabysitterAgent" => Some(BABYSITTER_RUBRIC),
+        "GitJanitorAgent" => Some(git_janitor_rubric_for(original_task, received_output)),
         name if name.starts_with("Phase_4_Builder") => Some(BUILDER_RUBRIC),
         _ => None,
     }
+}
+
+fn git_janitor_rubric_for(original_task: &str, received_output: &str) -> &'static str {
+    if is_git_janitor_create_branch_eval(original_task, received_output) {
+        GIT_JANITOR_CREATE_BRANCH_RUBRIC
+    } else {
+        GIT_JANITOR_RUBRIC
+    }
+}
+
+/// True when evaluating create_git_branch (task name or branch/status JSON without prepare fields).
+fn is_git_janitor_create_branch_eval(original_task: &str, received_output: &str) -> bool {
+    if original_task
+        .to_ascii_lowercase()
+        .contains("create_git_branch")
+    {
+        return true;
+    }
+    let body = extract_json_object(received_output.trim()).unwrap_or(received_output.trim());
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    obj.contains_key("branch")
+        && obj.contains_key("status")
+        && !obj.contains_key("commit_message")
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -293,13 +346,14 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_evaluation_rubric, extract_json_object, format_evaluation_result,
-        normalize_desired_output, EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+        extract_json_object, format_evaluation_result, git_janitor_rubric_for,
+        is_git_janitor_create_branch_eval, normalize_desired_output, select_evaluation_rubric,
+        EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
     fn planner_rubric_appended_for_planner_agent() {
-        let rubric = agent_evaluation_rubric("PlannerAgent").expect("rubric");
+        let rubric = select_evaluation_rubric("PlannerAgent", "", "").expect("rubric");
         assert!(rubric.contains("PLANNER RUBRIC"));
         assert!(rubric.contains("ellipsis"));
         assert!(rubric.contains("generate_tests"));
@@ -307,18 +361,61 @@ mod tests {
 
     #[test]
     fn agent_rubrics_route_by_canonical_name_only() {
-        assert!(agent_evaluation_rubric("Phase_4_Builder").is_some());
-        assert!(agent_evaluation_rubric("Phase_4_Builder_GREEN").is_some());
-        assert!(agent_evaluation_rubric("StringBuilder").is_none());
-        let builder = agent_evaluation_rubric("Phase_4_Builder").expect("builder");
+        assert!(select_evaluation_rubric("Phase_4_Builder", "", "").is_some());
+        assert!(select_evaluation_rubric("Phase_4_Builder_GREEN", "", "").is_some());
+        assert!(select_evaluation_rubric("StringBuilder", "", "").is_none());
+        let builder = select_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
         assert!(builder.contains("Evidenced FAIL"));
-        let scout = agent_evaluation_rubric("Phase_1_Scout").expect("scout");
+        let scout = select_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
         assert!(scout.contains("5-7: Partial answer"));
-        let triage = agent_evaluation_rubric("Phase_5_Triage").expect("triage");
+        let triage = select_evaluation_rubric("Phase_5_Triage", "", "").expect("triage");
         assert!(triage.contains("Evidenced FAIL"));
-        let baby = agent_evaluation_rubric("BabysitterAgent").expect("babysitter");
+        let baby = select_evaluation_rubric("BabysitterAgent", "", "").expect("babysitter");
         assert!(baby.contains("BABYSITTER RUBRIC"));
         assert!(baby.contains("Valid JSON"));
+        // default GitJanitor (no task/output) → prepare rubric
+        let janitor = select_evaluation_rubric("GitJanitorAgent", "", "").expect("janitor");
+        assert!(janitor.contains("prepare_git_copy"));
+        assert!(janitor.contains("commit_message"));
+    }
+
+    #[test]
+    fn git_janitor_create_branch_rubric_from_task_name() {
+        assert!(is_git_janitor_create_branch_eval(
+            "create_git_branch feat/GIT-1-git-janitor",
+            r#"{"branch":"feat/GIT-1-git-janitor","status":"created","previous":"main"}"#
+        ));
+        let rubric = git_janitor_rubric_for(
+            "Create and checkout feat/X via create_git_branch",
+            "{}",
+        );
+        assert!(rubric.contains("create_git_branch"));
+        assert!(rubric.contains("previous"));
+        assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
+    }
+
+    #[test]
+    fn git_janitor_create_branch_rubric_from_output_shape() {
+        let out = r#"{"branch":"feat/GIT-1-git-janitor","status":"created","previous":"cursor/evaluator-desired-output-exemplar"}"#;
+        assert!(is_git_janitor_create_branch_eval(
+            "Create and checkout feat/GIT-1-git-janitor from current HEAD",
+            out
+        ));
+        // even without create_git_branch in task, branch/status JSON routes correctly
+        assert!(is_git_janitor_create_branch_eval("checkout new feature branch", out));
+        let rubric = select_evaluation_rubric("GitJanitorAgent", "checkout new feature branch", out)
+            .expect("rubric");
+        assert!(rubric.contains("create_git_branch"));
+        assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
+    }
+
+    #[test]
+    fn git_janitor_prepare_rubric_when_emit_json() {
+        let out = r#"{"commit_message":"feat: x","pr_title":"feat: x","pr_body":"b","changelog_entry":"c","branch_status":"ok","action_required":"none","commit_allowed":true,"suggested_branch_name":"feat/x","current_branch":"feat/x"}"#;
+        assert!(!is_git_janitor_create_branch_eval("prepare_git_copy for feature", out));
+        let rubric = git_janitor_rubric_for("prepare_git_copy for feature", out);
+        assert!(rubric.contains("prepare_git_copy"));
+        assert!(rubric.contains("commit_allowed"));
     }
 
     #[test]

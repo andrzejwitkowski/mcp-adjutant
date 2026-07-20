@@ -18,6 +18,7 @@ const KNOWN_PHASES: &[&str] = &[
     "web_fetcher",
     "planner",
     "planner_emit",
+    "git_janitor",
 ];
 
 pub fn load_from_file(path: &Path) -> Result<AdjutantConfig, AdjutantConfigError> {
@@ -122,22 +123,29 @@ mod tests {
     }
 
     #[test]
-    fn migrate_config_value_scout_builder_inherits_builder_for_planner_emit() {
+    fn migrate_config_value_keeps_git_janitor_phase() {
         let mut value = json!({
             "phases": {
-                "scout": { "model_name": "scout-model" },
-                "builder": { "model_name": "builder-coder" }
+                "git_janitor": {
+                    "provider": "open_router",
+                    "api_key": "sk-test-janitor",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "model_name": "qwen/qwen3.6-35b-a3b",
+                    "max_tokens": 4096,
+                    "temperature": 0.2
+                },
+                "unknown_phase": { "model_name": "drop-me" }
             }
         });
         migrate_config_value(&mut value);
         let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(phases.contains_key("git_janitor"));
         assert_eq!(
-            phases.get("planner_emit").and_then(|v| v.get("model_name")),
-            Some(&json!("builder-coder"))
+            phases
+                .get("git_janitor")
+                .and_then(|v| v.get("api_key")),
+            Some(&json!("sk-test-janitor"))
         );
-        assert_eq!(
-            phases.get("planner").and_then(|v| v.get("model_name")),
-            Some(&json!("scout-model"))
-        );
+        assert!(!phases.contains_key("unknown_phase"));
     }
 }

@@ -57,6 +57,11 @@ const AGENT_PHASES: { phase: AgentPhase; title: string; hint: string }[] = [
     title: 'Planner (emit)',
     hint: 'Stronger model for final Blueprint JSON synthesis',
   },
+  {
+    phase: 'git_janitor',
+    title: 'Git Janitor',
+    hint: 'Commit/PR/changelog copy + branch gate from git conventions',
+  },
 ]
 
 const DEFAULT_PROFILE: PhaseProfile = {
@@ -78,6 +83,7 @@ const PHASE_DEFAULT_OVERRIDES: Partial<
   builder: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.2 },
   planner: { max_tokens: 4096, temperature: 0.3 },
   planner_emit: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.1 },
+  git_janitor: { max_tokens: 4096, temperature: 0.2 },
 }
 
 function defaultProfileFor(phase: AgentPhase): PhaseProfile {
@@ -103,6 +109,7 @@ const KNOWN_PHASES: AgentPhase[] = [
   'babysitter',
   'planner',
   'planner_emit',
+  'git_janitor',
 ]
 
 function defaultWebFetcher(): WebFetcherProfile {

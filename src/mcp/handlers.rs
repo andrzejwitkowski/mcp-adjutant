@@ -6,21 +6,23 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use super::schemas::{
-    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-    EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-    PLAN_BLUEPRINT_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME,
+    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, CREATE_GIT_BRANCH_TOOL_NAME,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, PLAN_BLUEPRINT_TOOL_NAME,
+    PREPARE_GIT_COPY_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME,
     VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
 };
 use crate::agent::{
-    analyze_log_at_path, default_builder_agent, default_transformer_agent,
+    analyze_log_at_path, create_git_branch, default_builder_agent, default_transformer_agent,
     default_verify_workspace, embed_source_files, extract_json_object, format_babysitter_result,
-    format_eval_job_appendix, format_triage_success, parse_plan_blueprint_args,
-    parse_transpile_types_args, run_planner_hybrid, run_scout_with_cache, run_web_fetch_with_cache,
-    triage_passed, validate_blueprint, validate_blueprint_coordinator,
-    validate_blueprint_grounding, AgentContext, AgentEvalSummary, AgentLoopOrchestrator,
-    BabysitterAgent, CoordinatorConstraints, EvaluatorAgent, ScoutAgent, ScoutCacheOutcome,
-    SystemBuildRunner, TranspilerAgent, TriageAgent, WebCacheOutcome, WebFetcherAgent,
-    BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    format_eval_job_appendix, format_scout_block, format_triage_success, gather_conventions_and_diff,
+    parse_plan_blueprint_args, parse_transpile_types_args, run_git_janitor, run_planner_hybrid,
+    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
+    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext, AgentEvalSummary,
+    AgentLoopOrchestrator, BabysitterAgent, CoordinatorConstraints, EvaluatorAgent,
+    GitJanitorAgent, ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TranspilerAgent,
+    TriageAgent, WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
+    BABYSITTER_SYSTEM_PROMPT, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
     TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
@@ -32,8 +34,9 @@ use crate::domain::AdjutantConfig;
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
 use crate::llm::{
     create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
-    create_planner_emit_llm_client, create_planner_llm_client, create_scout_llm_client,
-    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
+    create_git_janitor_llm_client, create_planner_emit_llm_client, create_planner_llm_client,
+    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
+    create_web_fetcher_llm_client,
 };
 use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
@@ -55,6 +58,7 @@ fn tool_eval_target_agent(tool_name: &str) -> Option<&'static str> {
         WEB_FETCH_TOOL_NAME => Some("WebFetcherAgent"),
         PLAN_BLUEPRINT_TOOL_NAME => Some("PlannerAgent"),
         ANALYZE_LOG_TOOL_NAME => Some("LogAnalyzerAgent"),
+        PREPARE_GIT_COPY_TOOL_NAME | CREATE_GIT_BRANCH_TOOL_NAME => Some("GitJanitorAgent"),
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => None,
         _ => None,
     }
@@ -935,6 +939,137 @@ pub async fn handle_plan_blueprint(
     .await
 }
 
+pub async fn handle_prepare_git_copy(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
+    let mode = args
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("generate")
+        .to_string();
+    let hook_failure = args
+        .get("hook_failure_output")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let persist_flag = args
+        .get("persist_conventions")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let user_instructions = args
+        .get("user_instructions")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let feature_context = args
+        .get("feature_context")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let expected_ticket = args
+        .get("expected_ticket")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    if mode == "refine_from_hooks" && hook_failure.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        return Err("refine_from_hooks requires hook_failure_output".into());
+    }
+
+    let persist_allowed = persist_flag || mode == "update_conventions";
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        PREPARE_GIT_COPY_TOOL_NAME,
+        workspace_root,
+        move || async move {
+            let root = mcp_workspace_root();
+            let inputs = ScoutInputs {
+                feature_context: feature_context.clone(),
+                expected_ticket: expected_ticket.clone(),
+                user_instructions: user_instructions.clone(),
+            };
+            let scout = gather_conventions_and_diff(&root, &inputs).await?;
+            let scout_block = format_scout_block(&scout);
+
+            let mut prompt = format!(
+                "{PREPARE_GIT_COPY_TOOL_NAME}\nmode={mode}\npersist_allowed={persist_allowed}\n\n\
+                 {GIT_JANITOR_SYSTEM_PROMPT}\n\n{scout_block}"
+            );
+            if let Some(instr) = user_instructions.as_deref() {
+                prompt.push_str("\n\n## User instructions\n");
+                prompt.push_str(instr);
+            }
+            if let Some(hook) = hook_failure.as_deref() {
+                prompt.push_str("\n\n## Hook failure output — revise conventions and regenerate copy\n");
+                prompt.push_str(hook);
+            }
+            if mode == "update_conventions" {
+                prompt.push_str(
+                    "\n\nMode update_conventions: call update_git_conventions with a patch, then emit_git_copy.",
+                );
+            }
+
+            let client = create_git_janitor_llm_client(&config)?;
+            let agent = GitJanitorAgent::new(client, scout, persist_allowed, root);
+            let original_task = prompt.clone();
+            let result = run_git_janitor(&agent, prompt).await?;
+            let output = if result.is_finished && result.agent_completed {
+                result.accumulated_data
+            } else {
+                format!(
+                    "GitJanitor report (finished={}, iterations={}):\n{}",
+                    result.is_finished, result.iterations, result.accumulated_data
+                )
+            };
+            Ok(finish_agent_job_with_eval(
+                &config,
+                PREPARE_GIT_COPY_TOOL_NAME,
+                &original_task,
+                output,
+            )
+            .await)
+        },
+    )
+    .await
+}
+
+pub async fn handle_create_git_branch(
+    args: Value,
+    config: Arc<AdjutantConfig>,
+    registry: &JobRegistry,
+) -> Result<String, String> {
+    let request_uuid = parse_request_uuid(&args)?;
+    let workspace_root = require_workspace_root_arg(&args)?;
+    let branch_name = args
+        .get("branch_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "branch_name is required".to_string())?
+        .to_string();
+
+    dispatch_async_job(
+        registry,
+        request_uuid,
+        CREATE_GIT_BRANCH_TOOL_NAME,
+        workspace_root,
+        move || async move {
+            let root = mcp_workspace_root();
+            let output = create_git_branch(&root, &branch_name).await?;
+            Ok(finish_agent_job_with_eval(
+                &config,
+                CREATE_GIT_BRANCH_TOOL_NAME,
+                &format!("create_git_branch {branch_name}"),
+                output,
+            )
+            .await)
+        },
+    )
+    .await
+}
+
 /// Output-boundary gate before returning blueprint JSON to the coordinator.
 fn final_blueprint_or_report(
     result: &AgentContext,
@@ -980,6 +1115,18 @@ mod eval_hook_tests {
         assert_eq!(
             tool_eval_target_agent(BABYSIT_PR_TOOL_NAME),
             Some("BabysitterAgent")
+        );
+    }
+
+    #[test]
+    fn tool_eval_maps_git_janitor_tools() {
+        assert_eq!(
+            tool_eval_target_agent(PREPARE_GIT_COPY_TOOL_NAME),
+            Some("GitJanitorAgent")
+        );
+        assert_eq!(
+            tool_eval_target_agent(CREATE_GIT_BRANCH_TOOL_NAME),
+            Some("GitJanitorAgent")
         );
     }
 }

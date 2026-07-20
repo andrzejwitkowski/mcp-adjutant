@@ -245,6 +245,7 @@ fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
         "execute_global_refactor" => vec![AgentPhase::Transformer],
         "babysit_pr" => vec![AgentPhase::Babysitter],
         "plan_blueprint" => vec![AgentPhase::Planner, AgentPhase::PlannerEmit],
+        "prepare_git_copy" | "create_git_branch" => vec![AgentPhase::GitJanitor],
         _ => vec![],
     }
 }

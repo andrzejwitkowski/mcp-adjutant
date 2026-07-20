@@ -8,36 +8,40 @@ alwaysApply: true
 
 This repo *is* mcp-adjutant. When the `mcp-adjutant` MCP server is connected, follow [`.cursor/skills/mcp-adjutant-delegation/SKILL.md`](../skills/mcp-adjutant-delegation/SKILL.md) at **hard** level (`MCP_ADJUTANT_DELEGATION_LEVEL=hard`).
 
-## MCP-first — use adjutant before native tools
+## Search priority: codegraph → adjutant → fastcontext
 
-When adjutant MCP tools are available, **do not** substitute native tools for matching work — **including Plan mode and plan/design research**:
+CodeGraph is the **default** structural search tool for this project. Its tree-sitter index covers every symbol, call edge, and file — sub-millisecond reads, zero hallucinations.
 
-| Task | MCP tool | Do NOT use instead |
-| --- | --- | --- |
-| Plan mode, design doc, implementation plan needing repo context | `scout_context` (+ `web_fetch` if external) | fastcontext, Grep chains, Task explore, manual multi-file Read |
-| Log investigation, crash/CI log triage | `analyze_log` | Grep, Read, fastcontext on log files |
-| Repo context, tracing, impact analysis | `scout_context` | fastcontext, Grep chains, Task explore |
-| After code changes | `verify_and_triage` | manual cargo/npm, ReadLints only |
-| Tests for new/changed `src/` logic | `generate_tests_and_scaffolding` | hand-written test files |
-| External docs, API specs, library behavior | `web_fetch` | WebSearch, WebFetch |
-| Rename/signature across files | `execute_global_refactor` | manual multi-file edits |
-| Cross-language API type / DTO sync | `transpile_types` (after `scout_context`; [skill](../skills/adjutant-transpiler/SKILL.md)) | hand-written bindings, copy-paste structs |
-| Every sub-agent result before use | `evaluate_agent_performance` | trusting output unchecked |
+| Question type | Tool (in order) |
+| --- | --- |
+| "Where is X defined?", "What calls Y?", "How does A reach B?" | **`codegraph_explore` first** → `scout_context` if broader context needed |
+| Tracing, impact, call graph, symbol source | **`codegraph_explore` / `codegraph_node` / `codegraph_callers` / `codegraph_callees`** |
+| Plan mode, design doc, architecture overview needing multi-module context | `scout_context` (+ `web_fetch` if external) |
+| Log investigation, crash/CI log triage | `analyze_log` |
+| After code changes | `verify_and_triage` |
+| Tests for new/changed `src/` logic | `generate_tests_and_scaffolding` |
+| External docs, API specs, library behavior | `web_fetch` |
+| Rename/signature across files | `execute_global_refactor` |
+| Cross-language API type / DTO sync | `transpile_types` |
+| Every sub-agent result before use | `evaluate_agent_performance` |
+
+**Grep/Read/fastcontext are last-resort** — only when codegraph and adjutant both fail, or for unindexed files (configs, docs, `.md`).
 
 Poll `query_job_status` until `terminal=true` for every async tool. Read the delegation skill for retry/evaluator loops and the session checklist.
 
 When `MCP_ADJUTANT_REQUIRE_BUILDER=true`, skipping builder after `src/` edits is a rule violation.
 When `MCP_ADJUTANT_REQUIRE_LOG_ANALYZER=true`, skipping `analyze_log` when a task touches log files is a rule violation.
 
-## When FastContext CLI is allowed (fallback only)
+## When FastContext CLI is allowed (last resort)
 
 Use `fastcontext -q "<question; file:line evidence>" --max-turns 8` only when:
 
+- codegraph MCP is **not** connected, or
 - mcp-adjutant MCP is **not** connected, or
-- `scout_context` failed after skill-appropriate retries, or
+- `codegraph_explore` and `scout_context` both failed after retries, or
 - **Single obvious file** / trivial symbol lookup (`rg` / `Read` is fine too)
 
 Endpoint: `http://127.0.0.1:8080/v1`, model `fastcontext`, 32k context.
 If down: `launchctl kickstart -k gui/$(id -u)/com.andrzej.fastcontext.llama-server`.
 
-FastContext remains read-only evidence gathering — never a substitute for adjutant scout, triage, builder, transpiler, web_fetch, or evaluation when MCP is up.
+FastContext remains read-only evidence gathering — never a substitute for codegraph, adjutant scout, triage, builder, transpiler, web_fetch, or evaluation when MCP is up.

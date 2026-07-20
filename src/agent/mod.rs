@@ -1,6 +1,7 @@
 mod babysitter;
 mod builder;
 mod evaluator;
+pub mod git_janitor;
 mod log_analyzer;
 mod orchestrator;
 mod planner;
@@ -26,6 +27,11 @@ pub use builder::{
 };
 pub use evaluator::{
     format_eval_job_appendix, AgentEvalSummary, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+};
+pub use git_janitor::{
+    create_git_branch, default_workspace_root, format_scout_block, gather_conventions_and_diff,
+    run_git_janitor, GitJanitorAgent, ScoutInputs, GIT_JANITOR_MAX_ITERATIONS,
+    GIT_JANITOR_SYSTEM_PROMPT,
 };
 pub use log_analyzer::{
     analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT,

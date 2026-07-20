@@ -20,6 +20,7 @@ pub enum AgentPhase {
     WebFetcher,
     Planner,
     PlannerEmit,
+    GitJanitor,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,6 +139,10 @@ impl Default for AdjutantConfig {
             (
                 AgentPhase::PlannerEmit,
                 phase_profile("deepseek-coder", 8_192, 0.1),
+            ),
+            (
+                AgentPhase::GitJanitor,
+                phase_profile("deepseek-chat", 4_096, 0.2),
             ),
         ]
         .into_iter()
