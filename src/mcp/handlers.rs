@@ -973,7 +973,7 @@ pub async fn handle_prepare_git_copy(
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    if mode == "refine_from_hooks" && hook_failure.as_ref().map_or(true, |s| s.trim().is_empty()) {
+    if mode == "refine_from_hooks" && hook_failure.as_ref().is_none_or(|s| s.trim().is_empty()) {
         return Err("refine_from_hooks requires hook_failure_output".into());
     }
 

@@ -6,7 +6,7 @@ pub const ADJUTANT_TOML: &str = ".adjutant.toml";
 pub const GITJANITOR_JSON: &str = ".gitjanitor.json";
 pub const DEFAULT_TICKET_REGEX: &str = r"([A-Z]+-\d+)";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct GitConventions {
     #[serde(default)]
     pub git_rules: GitRules,
@@ -76,16 +76,6 @@ impl Default for PrConfig {
     fn default() -> Self {
         Self {
             template_file: default_pr_template(),
-        }
-    }
-}
-
-impl Default for GitConventions {
-    fn default() -> Self {
-        Self {
-            git_rules: GitRules::default(),
-            commit_format: CommitFormat::default(),
-            pr: PrConfig::default(),
         }
     }
 }

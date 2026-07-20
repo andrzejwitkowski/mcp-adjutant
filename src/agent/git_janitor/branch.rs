@@ -59,13 +59,13 @@ pub fn evaluate_branch_gate(
 
     let (branch_status, action) = if on_default {
         (BranchStatus::OnDefault, BranchAction::CreateBranch)
-    } else if let Some(ref expected) = expected_ticket.filter(|s| !s.is_empty()) {
+    } else if let Some(expected) = expected_ticket.filter(|s| !s.is_empty()) {
         match &branch_ticket {
             Some(bt) if bt.eq_ignore_ascii_case(expected) => (BranchStatus::Ok, BranchAction::None),
             Some(_) => (BranchStatus::StaleFeature, BranchAction::CreateBranch),
             None => (BranchStatus::TicketMismatch, BranchAction::CreateBranch),
         }
-    } else if let Some(ref ctx) = context_ticket {
+    } else if let Some(ctx) = &context_ticket {
         match &branch_ticket {
             Some(bt) if bt.eq_ignore_ascii_case(ctx) => (BranchStatus::Ok, BranchAction::None),
             Some(_) => (BranchStatus::TicketMismatch, BranchAction::CreateBranch),
