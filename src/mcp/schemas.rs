@@ -13,6 +13,8 @@ pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
 pub const BABYSIT_PR_TOOL_NAME: &str = "babysit_pr";
 pub const TRANSPILE_TYPES_TOOL_NAME: &str = "transpile_types";
 pub const PLAN_BLUEPRINT_TOOL_NAME: &str = "plan_blueprint";
+pub const PREPARE_GIT_COPY_TOOL_NAME: &str = "prepare_git_copy";
+pub const CREATE_GIT_BRANCH_TOOL_NAME: &str = "create_git_branch";
 
 pub fn scout_context_schema() -> Value {
     json!({
@@ -265,6 +267,64 @@ pub fn plan_blueprint_schema() -> Value {
     })
 }
 
+pub fn prepare_git_copy_schema() -> Value {
+    json!({
+        "name": PREPARE_GIT_COPY_TOOL_NAME,
+        "description": "GitJanitorAgent: scout repo git conventions + diffs, gate wrong/stale/default branches, emit commit_message / pr_title / pr_body / changelog_entry JSON. Call BEFORE drafting commit/PR/changelog or committing/pushing. On hook failure pass hook_failure_output. Returns immediately; poll query_job_status. ALWAYS follow with evaluate_agent_performance (GitJanitorAgent).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "generate (default) | update_conventions | refine_from_hooks"
+                },
+                "hook_failure_output": {
+                    "type": "string",
+                    "description": "Paste from failed pre-commit / commit-msg / commitlint for refine_from_hooks."
+                },
+                "persist_conventions": {
+                    "type": "boolean",
+                    "description": "When true, allow writing .adjutant.toml (also implied by mode=update_conventions)."
+                },
+                "user_instructions": {
+                    "type": "string",
+                    "description": "Optional free-form style overrides."
+                },
+                "feature_context": {
+                    "type": "string",
+                    "description": "What this commit/feature is about (used for branch gate + suggested branch name)."
+                },
+                "expected_ticket": {
+                    "type": "string",
+                    "description": "Expected ticket id (e.g. WATT-402). Mismatch with current branch forces create_branch."
+                },
+                "workspace_root": workspace_root_schema_property(),
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["workspace_root", "request_uuid"]
+        }
+    })
+}
+
+pub fn create_git_branch_schema() -> Value {
+    json!({
+        "name": CREATE_GIT_BRANCH_TOOL_NAME,
+        "description": "Create and checkout a new git branch (git checkout -b). Call when prepare_git_copy returns action_required=create_branch / commit_allowed=false. Do not use Shell git checkout -b when this tool is available. ALWAYS follow with evaluate_agent_performance (GitJanitorAgent), then re-run prepare_git_copy.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "branch_name": {
+                    "type": "string",
+                    "description": "New branch name (prefer suggested_branch_name from prepare_git_copy)."
+                },
+                "workspace_root": workspace_root_schema_property(),
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["branch_name", "workspace_root", "request_uuid"]
+        }
+    })
+}
+
 pub fn registered_mcp_tools() -> Vec<Value> {
     vec![
         scout_context_schema(),
@@ -277,6 +337,8 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         babysit_pr_schema(),
         transpile_types_schema(),
         plan_blueprint_schema(),
+        prepare_git_copy_schema(),
+        create_git_branch_schema(),
         query_job_status_schema(),
     ]
 }

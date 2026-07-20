@@ -23,6 +23,7 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | `evaluate_agent_performance` | Evaluator | QA a sub-agent result before trusting or re-delegating |
 | `transpile_types` | Transpiler | Cross-language API type / DTO sync (coordinator sets `architecture_layout`) |
 | `plan_blueprint` | Planner | Feature/bugfix/refactor blueprint JSON before Builder/Transpiler execution |
+| `prepare_git_copy` / `create_git_branch` | GitJanitor | Commit/PR/changelog copy; branch gate before commit/push |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
 
 ---
@@ -112,6 +113,7 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 | External docs, API specs, library usage | `web_fetch` | WebSearch, WebFetch, guessing |
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
 | Cross-language API type / DTO sync | `transpile_types` (after `scout_context`) | Hand-written bindings, copy-paste structs |
+| Commit message, PR title/body, changelog, before git commit/push | `prepare_git_copy` (+ `create_git_branch` if `commit_allowed=false`) | Inventing commit/PR text; Shell `git checkout -b` |
 | Implementation blueprint before multi-step build | `plan_blueprint` (after `scout_context` when repo context needed) | Premium agent drafting full patch pipelines from scratch |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
 | Poll async jobs | `query_job_status` | Guessing timeouts |
@@ -305,6 +307,7 @@ Before handoff on substantive work, include in your response (or internal trace)
 - [ ] web_fetch — Y/N or N/A
 - [ ] execute_global_refactor — Y/N or N/A
 - [ ] transpile_types — Y/N or N/A (see [adjutant-transpiler](../adjutant-transpiler/SKILL.md))
+- [ ] prepare_git_copy / create_git_branch — Y/N or N/A (see [adjutant-git-janitor](../adjutant-git-janitor/SKILL.md); ALWAYS evaluate after)
 - [ ] plan_blueprint — Y/N or N/A (set plan_kind + expectation when delegating blueprint)
 - [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …, transpiler …
 ```
@@ -497,7 +500,7 @@ Use for library docs, API specs, release notes — not for in-repo code (use sco
 }
 ```
 
-`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `BabysitterAgent` (for `babysit_pr`), `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`, `PlannerAgent`.
+`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `BabysitterAgent` (for `babysit_pr`), `GitJanitorAgent` (for `prepare_git_copy` / `create_git_branch`), `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`, `PlannerAgent`.
 
 **transpile_types**
 

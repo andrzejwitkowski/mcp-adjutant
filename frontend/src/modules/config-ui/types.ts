@@ -11,6 +11,7 @@ export type AgentPhase =
   | 'babysitter'
   | 'planner'
   | 'planner_emit'
+  | 'git_janitor'
 
 export interface PhaseProfile {
   provider: Provider
