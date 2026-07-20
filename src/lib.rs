@@ -14,7 +14,7 @@ pub mod tools;
 pub use tools::{
     detect_file_language, detect_project_languages, edit_file_line, find_nearest_module_boundary,
     get_dirty_files_from_git, language_from_extension, run_build_command, AstUsageFinder,
-    FileLanguageReport, ProjectLanguageReport, SourceLanguage,
+    BuildResult, FileLanguageReport, ProjectLanguageReport, SourceLanguage,
 };
 
 pub use agent::{

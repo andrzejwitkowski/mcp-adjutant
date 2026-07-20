@@ -277,6 +277,7 @@ pub async fn handle_verify_and_triage(
             let triage_client = create_triage_llm_client(&config)?;
             let scout_client = create_scout_llm_client(&config)?;
             let discoverer = LlmBuildDiscoverer::new(scout_client);
+            let target_paths_for_report = target_paths.clone();
             let agent = TriageAgent::with_build_runner_and_discoverer(
                 triage_client,
                 target_paths,
@@ -292,7 +293,7 @@ pub async fn handle_verify_and_triage(
 
             let output = if result.is_finished {
                 if triage_passed(&result) {
-                    format_triage_success(&result)
+                    format_triage_success(&result, &target_paths_for_report)
                 } else if !result.accumulated_data.is_empty()
                     && !result.accumulated_data.starts_with("Triage targets")
                 {

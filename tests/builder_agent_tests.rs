@@ -11,6 +11,7 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::BuildResult;
 
 struct MockBuilderLlm {
     turn: LlmModelTurn,
@@ -65,13 +66,19 @@ impl LlmClient for PanicTriageLlm {
 struct TddRedBuildRunner;
 
 impl BuildCommandRunner for TddRedBuildRunner {
-    fn run_build_command(&self, _dir: &Path, command: &str) -> Result<String, String> {
+    fn run_build_command(&self, _dir: &Path, command: &str) -> Result<BuildResult, String> {
         if command.contains("check") {
-            Ok("    Finished dev [unoptimized + debuginfo] target(s)".to_string())
+            Ok(BuildResult {
+                exit_code: 0,
+                output: "    Finished dev [unoptimized + debuginfo] target(s)".to_string(),
+                success: true,
+            })
         } else if command.contains("test") {
-            Err(
-                "assertion `left == right` failed\n  left: 1\n right: 2\nfailures:\n    red_phase_case\n\ntest result: FAILED. 0 passed; 1 failed".to_string(),
-            )
+            Ok(BuildResult {
+                exit_code: 101,
+                output: "assertion `left == right` failed\n  left: 1\n right: 2\nfailures:\n    red_phase_case\n\ntest result: FAILED. 0 passed; 1 failed".to_string(),
+                success: false,
+            })
         } else {
             Err(format!("unexpected build command: {command}"))
         }
@@ -160,19 +167,30 @@ impl CountingRedBuildRunner {
 }
 
 impl BuildCommandRunner for CountingRedBuildRunner {
-    fn run_build_command(&self, _dir: &Path, command: &str) -> Result<String, String> {
+    fn run_build_command(&self, _dir: &Path, command: &str) -> Result<BuildResult, String> {
         if command.contains("check") {
             let call = self.check_calls.fetch_add(1, Ordering::SeqCst);
             if call == 0 {
-                Err("error[E0425]: cannot find value `broken` in this scope".to_string())
+                Ok(BuildResult {
+                    exit_code: 101,
+                    output: "error[E0425]: cannot find value `broken` in this scope".to_string(),
+                    success: false,
+                })
             } else {
-                Ok("    Finished dev [unoptimized + debuginfo] target(s)".to_string())
+                Ok(BuildResult {
+                    exit_code: 0,
+                    output: "    Finished dev [unoptimized + debuginfo] target(s)".to_string(),
+                    success: true,
+                })
             }
         } else if command.contains("test") {
-            Err(
-                "assertion `left == right` failed\n  left: 1\n right: 2\ntest result: FAILED"
-                    .to_string(),
-            )
+            Ok(BuildResult {
+                exit_code: 101,
+                output:
+                    "assertion `left == right` failed\n  left: 1\n right: 2\ntest result: FAILED"
+                        .to_string(),
+                success: false,
+            })
         } else {
             Err(format!("unexpected build command: {command}"))
         }

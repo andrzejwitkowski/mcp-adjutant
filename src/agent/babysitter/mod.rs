@@ -236,7 +236,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
         }
 
         if passed {
-            Ok(format_triage_success(&triage_ctx))
+            Ok(format_triage_success(&triage_ctx, &[]))
         } else {
             Ok(format!(
                 "[TRIAGE INCOMPLETE] finished={} iterations={}\n{}",

@@ -1,8 +1,14 @@
 use std::path::Path;
 use std::process::Command;
 
-pub fn run_build_command(dir: &Path, command: &str) -> Result<String, String> {
-    // ponytail: sh -c keeps one spawn path for arbitrary compiler commands
+#[derive(Debug, Clone)]
+pub struct BuildResult {
+    pub exit_code: i32,
+    pub output: String,
+    pub success: bool,
+}
+
+pub fn run_build_command(dir: &Path, command: &str) -> Result<BuildResult, String> {
     let output = Command::new("sh")
         .arg("-c")
         .arg(command)
@@ -16,11 +22,11 @@ pub fn run_build_command(dir: &Path, command: &str) -> Result<String, String> {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    if output.status.success() {
-        Ok(combined)
-    } else {
-        Err(combined)
-    }
+    Ok(BuildResult {
+        exit_code: output.status.code().unwrap_or(-1),
+        output: combined,
+        success: output.status.success(),
+    })
 }
 
 /// Truncates long build logs by keeping the tail (errors usually appear at the end).
@@ -122,6 +128,21 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn run_build_command_returns_exit_code_on_success() {
+        let result = run_build_command(std::path::Path::new("."), "echo hello").expect("spawn");
+        assert!(result.success);
+        assert_eq!(result.exit_code, 0);
+        assert!(result.output.contains("hello"));
+    }
+
+    #[test]
+    fn run_build_command_returns_exit_code_on_failure() {
+        let result = run_build_command(std::path::Path::new("."), "exit 42").expect("spawn");
+        assert!(!result.success);
+        assert_eq!(result.exit_code, 42);
+    }
 
     #[test]
     fn edit_file_line_replaces_target_line() {
