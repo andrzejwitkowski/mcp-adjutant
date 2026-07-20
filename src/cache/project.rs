@@ -380,23 +380,46 @@ mod tests {
     #[test]
     fn resolve_workspace_path_joins_dot() {
         let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
-        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
-        assert_eq!(
-            resolve_workspace_path("."),
-            PathBuf::from("/tmp/mcp-adjutant/.")
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-ws-dot-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let root = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        std::env::set_var(
+            "MCP_ADJUTANT_PROJECT_ROOT",
+            root.to_string_lossy().to_string(),
         );
+        assert_eq!(resolve_workspace_path("."), root.join("."));
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn resolve_workspace_path_joins_relative_paths() {
         let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
-        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", "/tmp/mcp-adjutant");
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-ws-rel-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let root = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        std::env::set_var(
+            "MCP_ADJUTANT_PROJECT_ROOT",
+            root.to_string_lossy().to_string(),
+        );
         assert_eq!(
             resolve_workspace_path("./src/cache/project.rs"),
-            PathBuf::from("/tmp/mcp-adjutant/src/cache/project.rs")
+            root.join("src/cache/project.rs")
         );
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -507,9 +530,19 @@ mod tests {
     #[allow(clippy::await_holding_lock)] // ENV_TEST_LOCK must span env mutation + await
     async fn mcp_workspace_root_prefers_job_context_override() {
         let _lock = ENV_TEST_LOCK.lock().expect("env test lock");
+        let env_fallback = std::env::temp_dir().join(format!(
+            "mcp-env-fallback-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&env_fallback).expect("mkdir env fallback");
+        let expected_fallback =
+            fs::canonicalize(&env_fallback).unwrap_or_else(|_| env_fallback.clone());
         std::env::set_var(
             "MCP_ADJUTANT_PROJECT_ROOT",
-            "/tmp/mcp-adjutant-env-fallback",
+            env_fallback.to_string_lossy().to_string(),
         );
         let override_root = PathBuf::from("/tmp/mcp-adjutant-job-override");
         crate::metrics::with_job_context_async(
@@ -523,10 +556,8 @@ mod tests {
             },
         )
         .await;
-        assert_eq!(
-            mcp_workspace_root(),
-            PathBuf::from("/tmp/mcp-adjutant-env-fallback")
-        );
+        assert_eq!(mcp_workspace_root(), expected_fallback);
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
+        let _ = fs::remove_dir_all(&env_fallback);
     }
 }
