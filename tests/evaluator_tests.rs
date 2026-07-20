@@ -47,11 +47,15 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
 
     assert!(result.is_finished);
     assert!(result.accumulated_data.contains("QA score: 6/10"));
-    assert!(result.accumulated_data.contains("Too many comments in the code."));
+    assert!(result
+        .accumulated_data
+        .contains("Too many comments in the code."));
     assert!(result
         .accumulated_data
         .contains("Desired output (10/10 exemplar):"));
-    assert!(result.accumulated_data.contains("src/sample.rs:10 invoke()"));
+    assert!(result
+        .accumulated_data
+        .contains("src/sample.rs:10 invoke()"));
 
     let db_path = project_root.join(".adjutant/cache.db");
     let conn = Connection::open(&db_path).expect("open cache.db");

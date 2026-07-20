@@ -331,7 +331,8 @@ mod tests {
                 r#"{"score": 5, "critique": "weak", "desired_output": "   "}"#,
             )
             .expect("parse");
-        let err = normalize_desired_output(&mut payload).expect_err("empty desired_output must fail");
+        let err =
+            normalize_desired_output(&mut payload).expect_err("empty desired_output must fail");
 
         assert!(err.contains("desired_output"));
     }

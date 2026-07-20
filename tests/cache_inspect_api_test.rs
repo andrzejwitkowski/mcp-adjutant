@@ -22,7 +22,14 @@ fn list_evaluations_returns_newest_first() {
         .expect("first evaluation");
     thread::sleep(Duration::from_millis(1100));
     cache
-        .store_evaluation("Builder", "task two", "output two", 9, "great", "desired two")
+        .store_evaluation(
+            "Builder",
+            "task two",
+            "output two",
+            9,
+            "great",
+            "desired two",
+        )
         .expect("second evaluation");
 
     let (_, conn) = open_cache_connection(&project_root).expect("open cache");

@@ -115,8 +115,7 @@ fn resolve_default_workspace_root() -> PathBuf {
 
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let start = std::env::current_dir().unwrap_or_else(|_| manifest.clone());
-    find_project_root(&start)
-        .unwrap_or_else(|_| find_project_root(&manifest).unwrap_or(start))
+    find_project_root(&start).unwrap_or_else(|_| find_project_root(&manifest).unwrap_or(start))
 }
 
 /// Parse optional `workspace_root` from MCP tool args (evaluate also accepts `project_path`).
@@ -428,7 +427,10 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("mkdir");
         let expected = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-        std::env::set_var("MCP_ADJUTANT_PROJECT_ROOT", dir.to_string_lossy().to_string());
+        std::env::set_var(
+            "MCP_ADJUTANT_PROJECT_ROOT",
+            dir.to_string_lossy().to_string(),
+        );
         let root = resolve_config_cache_root();
         std::env::remove_var("MCP_ADJUTANT_PROJECT_ROOT");
         let _ = fs::remove_dir_all(&dir);
