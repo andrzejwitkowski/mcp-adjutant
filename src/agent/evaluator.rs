@@ -145,7 +145,7 @@ impl<C: LlmClient> EvaluatorAgent<C> {
             self.original_task, self.received_output
         );
         if let Some(rubric) =
-            select_evaluation_rubric(&canonical, &self.original_task, &self.received_output)
+            agent_evaluation_rubric(&canonical, &self.original_task, &self.received_output)
         {
             message.push_str(rubric);
         }
@@ -255,7 +255,7 @@ fn payload_to_summary(evaluation: &EvaluationPayload) -> AgentEvalSummary {
     }
 }
 
-fn select_evaluation_rubric(
+fn agent_evaluation_rubric(
     target_agent: &str,
     original_task: &str,
     received_output: &str,
@@ -346,14 +346,14 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_json_object, format_evaluation_result, git_janitor_rubric_for,
-        is_git_janitor_create_branch_eval, normalize_desired_output, select_evaluation_rubric,
+        agent_evaluation_rubric, extract_json_object, format_evaluation_result,
+        git_janitor_rubric_for, is_git_janitor_create_branch_eval, normalize_desired_output,
         EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
     fn planner_rubric_appended_for_planner_agent() {
-        let rubric = select_evaluation_rubric("PlannerAgent", "", "").expect("rubric");
+        let rubric = agent_evaluation_rubric("PlannerAgent", "", "").expect("rubric");
         assert!(rubric.contains("PLANNER RUBRIC"));
         assert!(rubric.contains("ellipsis"));
         assert!(rubric.contains("generate_tests"));
@@ -361,20 +361,20 @@ mod tests {
 
     #[test]
     fn agent_rubrics_route_by_canonical_name_only() {
-        assert!(select_evaluation_rubric("Phase_4_Builder", "", "").is_some());
-        assert!(select_evaluation_rubric("Phase_4_Builder_GREEN", "", "").is_some());
-        assert!(select_evaluation_rubric("StringBuilder", "", "").is_none());
-        let builder = select_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
+        assert!(agent_evaluation_rubric("Phase_4_Builder", "", "").is_some());
+        assert!(agent_evaluation_rubric("Phase_4_Builder_GREEN", "", "").is_some());
+        assert!(agent_evaluation_rubric("StringBuilder", "", "").is_none());
+        let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
         assert!(builder.contains("Evidenced FAIL"));
-        let scout = select_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
+        let scout = agent_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
         assert!(scout.contains("5-7: Partial answer"));
-        let triage = select_evaluation_rubric("Phase_5_Triage", "", "").expect("triage");
+        let triage = agent_evaluation_rubric("Phase_5_Triage", "", "").expect("triage");
         assert!(triage.contains("Evidenced FAIL"));
-        let baby = select_evaluation_rubric("BabysitterAgent", "", "").expect("babysitter");
+        let baby = agent_evaluation_rubric("BabysitterAgent", "", "").expect("babysitter");
         assert!(baby.contains("BABYSITTER RUBRIC"));
         assert!(baby.contains("Valid JSON"));
         // default GitJanitor (no task/output) → prepare rubric
-        let janitor = select_evaluation_rubric("GitJanitorAgent", "", "").expect("janitor");
+        let janitor = agent_evaluation_rubric("GitJanitorAgent", "", "").expect("janitor");
         assert!(janitor.contains("prepare_git_copy"));
         assert!(janitor.contains("commit_message"));
     }
@@ -403,7 +403,7 @@ mod tests {
         ));
         // even without create_git_branch in task, branch/status JSON routes correctly
         assert!(is_git_janitor_create_branch_eval("checkout new feature branch", out));
-        let rubric = select_evaluation_rubric("GitJanitorAgent", "checkout new feature branch", out)
+        let rubric = agent_evaluation_rubric("GitJanitorAgent", "checkout new feature branch", out)
             .expect("rubric");
         assert!(rubric.contains("create_git_branch"));
         assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
