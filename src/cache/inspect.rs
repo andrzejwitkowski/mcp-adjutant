@@ -146,6 +146,29 @@ pub struct WebCachePage {
     pub total_pages: u32,
 }
 
+pub fn load_best_desired_output_exemplar(
+    conn: &Connection,
+    agent_name: &str,
+) -> Result<Option<String>, String> {
+    let canonical = super::agent_names::normalize_agent_name(agent_name);
+    conn.query_row(
+        "SELECT desired_output FROM agent_evaluations
+         WHERE agent_name = ?1 AND desired_output != ''
+         ORDER BY score DESC, created_at DESC
+         LIMIT 1",
+        params![canonical],
+        |row| row.get(0),
+    )
+    .map(Some)
+    .or_else(|err| {
+        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            Ok(None)
+        } else {
+            Err(format!("failed to load desired_output exemplar: {err}"))
+        }
+    })
+}
+
 pub fn list_evaluations(conn: &Connection) -> Result<Vec<AgentEvaluationRow>, String> {
     let mut statement = conn
         .prepare(
