@@ -99,6 +99,7 @@ fn check_status_label(check: &crate::tools::PrCheck) -> String {
 }
 
 /// ponytail: deterministic JSON result — LLM summary is decorative only.
+#[allow(clippy::too_many_arguments)] // signature stability; keeping JSON builder inputs explicit
 pub fn format_babysitter_result(
     state: &PrState,
     report_posted: bool,
