@@ -87,7 +87,7 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         && input.verify_summary.is_some()
         && input.accumulated_data.contains(BUILDER_GREEN_MARKER)
     {
-        report.push_str("\n");
+        report.push('\n');
         report.push_str(BUILDER_GREEN_MARKER);
         report.push('\n');
     } else if input.accumulated_data.contains(BUILDER_FAIL_MARKER) {
@@ -114,7 +114,7 @@ fn extract_last_triage_test_path(log: &str) -> Option<String> {
         .filter_map(|line| line.rsplit(" for ").next())
         .map(str::trim)
         .filter(|path| !path.is_empty())
-        .last()
+        .next_back()
         .map(str::to_string)
 }
 
