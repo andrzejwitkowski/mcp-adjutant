@@ -115,7 +115,13 @@ fn red_phase_case() {
         Arc::clone(&config),
         TddRedBuildRunner,
     );
-    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
+    let agent = BuilderAgent::new(
+        llm,
+        cache,
+        ScoutAgent::new(PanicScoutLlm),
+        triage_agent,
+        project_root.join("src/lib.rs"),
+    );
 
     let result = AgentLoopOrchestrator::run(
         &agent,
@@ -252,7 +258,13 @@ async fn builder_agent_red_phase_runs_full_triage_loop_for_compile_fixes() {
         Arc::clone(&config),
         CountingRedBuildRunner::new(),
     );
-    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
+    let agent = BuilderAgent::new(
+        llm,
+        cache,
+        ScoutAgent::new(PanicScoutLlm),
+        triage_agent,
+        project_root.join("src/lib.rs"),
+    );
 
     let result =
         AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
@@ -303,7 +315,13 @@ fn relative_red_case() {
         Arc::clone(&config),
         TddRedBuildRunner,
     );
-    let agent = BuilderAgent::new(llm, cache, ScoutAgent::new(PanicScoutLlm), triage_agent);
+    let agent = BuilderAgent::new(
+        llm,
+        cache,
+        ScoutAgent::new(PanicScoutLlm),
+        triage_agent,
+        project_root.join("src/lib.rs"),
+    );
 
     let result =
         AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
@@ -441,6 +459,7 @@ async fn builder_agent_gather_integration_context_delegates_to_scout() {
         cache,
         ScoutAgent::new(MockScoutLlmIntegration::new(scout_report)),
         triage_agent,
+        project_root.join("src/lib.rs"),
     );
 
     let result = AgentLoopOrchestrator::run(
@@ -487,6 +506,7 @@ async fn builder_agent_generate_test_factory_delegates_to_scout() {
         cache,
         ScoutAgent::new(MockScoutLlmFactory::new(scout_report)),
         triage_agent,
+        project_root.join("src/lib.rs"),
     );
 
     let result = AgentLoopOrchestrator::run(
@@ -542,6 +562,7 @@ async fn builder_empty_turns_finish_with_fail_evidence_not_err() {
         cache,
         ScoutAgent::new(PanicScoutLlm),
         triage_agent,
+        project_root.join("src/lib.rs"),
     );
 
     let result = AgentLoopOrchestrator::run(

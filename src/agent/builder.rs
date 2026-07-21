@@ -14,6 +14,8 @@ use crate::cache::ProjectCacheManager;
 use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
 
+use super::builder_prompt::{source_file_from_builder_prompt, validate_test_path_for_source};
+
 pub use tools::{
     build_scout_factory_query, build_scout_integration_query, builder_tool_set,
     extract_test_content, parse_components, parse_factory_arguments,
@@ -27,13 +29,14 @@ Available tools (tool calls):
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
 - write_test_suite — writes a test file with a TDD phase (red|green|refactor). Put the full test file contents in your message; the tool only takes path and tdd_phase.
 
-Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new file under `tests/`, never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
+Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new test file matching the source language — never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
 
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED.
 
-Deliverable requirements (mandatory in your final report):
+Deliverable requirements (mandatory — MCP output is a structured report, not a tool transcript):
 - Repo-relative test file path and the full test source you wrote (or a diff)
 - Build command run, exit code, and a log excerpt (last ~40 lines) proving pass/fail
+- Test file extension must match source language (tsx source -> .test.tsx, rust -> .rs, etc.)
 - Cover every function/symbol named in the task — never skip scope without file:line proof that existing tests already cover it
 - On env/compile errors: include the error output and attempt pathing/fix before giving up
 
@@ -102,6 +105,7 @@ where
     triage_agent: TriageAgent<TC, B, D>,
     tools: LlmToolSet,
     consecutive_empty_turns: AtomicU32,
+    source_file: PathBuf,
 }
 
 impl<
@@ -117,6 +121,7 @@ impl<
         cache_manager: Arc<Mutex<ProjectCacheManager>>,
         scout_agent: ScoutAgent<SC>,
         triage_agent: TriageAgent<TC, B, D>,
+        source_file: PathBuf,
     ) -> Self {
         Self {
             llm_client,
@@ -125,6 +130,7 @@ impl<
             triage_agent,
             tools: builder_tool_set(),
             consecutive_empty_turns: AtomicU32::new(0),
+            source_file,
         }
     }
 
@@ -134,6 +140,7 @@ impl<
         scout_agent: ScoutAgent<SC>,
         triage_agent: TriageAgent<TC, B, D>,
         tools: LlmToolSet,
+        source_file: PathBuf,
     ) -> Self {
         Self {
             llm_client,
@@ -142,6 +149,7 @@ impl<
             triage_agent,
             tools,
             consecutive_empty_turns: AtomicU32::new(0),
+            source_file,
         }
     }
 
@@ -295,6 +303,33 @@ impl<
                 }
                 "write_test_suite" => {
                     let (path, tdd_phase) = parse_write_test_suite_arguments(&tool_call.arguments)?;
+                    let project_root = {
+                        let cache = self
+                            .cache_manager
+                            .lock()
+                            .map_err(|_| "cache manager lock poisoned".to_string())?;
+                        cache.project_root().to_path_buf()
+                    };
+                    if self.source_file.is_file() {
+                        if let Err(err) =
+                            validate_test_path_for_source(&path, &self.source_file)
+                        {
+                            context
+                                .accumulated_data
+                                .push_str(&format!("Observation:\n{err}\n"));
+                            return Ok(());
+                        }
+                    } else if let Some(source_rel) =
+                        source_file_from_builder_prompt(&context.input_prompt)
+                    {
+                        let source_path = project_root.join(&source_rel);
+                        if let Err(err) = validate_test_path_for_source(&path, &source_path) {
+                            context
+                                .accumulated_data
+                                .push_str(&format!("Observation:\n{err}\n"));
+                            return Ok(());
+                        }
+                    }
                     let content = match extract_test_content(
                         model_turn.content.as_deref(),
                         &tool_call.arguments,
@@ -308,13 +343,6 @@ impl<
                         }
                     };
 
-                    let project_root = {
-                        let cache = self
-                            .cache_manager
-                            .lock()
-                            .map_err(|_| "cache manager lock poisoned".to_string())?;
-                        cache.project_root().to_path_buf()
-                    };
                     let path_buf = resolve_test_output_path(&project_root, &path)?;
 
                     if let Some(parent) = path_buf.parent() {
@@ -394,13 +422,36 @@ pub fn default_builder_agent<C: LlmClient, SC: LlmClient, TC: LlmClient>(
     target_paths: Vec<PathBuf>,
 ) -> DefaultBuilderAgent<C, SC, TC> {
     let scout_agent = ScoutAgent::new(scout_llm_client);
-    let triage_agent = TriageAgent::new(triage_llm_client, target_paths, config);
-    BuilderAgent::new(llm_client, cache_manager, scout_agent, triage_agent)
+    let triage_agent = TriageAgent::new(triage_llm_client, target_paths.clone(), config);
+    let source_file = target_paths
+        .first()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
+    BuilderAgent::new(
+        llm_client,
+        cache_manager,
+        scout_agent,
+        triage_agent,
+        source_file,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::validate_test_path_for_source;
+
+    #[test]
+    fn validate_test_path_rejects_rust_for_tsx_source() {
+        let dir = std::env::temp_dir().join(format!("builder-lang-{}", std::process::id()));
+        let source = dir.join("frontend/src/Foo.tsx");
+        std::fs::create_dir_all(source.parent().unwrap()).expect("mkdir");
+        std::fs::write(&source, "export const x = 1").expect("write");
+        let err = validate_test_path_for_source("tests/foo_integration_test.rs", &source)
+            .expect_err("cross-language");
+        assert!(err.contains("tsx") || err.contains("extension"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn resolve_test_output_path_joins_relative_paths_to_project_root() {

@@ -13,18 +13,18 @@ use super::schemas::{
     WEB_FETCH_TOOL_NAME,
 };
 use crate::agent::{
-    analyze_log_at_path, create_git_branch, default_builder_agent, default_transformer_agent,
-    default_verify_workspace, embed_source_files, extract_json_object, format_babysitter_result,
-    format_eval_job_appendix, format_scout_block, format_triage_success,
-    gather_conventions_and_diff, parse_plan_blueprint_args, parse_transpile_types_args,
-    run_git_janitor, run_planner_hybrid, run_scout_with_cache, run_web_fetch_with_cache,
-    triage_passed, validate_blueprint, validate_blueprint_coordinator,
-    validate_blueprint_grounding, AgentContext, AgentEvalSummary, AgentLoopOrchestrator,
-    BabysitterAgent, CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent,
-    ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TranspilerAgent, TriageAgent,
-    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
-    GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRANSPILER_MAX_ITERATIONS,
-    TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
+    analyze_log_at_path, builder_task_parts, create_git_branch, default_builder_agent,
+    default_transformer_agent, default_verify_workspace, embed_source_files,
+    extract_json_object, format_babysitter_result, format_builder_report, format_eval_job_appendix,
+    format_scout_block, format_triage_success, gather_conventions_and_diff,
+    parse_plan_blueprint_args, parse_transpile_types_args, run_git_janitor, run_planner_hybrid,
+    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
+    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext, AgentEvalSummary,
+    AgentLoopOrchestrator, BabysitterAgent, BuilderReportInput, BUILDER_GREEN_MARKER,
+    CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner,
+    TranspilerAgent, TriageAgent, WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
+    BABYSITTER_SYSTEM_PROMPT, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
     load_best_desired_output_exemplar, mcp_workspace_root, open_cache_connection,
@@ -146,18 +146,38 @@ pub async fn handle_query_job_status(
     serde_json::to_string_pretty(&status).map_err(|err| format!("serialize status: {err}"))
 }
 
-fn integration_test_exemplar() -> String {
-    let path = mcp_workspace_root().join("tests/cache_manager_tests.rs");
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    let lines: Vec<&str> = content.lines().collect();
-    let excerpt = if lines.len() > 47 {
-        lines[6..47].join("\n")
+fn verify_npm_test_passes(test_path: &Path, project_root: &Path) -> Result<String, String> {
+    let frontend = project_root.join("frontend");
+    let rel = test_path
+        .strip_prefix(&frontend)
+        .or_else(|_| test_path.strip_prefix(project_root))
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| test_path.to_string_lossy().into_owned());
+
+    let output = Command::new("npm")
+        .args(["test", "--", &rel])
+        .current_dir(&frontend)
+        .output()
+        .map_err(|err| format!("failed to run npm test in frontend: {err}"))?;
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.status.success() {
+        Ok(format!("npm test -- {rel}: passed\n{combined}"))
     } else {
-        content
-    };
-    format!(
-        "Golden integration-test pattern (copy this setup — do not use tempfile):\n```rust\n{excerpt}\n```"
-    )
+        Err(format!("npm test -- {rel} failed:\n{combined}"))
+    }
+}
+
+fn verify_test_passes(test_path: &Path, project_root: &Path) -> Result<String, String> {
+    match test_path.extension().and_then(|ext| ext.to_str()) {
+        Some("rs") => verify_cargo_test_passes(test_path),
+        Some("ts" | "tsx") => verify_npm_test_passes(test_path, project_root),
+        _ => Ok(String::new()),
+    }
 }
 
 fn extract_green_test_path(log: &str) -> Option<PathBuf> {
@@ -404,41 +424,62 @@ pub async fn handle_generate_tests_and_scaffolding(
                 })
                 .unwrap_or_else(|err| format!("(could not read source file: {err})"));
 
-            let exemplar = integration_test_exemplar();
-
-            let prompt = format!(
-                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n\
-                 Generate a `{test_type}` test for file: {source_file_path}\n\n\
-                 Write ONE test function first to a **new** file `tests/<name>_integration_test.rs` — never overwrite `tests/cache_manager_tests.rs`.\n\
-                 Workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). Job succeeds only when GREEN passes.\n\
-                 Use `mod common;` and helpers from `tests/common/mod.rs` — do not add new dev-dependencies.\n\
-                 Direct SQLite checks use `project_root.join(\".adjutant/cache.db\")` — never `cache.sqlite`.\n\
-                 Integration test crates cannot use `crate::` — import via `mcp_adjutant::...`.\n\n\
-                 {exemplar}\n\n\
-                 Source excerpt:\n```\n{source_excerpt}\n```"
+            let project_root = mcp_workspace_root();
+            let parts = builder_task_parts(
+                &source_path,
+                &test_type,
+                &source_file_path,
+                &project_root,
             );
+
+            let mut prompt = format!(
+                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n{}",
+                parts.workflow
+            );
+            if let Ok((_, conn)) = open_cache_connection(&project_root) {
+                if let Ok(Some(exemplar)) =
+                    load_best_desired_output_exemplar(&conn, "Phase_4_Builder")
+                {
+                    prompt.push_str("\n\n## 10/10 output exemplar (match this report shape)\n");
+                    prompt.push_str(&exemplar);
+                }
+            }
+            if !parts.exemplar.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&parts.exemplar);
+            }
+            prompt.push_str(&format!(
+                "\n\nSource excerpt:\n```\n{source_excerpt}\n```"
+            ));
 
             let original_task = prompt.clone();
             let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
 
-            let green_ok = result.accumulated_data.contains("[BUILDER GREEN OK]");
+            let green_marker = result.accumulated_data.contains(BUILDER_GREEN_MARKER);
             let builder_hard_stopped = result.iterations >= BUILDER_MAX_ITERATIONS
                 && result.accumulated_data.contains("iteration limit after");
 
-            let output = if result.is_finished && green_ok && !builder_hard_stopped {
-                let test_path = extract_green_test_path(&result.accumulated_data)
-                    .ok_or_else(|| "builder finished GREEN but no test path found in log".to_string())?;
-                let cargo_summary = verify_cargo_test_passes(&test_path)?;
-                format!(
-                    "Builder finished successfully for {source_file_path} ({test_type}). {cargo_summary}\n{}",
-                    result.accumulated_data
-                )
+            let (green_ok, verify_summary) = if result.is_finished
+                && green_marker
+                && !builder_hard_stopped
+            {
+                let test_path = extract_green_test_path(&result.accumulated_data).ok_or_else(|| {
+                    "builder finished GREEN but no test path found in log".to_string()
+                })?;
+                let summary = verify_test_passes(&test_path, &project_root)?;
+                (true, summary)
             } else {
-                format!(
-                    "Builder report (finished={}, iterations={}):\n{}\n{}",
-                    result.is_finished, result.iterations, result.input_prompt, result.accumulated_data
-                )
+                (false, String::new())
             };
+
+            let output = format_builder_report(&BuilderReportInput {
+                accumulated_data: &result.accumulated_data,
+                project_root: &project_root,
+                source_file_path: &source_file_path,
+                test_type: &test_type,
+                green_ok,
+                verify_summary: (!verify_summary.is_empty()).then_some(verify_summary.as_str()),
+            });
             Ok(
                 finish_agent_job_with_eval(
                     &config,
