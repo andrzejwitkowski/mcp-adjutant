@@ -1,5 +1,6 @@
 mod babysitter;
 mod builder;
+mod builder_prompt;
 mod evaluator;
 pub mod git_janitor;
 mod log_analyzer;
@@ -25,6 +26,9 @@ pub use builder::{
     builder_tool_set, default_builder_agent, BuilderAgent, DefaultBuilderAgent,
     BUILDER_SYSTEM_PROMPT,
 };
+pub use builder_prompt::{
+    builder_task_parts, source_file_from_builder_prompt, validate_test_path_for_source,
+};
 pub use evaluator::{
     format_eval_job_appendix, AgentEvalSummary, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
 };
@@ -45,7 +49,10 @@ pub use planner::{
     PLANNER_EMIT_SYSTEM_PROMPT, PLANNER_MAX_ITERATIONS, PLANNER_SCOUT_MAX_ITERATIONS,
     PLANNER_SCOUT_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
 };
-pub use report::{format_triage_success, triage_passed, TRIAGE_PASS_MARKER};
+pub use report::{
+    format_builder_report, format_triage_success, triage_passed, BuilderReportInput,
+    BUILDER_GREEN_MARKER, TRIAGE_PASS_MARKER,
+};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
     ScoutToolCall, SCOUT_SYSTEM_PROMPT,

@@ -161,7 +161,7 @@ pub use tools::{
 
 pub const BABYSITTER_SYSTEM_PROMPT: &str = r#"You are the BabysitterAgent (PHASE_BABYSITTER), a high-level orchestrator inside mcp-adjutant. Drive the assigned GitHub PR to mergeable state (green CI, resolved actionable reviews).
 
-Every turn: reply with a short Thought, then call exactly ONE tool.
+Every turn: call exactly ONE tool. Do not output any text — only tool calls.
 
 Orchestration rules:
 1. Start with github_get_pr_state.
@@ -366,9 +366,9 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> AutonomousAgent for BabysitterA
         let tool_call = match model_turn.tool_calls.first() {
             Some(call) => call,
             None => {
-                let thought = model_turn.content.unwrap_or_default();
+                let content = model_turn.content.unwrap_or_default();
                 context.accumulated_data.push_str(&format!(
-                    "Thought:\n{thought}\nObservation:\n(model did not call a tool — call exactly one tool)\n"
+                    "[no tool call] {content}\n[harness] You must call exactly one tool. Do not output text.\n"
                 ));
                 return Ok(());
             }
@@ -384,7 +384,6 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> AutonomousAgent for BabysitterA
         }
         context.last_tool_call = Some(call_key);
 
-        let thought = model_turn.content.unwrap_or_default();
         let observation = self
             .dispatch_tool(&tool_call.name, &tool_call.arguments, context)
             .await?;
@@ -395,7 +394,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> AutonomousAgent for BabysitterA
         }
 
         context.accumulated_data.push_str(&format!(
-            "Thought:\n{thought}\nTool: {}({})\nObservation:\n{observation}\n",
+            "[tool] {}({})\n[result]\n{observation}\n",
             tool_call.name, tool_call.arguments
         ));
         Ok(())
