@@ -12,10 +12,26 @@ export type AgentPhase =
   | 'planner'
   | 'planner_emit'
 
+/** Resolved transport + model (API clients / display). */
 export interface PhaseProfile {
   provider: Provider
   api_key: string | null
   base_url: string
+  model_name: string
+  max_tokens: number
+  temperature: number
+}
+
+export interface ProviderProfile {
+  id: string
+  name: string
+  provider: Provider
+  api_key: string | null
+  base_url: string
+}
+
+export interface PhaseBinding {
+  profile_id: string
   model_name: string
   max_tokens: number
   temperature: number
@@ -30,7 +46,9 @@ export interface WebFetcherProfile {
 }
 
 export interface AdjutantConfig {
-  phases: Partial<Record<AgentPhase, PhaseProfile>>
+  profiles: Record<string, ProviderProfile>
+  default_profile_id: string | null
+  phases: Partial<Record<AgentPhase, PhaseBinding>>
   server_port: number
   storage_path: string
   triage_overrides?: Record<string, string> | null

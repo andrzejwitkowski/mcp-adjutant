@@ -69,8 +69,14 @@ async fn put_config(
         serde_json::from_value(value).map_err(AdjutantConfigError::from)?;
 
     let mut config = state.config.write().await;
-    for (phase, profile) in incoming.phases {
-        config.phases.insert(phase, profile);
+    for (phase, binding) in incoming.phases {
+        config.phases.insert(phase, binding);
+    }
+    if !incoming.profiles.is_empty() {
+        config.profiles = incoming.profiles;
+    }
+    if incoming.default_profile_id.is_some() {
+        config.default_profile_id = incoming.default_profile_id;
     }
     config.server_port = incoming.server_port;
     config.storage_path = incoming.storage_path;

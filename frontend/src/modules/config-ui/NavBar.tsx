@@ -1,29 +1,9 @@
 import type { ReactNode } from 'react'
-
-const LINKS = [
-  { hash: '#/', label: 'Configuration' },
-  { hash: '#/evaluations', label: 'Evaluations' },
-  { hash: '#/cache', label: 'Scout cache' },
-  { hash: '#/usage', label: 'Usage' },
-  { hash: '#/web-cache', label: 'Web cache' },
-] as const
+import { AppShell } from './AppShell'
 
 export function NavBar() {
-  const current = location.hash || '#/'
-
-  return (
-    <nav className="config-nav" aria-label="Config UI">
-      {LINKS.map(({ hash, label }) => (
-        <a
-          key={hash}
-          href={hash}
-          className={current === hash ? 'is-active' : undefined}
-        >
-          {label}
-        </a>
-      ))}
-    </nav>
-  )
+  // ponytail: kept for exports; AppShell owns navigation now
+  return null
 }
 
 export function PageShell({
@@ -38,18 +18,19 @@ export function PageShell({
   actions?: ReactNode
 }) {
   return (
-    <main className="config-app">
-      <NavBar />
-      <header className="config-app__header">
-        <div className="config-app__header-row">
-          <div>
-            <h1>{title}</h1>
-            {subtitle && <p>{subtitle}</p>}
-          </div>
-          {actions}
+    <AppShell>
+      <header className="config-topbar">
+        <div>
+          <span className="config-topbar__brand">mcp-adjutant</span>
+          <span className="config-topbar__sep">/</span>
+          <span className="config-topbar__page">{title}</span>
         </div>
+        {actions}
       </header>
-      {children}
-    </main>
+      <div className="config-canvas">
+        {subtitle && <p className="config-canvas__subtitle">{subtitle}</p>}
+        {children}
+      </div>
+    </AppShell>
   )
 }
