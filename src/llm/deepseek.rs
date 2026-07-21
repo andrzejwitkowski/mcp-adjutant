@@ -31,7 +31,7 @@ struct ChatRequest<'a> {
     max_tokens: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ChatMessage<'a> {
     role: &'a str,
     content: &'a str,
@@ -84,45 +84,31 @@ impl LlmClient for DeepSeekClient {
             "{}/chat/completions",
             self.profile.base_url.trim_end_matches('/')
         );
-        let body = ChatRequest {
-            model: &self.profile.model_name,
-            messages: vec![
-                ChatMessage {
-                    role: "system",
-                    content: request.system_prompt,
-                },
-                ChatMessage {
-                    role: "user",
-                    content: request.user_message,
-                },
-            ],
-            tools: request.tools.to_openai_json(),
-            tool_choice: if request.tools.is_empty() {
-                "auto"
-            } else {
-                "required"
+        let messages = vec![
+            ChatMessage {
+                role: "system",
+                content: request.system_prompt,
             },
-            temperature: self.profile.temperature,
-            max_tokens: self.profile.max_tokens,
-        };
+            ChatMessage {
+                role: "user",
+                content: request.user_message,
+            },
+        ];
+        let tools_json = request.tools.to_openai_json();
+        let has_tools = !request.tools.is_empty();
 
-        let agent = ureq::AgentBuilder::new().build();
-        let mut http = agent.post(&url).set("Content-Type", "application/json");
-
-        if let Some(api_key) = &self.profile.api_key {
-            http = http.set("Authorization", &format!("Bearer {api_key}"));
-        }
+        // Always prefer "required" — forces the model to emit a tool call.
+        // Some endpoints (Alibaba Qwen thinking mode) reject it with 400;
+        // in that case retry once with "auto".
+        let tool_choice = if has_tools { "required" } else { "auto" };
 
         let label = self.request_label();
-        let response = match http.send_json(body) {
+        let response = match self.send_request(&url, &messages, &tools_json, tool_choice, &label) {
             Ok(response) => response,
-            Err(ureq::Error::Status(code, response)) => {
-                let detail = response.into_string().unwrap_or_default();
-                return Err(format!(
-                    "LLM request failed ({label}): status {code}: {detail}"
-                ));
+            Err(err) if has_tools && err.contains("tool_choice") => {
+                self.send_request(&url, &messages, &tools_json, "auto", &label)?
             }
-            Err(err) => return Err(format!("LLM request failed ({label}): {err}")),
+            Err(err) => return Err(err),
         };
 
         let body: ChatResponse = response
@@ -155,6 +141,44 @@ impl LlmClient for DeepSeekClient {
             tool_calls,
             usage: body.usage.map(map_chat_usage),
         })
+    }
+}
+
+impl DeepSeekClient {
+    fn send_request(
+        &self,
+        url: &str,
+        messages: &[ChatMessage<'_>],
+        tools: &Value,
+        tool_choice: &'static str,
+        label: &str,
+    ) -> Result<ureq::Response, String> {
+        let body = ChatRequest {
+            model: &self.profile.model_name,
+            messages: messages.to_vec(),
+            tools: tools.clone(),
+            tool_choice,
+            temperature: self.profile.temperature,
+            max_tokens: self.profile.max_tokens,
+        };
+
+        let agent = ureq::AgentBuilder::new().build();
+        let mut http = agent.post(url).set("Content-Type", "application/json");
+
+        if let Some(api_key) = &self.profile.api_key {
+            http = http.set("Authorization", &format!("Bearer {api_key}"));
+        }
+
+        match http.send_json(body) {
+            Ok(response) => Ok(response),
+            Err(ureq::Error::Status(code, response)) => {
+                let detail = response.into_string().unwrap_or_default();
+                Err(format!(
+                    "LLM request failed ({label}): status {code}: {detail}"
+                ))
+            }
+            Err(err) => Err(format!("LLM request failed ({label}): {err}")),
+        }
     }
 }
 
