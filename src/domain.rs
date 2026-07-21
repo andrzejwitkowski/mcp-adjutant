@@ -20,6 +20,7 @@ pub enum AgentPhase {
     WebFetcher,
     Planner,
     PlannerEmit,
+    GitJanitor,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,6 +171,10 @@ impl Default for AdjutantConfig {
                 AgentPhase::PlannerEmit,
                 phase_binding("deepseek-coder", 8_192, 0.1),
             ),
+            (
+                AgentPhase::GitJanitor,
+                phase_binding("deepseek-chat", 4_096, 0.2),
+            ),
         ]
         .into_iter()
         .collect();
@@ -315,6 +320,7 @@ mod tests {
             (AgentPhase::WebFetcher, "deepseek-chat", 2_048, 0.2),
             (AgentPhase::Planner, "deepseek-chat", 4_096, 0.3),
             (AgentPhase::PlannerEmit, "deepseek-coder", 8_192, 0.1),
+            (AgentPhase::GitJanitor, "deepseek-chat", 4_096, 0.2),
         ];
         for (phase, model_name, max_tokens, temperature) in expected_models {
             let profile = config.get_profile(&phase);

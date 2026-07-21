@@ -19,6 +19,7 @@ const KNOWN_PHASES: &[&str] = &[
     "web_fetcher",
     "planner",
     "planner_emit",
+    "git_janitor",
 ];
 
 pub fn load_from_file(path: &Path) -> Result<AdjutantConfig, AdjutantConfigError> {
@@ -252,6 +253,41 @@ mod tests {
             phases.get("planner").and_then(|v| v.get("model_name")),
             Some(&json!("scout-model"))
         );
+    }
+
+    #[test]
+    fn migrate_config_value_keeps_git_janitor_phase() {
+        let mut value = json!({
+            "phases": {
+                "git_janitor": {
+                    "provider": "open_router",
+                    "api_key": "sk-test-janitor",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "model_name": "qwen/qwen3.6-35b-a3b",
+                    "max_tokens": 4096,
+                    "temperature": 0.2
+                },
+                "unknown_phase": { "model_name": "drop-me" }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(phases.contains_key("git_janitor"));
+        assert!(phases
+            .get("git_janitor")
+            .and_then(|v| v.get("profile_id"))
+            .is_some());
+        assert_eq!(
+            phases
+                .get("git_janitor")
+                .and_then(|v| v.get("model_name")),
+            Some(&json!("qwen/qwen3.6-35b-a3b"))
+        );
+        assert!(!phases.contains_key("unknown_phase"));
+        let profiles = value.get("profiles").unwrap().as_object().unwrap();
+        assert!(profiles
+            .values()
+            .any(|p| p.get("api_key") == Some(&json!("sk-test-janitor"))));
     }
 
     #[test]

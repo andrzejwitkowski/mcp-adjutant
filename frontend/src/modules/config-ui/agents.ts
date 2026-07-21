@@ -66,4 +66,10 @@ export const AGENT_PHASES: {
     hint: 'Blueprint JSON synthesis',
     icon: 'edit_note',
   },
+  {
+    phase: 'git_janitor',
+    title: 'Git Janitor',
+    hint: 'Commit/PR copy + branch gate',
+    icon: 'commit',
+  },
 ]

@@ -17,7 +17,9 @@ pub use build_discovery::{
 pub use cmd::{
     read_file_range, run_fd, run_ripgrep, run_ripgrep_files, run_ripgrep_matching_files,
 };
-pub use compiler::{edit_file_line, edit_file_range, run_build_command, truncate_build_log};
+pub use compiler::{
+    edit_file_line, edit_file_range, run_build_command, truncate_build_log, BuildResult,
+};
 pub use crash_log::{
     analyze_crash_log, build_summary, parser_confident, read_log_file, strip_file_url, to_report,
     truncate_for_llm, truncate_log_text, CrashAnalysisCore, LogAnalysisReport,

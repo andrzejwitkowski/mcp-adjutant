@@ -115,6 +115,12 @@ pub fn failed_run_ids(checks: &[PrCheck]) -> Vec<u64> {
 }
 
 fn check_is_blocking(check: &PrCheck) -> bool {
+    // CodeRabbit is a status/check context that can remain "pending" for a while.
+    // Babysitter should not wait for it to finalize mergeability; we can still
+    // resolve actionable review comments once they exist.
+    if check.name.eq_ignore_ascii_case("CodeRabbit") {
+        return false;
+    }
     if check_is_failed(check) {
         return true;
     }
@@ -362,6 +368,19 @@ mod tests {
         ];
         let blocking = ci_checks_blocking(&checks);
         assert_eq!(blocking, vec!["rust".to_string(), "lint".to_string()]);
+    }
+
+    #[test]
+    fn ci_checks_blocking_ignores_coderabbit_pending() {
+        let checks = vec![PrCheck {
+            name: "CodeRabbit".into(),
+            bucket: "pending".into(),
+            state: "IN_PROGRESS".into(),
+            workflow: None,
+            link: None,
+        }];
+        let blocking = ci_checks_blocking(&checks);
+        assert!(blocking.is_empty());
     }
 
     #[test]

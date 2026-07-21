@@ -16,7 +16,8 @@ You will receive:
 Return ONE valid JSON object (no markdown fence) with this shape:
 {
   "score": [rating from 1 to 10],
-  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]"
+  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]",
+  "desired_output": "[Full exemplar rewrite of what the agent should have produced to earn 10/10 — same modality/format as THEIR OUTPUT (scout report, builder result, triage log, etc.). Not a checklist. If score is 10, set this to an empty string \"\".]"
 }
 
 Scoring guide:
@@ -25,6 +26,8 @@ Scoring guide:
 - 1–4: Meta / status paraphrase with no supporting artifact.
 
 If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
+
+When score < 10, desired_output MUST be a complete exemplar that would earn 10/10 for ORIGINAL TASK (file:line evidence, commands, logs — match the agent rubric). When score is 10, desired_output MUST be "".
 
 Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
@@ -71,15 +74,43 @@ Evidenced FAIL scores 5-7, not 1-4."#;
 const BABYSITTER_RUBRIC: &str = r#"
 
 BABYSITTER RUBRIC (override generic rubric):
-- 9-10: CI green with named checks; review paths handled or explicitly skipped; finalize completed or clear mergeable state
-- 5-7: Blocked finalize with refuse reason plus PR/check evidence (check names, review paths, gh state)
-- 1-4: Meta status with no check names, review paths, or refuse reason detail
+- 10: Valid JSON with action, pr_number, checks (every PR check name), reviews.paths_seen/handled/skipped_paths, gh_state, report_posted, iterations
+- 9: Same fields; minor omission only
+- 5-7: Blocked with refuse_reason plus named checks and review paths
+- 1-4: Meta status, prose-only, or JSON missing check names / review paths / gh_state
 Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review state, not cargo/npm logs."#;
+
+const GIT_JANITOR_RUBRIC: &str = r#"
+
+GIT JANITOR RUBRIC — prepare_git_copy (override generic rubric):
+- 9-10: Valid JSON with commit_message, pr_title, pr_body, changelog_entry, branch_status, action_required, commit_allowed, suggested_branch_name, current_branch; commit_allowed false when on default/mismatched branch
+- 5-7: Missing branch gate fields or invents ticket not in scout context
+- 1-4: Not JSON / claims commit_allowed true on main/master
+Do NOT require create_git_branch-only fields (branch/status/previous) as the primary contract.
+"#;
+
+const GIT_JANITOR_CREATE_BRANCH_RUBRIC: &str = r#"
+
+GIT JANITOR RUBRIC — create_git_branch (override generic rubric):
+- 9-10: Valid JSON with branch (new name), status (e.g. created), previous (prior branch); matches the create/checkout task; no fabricated commit_message/pr_title/pr_body
+- 5-7: JSON present but missing previous or unclear status
+- 1-4: Not JSON, empty branch, or invents prepare_git_copy fields (commit_message/pr_*) as if required
+Do NOT apply the prepare_git_copy 9-field checklist — create_git_branch only creates/checks out a branch.
+"#;
+
+#[derive(Debug, Clone)]
+pub struct AgentEvalSummary {
+    pub score: i32,
+    pub critique: String,
+    pub desired_output: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct EvaluationPayload {
     score: i32,
     critique: String,
+    #[serde(default)]
+    desired_output: String,
 }
 
 pub struct EvaluatorAgent<C: LlmClient> {
@@ -113,10 +144,47 @@ impl<C: LlmClient> EvaluatorAgent<C> {
             "AGENT: {canonical}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
             self.original_task, self.received_output
         );
-        if let Some(rubric) = agent_evaluation_rubric(&canonical) {
+        if let Some(rubric) =
+            agent_evaluation_rubric(&canonical, &self.original_task, &self.received_output)
+        {
             message.push_str(rubric);
         }
         message
+    }
+
+    pub async fn evaluate_once(&self) -> Result<AgentEvalSummary, String> {
+        let user_message = self.build_user_message();
+        let empty_tools = LlmToolSet::new();
+        let request = LlmRequest::new(EVALUATOR_SYSTEM_PROMPT, &user_message, &empty_tools);
+        let model_turn = self.client.complete(request)?;
+        let raw_response = model_turn
+            .content
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| "evaluator model response missing content".to_string())?;
+
+        let mut evaluation = Self::parse_evaluation_response(&raw_response)?;
+        if !(1..=10).contains(&evaluation.score) {
+            return Err(format!(
+                "evaluator score must be between 1 and 10, got {}",
+                evaluation.score
+            ));
+        }
+        normalize_desired_output(&mut evaluation)?;
+
+        let mut cache = self
+            .cache_manager
+            .lock()
+            .map_err(|_| "cache manager lock poisoned".to_string())?;
+        cache.store_evaluation(
+            &self.target_agent,
+            &self.original_task,
+            &self.received_output,
+            evaluation.score,
+            &evaluation.critique,
+            &evaluation.desired_output,
+        )?;
+
+        Ok(payload_to_summary(&evaluation))
     }
 
     fn parse_evaluation_response(raw: &str) -> Result<EvaluationPayload, String> {
@@ -135,15 +203,98 @@ impl<C: LlmClient> EvaluatorAgent<C> {
     }
 }
 
-fn agent_evaluation_rubric(target_agent: &str) -> Option<&'static str> {
+/// Score 10 → force empty desired_output; score &lt; 10 → require non-blank exemplar.
+fn normalize_desired_output(evaluation: &mut EvaluationPayload) -> Result<(), String> {
+    if evaluation.score == 10 {
+        evaluation.desired_output.clear();
+        return Ok(());
+    }
+    let trimmed = evaluation.desired_output.trim();
+    if trimmed.is_empty() {
+        return Err(
+            "evaluator desired_output must be a non-empty 10/10 exemplar when score < 10"
+                .to_string(),
+        );
+    }
+    if trimmed.len() != evaluation.desired_output.len() {
+        evaluation.desired_output = trimmed.to_string();
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn format_evaluation_result(evaluation: &EvaluationPayload) -> String {
+    let mut out = format!(
+        "Evaluation saved. QA score: {}/10\nCritique: {}",
+        evaluation.score, evaluation.critique
+    );
+    if !evaluation.desired_output.is_empty() {
+        out.push_str("\nDesired output (10/10 exemplar):\n");
+        out.push_str(&evaluation.desired_output);
+    }
+    out
+}
+
+pub fn format_eval_job_appendix(summary: &AgentEvalSummary) -> String {
+    let mut out = format!(
+        "\n\nEvaluation: QA score {}/10\nCritique: {}",
+        summary.score, summary.critique
+    );
+    if !summary.desired_output.is_empty() {
+        out.push_str("\nDesired output (10/10 exemplar):\n");
+        out.push_str(&summary.desired_output);
+    }
+    out
+}
+
+fn payload_to_summary(evaluation: &EvaluationPayload) -> AgentEvalSummary {
+    AgentEvalSummary {
+        score: evaluation.score,
+        critique: evaluation.critique.clone(),
+        desired_output: evaluation.desired_output.clone(),
+    }
+}
+
+fn agent_evaluation_rubric(
+    target_agent: &str,
+    original_task: &str,
+    received_output: &str,
+) -> Option<&'static str> {
     match target_agent {
         "PlannerAgent" => Some(PLANNER_RUBRIC),
         "Phase_1_Scout" => Some(SCOUT_RUBRIC),
         "Phase_5_Triage" => Some(TRIAGE_RUBRIC),
         "BabysitterAgent" => Some(BABYSITTER_RUBRIC),
+        "GitJanitorAgent" => Some(git_janitor_rubric_for(original_task, received_output)),
         name if name.starts_with("Phase_4_Builder") => Some(BUILDER_RUBRIC),
         _ => None,
     }
+}
+
+fn git_janitor_rubric_for(original_task: &str, received_output: &str) -> &'static str {
+    if is_git_janitor_create_branch_eval(original_task, received_output) {
+        GIT_JANITOR_CREATE_BRANCH_RUBRIC
+    } else {
+        GIT_JANITOR_RUBRIC
+    }
+}
+
+/// True when evaluating create_git_branch (task name or branch/status JSON without prepare fields).
+fn is_git_janitor_create_branch_eval(original_task: &str, received_output: &str) -> bool {
+    if original_task
+        .to_ascii_lowercase()
+        .contains("create_git_branch")
+    {
+        return true;
+    }
+    let body = extract_json_object(received_output.trim()).unwrap_or(received_output.trim());
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    obj.contains_key("branch") && obj.contains_key("status") && !obj.contains_key("commit_message")
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -167,42 +318,21 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
     }
 
     async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
-        // ponytail: one-shot judge — no tool loop, just ask and parse JSON
-        let user_message = self.build_user_message();
-        let empty_tools = LlmToolSet::new();
-        let request = LlmRequest::new(EVALUATOR_SYSTEM_PROMPT, &user_message, &empty_tools);
-        let model_turn = self.client.complete(request)?;
-
-        let raw_response = model_turn
-            .content
-            .filter(|text| !text.trim().is_empty())
-            .ok_or_else(|| "evaluator model response missing content".to_string())?;
-
-        let evaluation = Self::parse_evaluation_response(&raw_response)?;
-
-        if !(1..=10).contains(&evaluation.score) {
-            return Err(format!(
-                "evaluator score must be between 1 and 10, got {}",
-                evaluation.score
-            ));
-        }
-
-        let mut cache = self
-            .cache_manager
-            .lock()
-            .map_err(|_| "cache manager lock poisoned".to_string())?;
-
-        cache.store_evaluation(
-            &self.target_agent,
-            &self.original_task,
-            &self.received_output,
-            evaluation.score,
-            &evaluation.critique,
-        )?;
-
-        context.accumulated_data = format!("Evaluation saved. QA score: {}/10", evaluation.score);
+        let summary = self.evaluate_once().await?;
+        context.accumulated_data = format!(
+            "Evaluation saved. QA score: {}/10\nCritique: {}{}",
+            summary.score,
+            summary.critique,
+            if summary.desired_output.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\nDesired output (10/10 exemplar):\n{}",
+                    summary.desired_output
+                )
+            }
+        );
         context.is_finished = true;
-
         Ok(())
     }
 
@@ -214,12 +344,14 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_evaluation_rubric, extract_json_object, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+        agent_evaluation_rubric, extract_json_object, format_evaluation_result,
+        git_janitor_rubric_for, is_git_janitor_create_branch_eval, normalize_desired_output,
+        EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
     fn planner_rubric_appended_for_planner_agent() {
-        let rubric = agent_evaluation_rubric("PlannerAgent").expect("rubric");
+        let rubric = agent_evaluation_rubric("PlannerAgent", "", "").expect("rubric");
         assert!(rubric.contains("PLANNER RUBRIC"));
         assert!(rubric.contains("ellipsis"));
         assert!(rubric.contains("generate_tests"));
@@ -227,17 +359,65 @@ mod tests {
 
     #[test]
     fn agent_rubrics_route_by_canonical_name_only() {
-        assert!(agent_evaluation_rubric("Phase_4_Builder").is_some());
-        assert!(agent_evaluation_rubric("Phase_4_Builder_GREEN").is_some());
-        assert!(agent_evaluation_rubric("StringBuilder").is_none());
-        let builder = agent_evaluation_rubric("Phase_4_Builder").expect("builder");
+        assert!(agent_evaluation_rubric("Phase_4_Builder", "", "").is_some());
+        assert!(agent_evaluation_rubric("Phase_4_Builder_GREEN", "", "").is_some());
+        assert!(agent_evaluation_rubric("StringBuilder", "", "").is_none());
+        let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
         assert!(builder.contains("Evidenced FAIL"));
-        let scout = agent_evaluation_rubric("Phase_1_Scout").expect("scout");
+        let scout = agent_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
         assert!(scout.contains("5-7: Partial answer"));
-        let triage = agent_evaluation_rubric("Phase_5_Triage").expect("triage");
+        let triage = agent_evaluation_rubric("Phase_5_Triage", "", "").expect("triage");
         assert!(triage.contains("Evidenced FAIL"));
-        let baby = agent_evaluation_rubric("BabysitterAgent").expect("babysitter");
+        let baby = agent_evaluation_rubric("BabysitterAgent", "", "").expect("babysitter");
         assert!(baby.contains("BABYSITTER RUBRIC"));
+        assert!(baby.contains("Valid JSON"));
+        // default GitJanitor (no task/output) → prepare rubric
+        let janitor = agent_evaluation_rubric("GitJanitorAgent", "", "").expect("janitor");
+        assert!(janitor.contains("prepare_git_copy"));
+        assert!(janitor.contains("commit_message"));
+    }
+
+    #[test]
+    fn git_janitor_create_branch_rubric_from_task_name() {
+        assert!(is_git_janitor_create_branch_eval(
+            "create_git_branch feat/GIT-1-git-janitor",
+            r#"{"branch":"feat/GIT-1-git-janitor","status":"created","previous":"main"}"#
+        ));
+        let rubric =
+            git_janitor_rubric_for("Create and checkout feat/X via create_git_branch", "{}");
+        assert!(rubric.contains("create_git_branch"));
+        assert!(rubric.contains("previous"));
+        assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
+    }
+
+    #[test]
+    fn git_janitor_create_branch_rubric_from_output_shape() {
+        let out = r#"{"branch":"feat/GIT-1-git-janitor","status":"created","previous":"cursor/evaluator-desired-output-exemplar"}"#;
+        assert!(is_git_janitor_create_branch_eval(
+            "Create and checkout feat/GIT-1-git-janitor from current HEAD",
+            out
+        ));
+        // even without create_git_branch in task, branch/status JSON routes correctly
+        assert!(is_git_janitor_create_branch_eval(
+            "checkout new feature branch",
+            out
+        ));
+        let rubric = agent_evaluation_rubric("GitJanitorAgent", "checkout new feature branch", out)
+            .expect("rubric");
+        assert!(rubric.contains("create_git_branch"));
+        assert!(rubric.contains("Do NOT apply the prepare_git_copy"));
+    }
+
+    #[test]
+    fn git_janitor_prepare_rubric_when_emit_json() {
+        let out = r#"{"commit_message":"feat: x","pr_title":"feat: x","pr_body":"b","changelog_entry":"c","branch_status":"ok","action_required":"none","commit_allowed":true,"suggested_branch_name":"feat/x","current_branch":"feat/x"}"#;
+        assert!(!is_git_janitor_create_branch_eval(
+            "prepare_git_copy for feature",
+            out
+        ));
+        let rubric = git_janitor_rubric_for("prepare_git_copy for feature", out);
+        assert!(rubric.contains("prepare_git_copy"));
+        assert!(rubric.contains("commit_allowed"));
     }
 
     #[test]
@@ -245,6 +425,8 @@ mod tests {
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("query_job_status.result"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("score ≤3"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("verifiable evidence"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("desired_output"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("When score is 10, desired_output MUST be \"\""));
     }
 
     #[test]
@@ -257,13 +439,80 @@ mod tests {
     }
 
     #[test]
+    fn parse_evaluation_response_accepts_desired_output() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 6, "critique": "thin", "desired_output": "full exemplar with file:line"}"#,
+            )
+            .expect("parse with desired_output");
+        normalize_desired_output(&mut payload).expect("normalize");
+
+        assert_eq!(payload.score, 6);
+        assert_eq!(payload.critique, "thin");
+        assert_eq!(payload.desired_output, "full exemplar with file:line");
+    }
+
+    #[test]
+    fn parse_evaluation_response_score_10_clears_desired_output() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 10, "critique": "perfect", "desired_output": "should be cleared"}"#,
+            )
+            .expect("parse score 10");
+        normalize_desired_output(&mut payload).expect("normalize");
+
+        assert_eq!(payload.score, 10);
+        assert!(payload.desired_output.is_empty());
+    }
+
+    #[test]
+    fn parse_evaluation_response_rejects_empty_desired_when_score_below_10() {
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                r#"{"score": 5, "critique": "weak", "desired_output": "   "}"#,
+            )
+            .expect("parse");
+        let err =
+            normalize_desired_output(&mut payload).expect_err("empty desired_output must fail");
+
+        assert!(err.contains("desired_output"));
+    }
+
+    #[test]
     fn parse_evaluation_response_accepts_wrapped_prose() {
-        let payload = EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
-            "Thought: done.\n{\"score\": 8, \"critique\": \"solid\"}\n",
-        )
-        .expect("parse wrapped json");
+        let mut payload =
+            EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
+                "Thought: done.\n{\"score\": 8, \"critique\": \"solid\", \"desired_output\": \"exemplar\"}\n",
+            )
+            .expect("parse wrapped json");
+        normalize_desired_output(&mut payload).expect("normalize");
 
         assert_eq!(payload.score, 8);
         assert_eq!(payload.critique, "solid");
+        assert_eq!(payload.desired_output, "exemplar");
+    }
+
+    #[test]
+    fn normalize_desired_output_trims_whitespace() {
+        let mut payload = EvaluationPayload {
+            score: 4,
+            critique: "x".into(),
+            desired_output: "  exemplar  ".into(),
+        };
+        normalize_desired_output(&mut payload).expect("ok");
+        assert_eq!(payload.desired_output, "exemplar");
+    }
+
+    #[test]
+    fn format_evaluation_result_omits_desired_when_empty() {
+        let payload = EvaluationPayload {
+            score: 10,
+            critique: "perfect".into(),
+            desired_output: String::new(),
+        };
+        let text = format_evaluation_result(&payload);
+        assert!(text.contains("QA score: 10/10"));
+        assert!(text.contains("Critique: perfect"));
+        assert!(!text.contains("Desired output"));
     }
 }

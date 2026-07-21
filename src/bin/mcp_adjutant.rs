@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
+use mcp_adjutant::cache::resolve_config_cache_root;
 use mcp_adjutant::config_server::{
     load_or_default, resolve_config_path, run as run_config_server, static_root, ConfigServerState,
 };
@@ -34,10 +35,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session_id = metrics::new_session_id();
     metrics::init(session_id, Arc::clone(&metrics_store));
 
+    let cache_project_root = resolve_config_cache_root();
+    tracing::info!(
+        "config UI cache project root: {}",
+        cache_project_root.display()
+    );
+
     let config_state = ConfigServerState {
         config: Arc::clone(&shared),
         config_path,
         static_root: static_root(),
+        cache_project_root,
         metrics: metrics_store,
     };
 

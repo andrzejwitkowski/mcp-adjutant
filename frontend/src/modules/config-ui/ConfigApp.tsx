@@ -34,6 +34,7 @@ const PHASE_BINDING_OVERRIDES: Partial<Record<AgentPhase, Partial<PhaseBinding>>
   planner_emit: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.1 },
   transformer: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.1 },
   triage: { model_name: 'deepseek-coder', max_tokens: 4096, temperature: 0 },
+  git_janitor: { max_tokens: 4096, temperature: 0.2 },
 }
 
 const DEFAULT_WEB_FETCHER: WebFetcherProfile = {

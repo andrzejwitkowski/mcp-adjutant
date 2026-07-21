@@ -13,8 +13,8 @@ use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cache::{
-    list_evaluations_page, load_scout_cache_page, load_web_cache_page, mcp_workspace_root,
-    open_cache_connection, EvaluationsPage, ScoutCachePage, WebCachePage, EVALUATIONS_PAGE_SIZE,
+    list_evaluations_page, load_scout_cache_page, load_web_cache_page, open_cache_connection,
+    EvaluationsPage, ScoutCachePage, WebCachePage, EVALUATIONS_PAGE_SIZE,
 };
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
@@ -25,10 +25,12 @@ pub struct ConfigServerState {
     pub config: Arc<RwLock<AdjutantConfig>>,
     pub config_path: PathBuf,
     pub static_root: PathBuf,
+    pub cache_project_root: PathBuf,
     pub metrics: Arc<std::sync::Mutex<MetricsStore>>,
 }
 
 pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
+    let cache_project = state.cache_project_root.display().to_string();
     let index_file = state.static_root.join("index.html");
     let serve_dir = ServeDir::new(&state.static_root).not_found_service(ServeFile::new(index_file));
 
@@ -48,7 +50,7 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
         .await
         .map_err(|err| format!("config server bind failed on {addr}: {err}"))?;
 
-    tracing::debug!("config UI listening on http://{addr}");
+    tracing::info!("config UI listening on http://{addr} (cache project: {cache_project})");
     axum::serve(listener, app)
         .await
         .map_err(|err| format!("config server failed: {err}"))
@@ -98,17 +100,20 @@ async fn put_config(
     Ok(Json(config.clone()))
 }
 
-fn open_workspace_cache() -> Result<(std::path::PathBuf, rusqlite::Connection), String> {
-    open_cache_connection(&mcp_workspace_root())
+fn open_workspace_cache(
+    state: &ConfigServerState,
+) -> Result<(std::path::PathBuf, rusqlite::Connection), String> {
+    open_cache_connection(&state.cache_project_root)
 }
 
 async fn get_evaluations(
-    State(_state): State<ConfigServerState>,
+    State(state): State<ConfigServerState>,
     Query(query): Query<EvaluationsQuery>,
 ) -> Result<Json<EvaluationsPage>, CacheApiError> {
-    let (_, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
-    let page = list_evaluations_page(&conn, query.page, EVALUATIONS_PAGE_SIZE)
+    let (project_root, conn) = open_workspace_cache(&state).map_err(CacheApiError::from)?;
+    let mut page = list_evaluations_page(&conn, query.page, EVALUATIONS_PAGE_SIZE)
         .map_err(CacheApiError::from)?;
+    page.project_root = project_root.display().to_string();
     Ok(Json(page))
 }
 
@@ -123,10 +128,10 @@ fn default_evaluations_page() -> u32 {
 }
 
 async fn get_scout_cache(
-    State(_state): State<ConfigServerState>,
+    State(state): State<ConfigServerState>,
     Query(query): Query<CachePageQuery>,
 ) -> Result<Json<ScoutCachePage>, CacheApiError> {
-    let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
+    let (project_root, conn) = open_workspace_cache(&state).map_err(CacheApiError::from)?;
     let page = load_scout_cache_page(&conn, &project_root, query.page, EVALUATIONS_PAGE_SIZE)
         .map_err(CacheApiError::from)?;
     Ok(Json(page))
@@ -137,7 +142,7 @@ async fn get_web_cache(
     Query(query): Query<CachePageQuery>,
 ) -> Result<Json<WebCachePage>, CacheApiError> {
     let ttl_seconds = web_cache_ttl(&state).await;
-    let (project_root, conn) = open_workspace_cache().map_err(CacheApiError::from)?;
+    let (project_root, conn) = open_workspace_cache(&state).map_err(CacheApiError::from)?;
     let page = load_web_cache_page(
         &conn,
         &project_root,

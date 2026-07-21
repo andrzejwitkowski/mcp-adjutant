@@ -10,6 +10,16 @@
         "MCP_ADJUTANT_REQUIRE_LOG_ANALYZER": "true",
         "MCP_ADJUTANT_PROJECT_ROOT": "${workspaceFolder}"
       }
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp",
+        "--path",
+        "/Users/andrzej.witkowski/Projects/mcp-adjutant"
+      ]
     }
   }
 }

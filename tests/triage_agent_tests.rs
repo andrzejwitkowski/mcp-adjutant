@@ -9,6 +9,7 @@ use mcp_adjutant::agent::{
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::find_nearest_module_boundary;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::BuildResult;
 
 struct MockBuildRunner {
     calls: AtomicUsize,
@@ -27,12 +28,20 @@ impl MockBuildRunner {
 }
 
 impl BuildCommandRunner for MockBuildRunner {
-    fn run_build_command(&self, _dir: &Path, _command: &str) -> Result<String, String> {
+    fn run_build_command(&self, _dir: &Path, _command: &str) -> Result<BuildResult, String> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if call == 0 {
-            Err(self.broken_output.clone())
+            Ok(BuildResult {
+                exit_code: 101,
+                output: self.broken_output.clone(),
+                success: false,
+            })
         } else {
-            Ok(self.fixed_output.clone())
+            Ok(BuildResult {
+                exit_code: 0,
+                output: self.fixed_output.clone(),
+                success: true,
+            })
         }
     }
 }
@@ -158,7 +167,7 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
         result.input_prompt
     );
     assert!(
-        result.accumulated_data.contains("Build OK"),
+        result.accumulated_data.contains("Build output:"),
         "build evidence expected in accumulated_data"
     );
     assert!(
@@ -195,7 +204,7 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
         "fix should be verified on the same iteration"
     );
     assert!(triage_passed(&result));
-    assert!(result.accumulated_data.contains("Build OK"));
+    assert!(result.accumulated_data.contains("Build output:"));
 
     std::fs::remove_dir_all(&root).ok();
 }

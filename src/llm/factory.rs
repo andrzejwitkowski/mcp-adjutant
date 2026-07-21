@@ -110,6 +110,12 @@ pub fn create_planner_emit_llm_client(
     create_llm_client_for_phase(config, AgentPhase::PlannerEmit)
 }
 
+pub fn create_git_janitor_llm_client(
+    config: &AdjutantConfig,
+) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::GitJanitor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

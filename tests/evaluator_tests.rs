@@ -18,7 +18,7 @@ impl LlmClient for MockEvaluatorLlm {
 
         Ok(LlmModelTurn {
             content: Some(
-                r#"{"score": 6, "critique": "Too many comments in the code."}"#.to_string(),
+                "{\"score\": 6, \"critique\": \"Too many comments in the code.\", \"desired_output\": \"## scout report\\nsrc/sample.rs:10 invoke()\"}".to_string(),
             ),
             tool_calls: vec![],
             ..Default::default()
@@ -46,21 +46,31 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
         .expect("evaluator orchestrator run");
 
     assert!(result.is_finished);
-    assert_eq!(result.accumulated_data, "Evaluation saved. QA score: 6/10");
+    assert!(result.accumulated_data.contains("QA score: 6/10"));
+    assert!(result
+        .accumulated_data
+        .contains("Too many comments in the code."));
+    assert!(result
+        .accumulated_data
+        .contains("Desired output (10/10 exemplar):"));
+    assert!(result
+        .accumulated_data
+        .contains("src/sample.rs:10 invoke()"));
 
     let db_path = project_root.join(".adjutant/cache.db");
     let conn = Connection::open(&db_path).expect("open cache.db");
-    let (agent_name, score, feedback): (String, i32, String) = conn
+    let (agent_name, score, feedback, desired): (String, i32, String, String) = conn
         .query_row(
-            "SELECT agent_name, score, feedback_notes FROM agent_evaluations WHERE agent_name = ?1",
+            "SELECT agent_name, score, feedback_notes, desired_output FROM agent_evaluations WHERE agent_name = ?1",
             params!["Phase_1_Scout"],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("evaluation row");
 
     assert_eq!(agent_name, "Phase_1_Scout");
     assert_eq!(score, 6);
     assert_eq!(feedback, "Too many comments in the code.");
+    assert_eq!(desired, "## scout report\nsrc/sample.rs:10 invoke()");
 
     std::fs::remove_dir_all(&project_root).ok();
 }
