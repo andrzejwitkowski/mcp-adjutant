@@ -117,6 +117,12 @@ pub struct AdjutantConfig {
     pub triage_overrides: Option<HashMap<String, String>>,
     #[serde(default)]
     pub web_fetcher: Option<WebFetcherProfile>,
+    #[serde(default = "default_job_await_timeout_secs")]
+    pub job_await_timeout_secs: u64,
+}
+
+fn default_job_await_timeout_secs() -> u64 {
+    90
 }
 
 impl Default for AdjutantConfig {
@@ -193,6 +199,7 @@ impl Default for AdjutantConfig {
             storage_path: default_storage_path(),
             triage_overrides: None,
             web_fetcher: Some(WebFetcherProfile::default()),
+            job_await_timeout_secs: default_job_await_timeout_secs(),
         }
     }
 }
