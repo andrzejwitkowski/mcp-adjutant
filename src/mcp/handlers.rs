@@ -2,6 +2,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -120,6 +121,7 @@ async fn dispatch_async_job<F, Fut>(
     registry: &JobRegistry,
     request_uuid: String,
     tool_name: &str,
+    await_timeout_secs: u64,
     workspace_root: PathBuf,
     work: F,
 ) -> Result<String, String>
@@ -128,13 +130,27 @@ where
     Fut: Future<Output = Result<String, String>> + Send + 'static,
 {
     registry.register(&request_uuid, tool_name)?;
-    let registry = registry.clone();
+    let job_registry = registry.clone();
     let accepted_uuid = request_uuid.clone();
     let tool = tool_name.to_string();
-    tokio::spawn(async move {
-        run_tracked_job(registry, request_uuid, tool, Some(workspace_root), work).await;
+    let handle = tokio::spawn(async move {
+        run_tracked_job(job_registry, request_uuid, tool, Some(workspace_root), work).await;
     });
-    Ok(accepted_job_response(&accepted_uuid, tool_name))
+
+    let timeout = Duration::from_secs(await_timeout_secs);
+    match tokio::time::timeout(timeout, handle).await {
+        Ok(join_result) => {
+            if let Err(join_err) = join_result {
+                registry.fail(&accepted_uuid, format!("job task error: {join_err}"));
+            }
+            match registry.terminal_result(&accepted_uuid) {
+                Some(Ok(result)) => Ok(result),
+                Some(Err(error)) => Err(error),
+                None => Ok(accepted_job_response(&accepted_uuid, tool_name)),
+            }
+        }
+        Err(_) => Ok(accepted_job_response(&accepted_uuid, tool_name)),
+    }
 }
 
 pub async fn handle_query_job_status(
@@ -237,6 +253,7 @@ pub async fn handle_scout_context(
         registry,
         request_uuid,
         SCOUT_CONTEXT_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let cache_manager =
@@ -288,6 +305,7 @@ pub async fn handle_verify_and_triage(
         registry,
         request_uuid,
         VERIFY_AND_TRIAGE_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let target_paths: Vec<PathBuf> = target_path_raws
@@ -395,6 +413,7 @@ pub async fn handle_generate_tests_and_scaffolding(
         registry,
         request_uuid,
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let source_path = resolve_workspace_path(&source_file_path);
@@ -521,6 +540,7 @@ pub async fn handle_execute_global_refactor(
         registry,
         request_uuid,
         EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let scope_path = scope_path_raw.as_ref().map(resolve_workspace_path);
@@ -612,6 +632,7 @@ pub async fn handle_evaluate_agent_performance(
         registry,
         request_uuid,
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let cache_start = mcp_workspace_root();
@@ -668,6 +689,7 @@ pub async fn handle_web_fetch(
         registry,
         request_uuid,
         WEB_FETCH_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let web_profile = config.web_fetcher.clone().unwrap_or_default();
@@ -721,6 +743,7 @@ pub async fn handle_analyze_log(
         registry,
         request_uuid,
         ANALYZE_LOG_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let root = mcp_workspace_root();
@@ -762,6 +785,7 @@ pub async fn handle_babysit_pr(
         registry,
         request_uuid,
         BABYSIT_PR_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let pr_state = gh_pr_state(pr_number)?;
@@ -838,6 +862,7 @@ pub async fn handle_transpile_types(
         registry,
         request_uuid,
         TRANSPILE_TYPES_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let resolved_sources: Vec<PathBuf> = parsed
@@ -955,6 +980,7 @@ pub async fn handle_plan_blueprint(
         registry,
         request_uuid,
         PLAN_BLUEPRINT_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let coordinator = CoordinatorConstraints::from_args(&parsed);
@@ -1020,6 +1046,7 @@ pub async fn handle_prepare_git_copy(
         registry,
         request_uuid,
         PREPARE_GIT_COPY_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let root = mcp_workspace_root();
@@ -1092,6 +1119,7 @@ pub async fn handle_create_git_branch(
         registry,
         request_uuid,
         CREATE_GIT_BRANCH_TOOL_NAME,
+        config.job_await_timeout_secs,
         workspace_root,
         move || async move {
             let root = mcp_workspace_root();
@@ -1234,5 +1262,79 @@ mod boundary_validator_tests {
     fn boundary_falls_back_to_report_when_no_json() {
         let out = final_blueprint_or_report(&ctx("just prose, no json"), &constraints());
         assert!(out.contains("Planner report"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod dispatch_async_job_tests {
+    use super::*;
+    use crate::jobs::JobRegistry;
+
+    fn workspace() -> PathBuf {
+        std::env::temp_dir()
+    }
+
+    #[tokio::test]
+    async fn returns_result_inline_when_job_finishes_within_timeout() {
+        let registry = JobRegistry::new();
+        let out = dispatch_async_job(
+            &registry,
+            "job-inline".to_string(),
+            "scout_context",
+            30,
+            workspace(),
+            || async { Ok("the answer".to_string()) },
+        )
+        .await
+        .expect("dispatch");
+
+        assert_eq!(out, "the answer");
+        assert_eq!(
+            registry.query("job-inline").expect("query")["status"],
+            "completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn surfaces_job_error_inline() {
+        let registry = JobRegistry::new();
+        let err = dispatch_async_job(
+            &registry,
+            "job-err".to_string(),
+            "scout_context",
+            30,
+            workspace(),
+            || async { Err("agent blew up".to_string()) },
+        )
+        .await
+        .expect_err("dispatch should surface job error");
+
+        assert_eq!(err, "agent blew up");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_accepted_response_on_timeout() {
+        let registry = JobRegistry::new();
+        let out = dispatch_async_job(
+            &registry,
+            "job-slow".to_string(),
+            "scout_context",
+            0,
+            workspace(),
+            || async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok("late result".to_string())
+            },
+        )
+        .await
+        .expect("dispatch");
+
+        assert!(out.contains("\"status\": \"accepted\""), "{out}");
+        assert!(out.contains("job-slow"), "{out}");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(
+            registry.query("job-slow").expect("query")["status"],
+            "completed"
+        );
     }
 }

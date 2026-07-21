@@ -137,6 +137,17 @@ impl JobRegistry {
         });
     }
 
+    /// Terminal outcome once the job has finished. `None` while still queued/running.
+    pub fn terminal_result(&self, request_uuid: &str) -> Option<Result<String, String>> {
+        let jobs = self.inner.lock().expect("job registry lock");
+        let job = jobs.get(request_uuid)?;
+        match job.status {
+            JobStatus::Completed => Some(Ok(job.result.clone().unwrap_or_default())),
+            JobStatus::Failed => Some(Err(job.error.clone().unwrap_or_default())),
+            _ => None,
+        }
+    }
+
     pub fn query(&self, request_uuid: &str) -> Result<Value, String> {
         let jobs = self.inner.lock().expect("job registry lock");
         let Some(job) = jobs.get(request_uuid) else {
@@ -210,7 +221,7 @@ pub fn request_uuid_schema_property() -> Value {
     json!({
         "request_uuid": {
             "type": "string",
-            "description": "Caller-generated UUID for this request. The tool returns immediately; poll query_job_status with the same UUID until terminal=true."
+            "description": "Caller-generated UUID for this request. The tool awaits the job inline and returns the result directly. If the job exceeds the await timeout, it falls back to async mode and you poll query_job_status with this UUID until terminal=true."
         }
     })
 }
@@ -221,7 +232,7 @@ pub fn accepted_job_response(request_uuid: &str, tool_name: &str) -> String {
         "tool": tool_name,
         "status": "accepted",
         "message": format!(
-            "Job accepted. Poll `{QUERY_JOB_STATUS_TOOL_NAME}` with request_uuid until terminal=true."
+            "Job still running (exceeded inline await timeout). Poll `{QUERY_JOB_STATUS_TOOL_NAME}` with request_uuid until terminal=true."
         ),
     }))
     .expect("serialize accepted job response")
@@ -230,7 +241,7 @@ pub fn accepted_job_response(request_uuid: &str, tool_name: &str) -> String {
 pub fn query_job_status_schema() -> Value {
     json!({
         "name": QUERY_JOB_STATUS_TOOL_NAME,
-        "description": "Poll async adjutant job status by request_uuid. Do not guess timeouts — call this until terminal=true. possibly_stalled=true is advisory only; keep polling.",
+        "description": "Poll async adjutant job status by request_uuid. Most jobs return their result inline; use this only when a tool response says the job exceeded the await timeout, or to check liveness/staleness of a running job. possibly_stalled=true is advisory only; keep polling until terminal=true.",
         "input_schema": {
             "type": "object",
             "properties": {
