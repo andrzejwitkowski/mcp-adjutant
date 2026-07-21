@@ -113,8 +113,7 @@ fn extract_last_triage_test_path(log: &str) -> Option<String> {
         .filter(|line| line.contains("[SYSTEM]: Launching Triage"))
         .filter_map(|line| line.rsplit(" for ").next())
         .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .next_back()
+        .rfind(|path| !path.is_empty())
         .map(str::to_string)
 }
 
