@@ -50,7 +50,10 @@ fn rust_parts(test_type: &str, source_file_path: &str, project_root: &Path) -> B
 
 fn ts_parts(test_type: &str, source_file_path: &str, project_root: &Path) -> BuilderPromptParts {
     let path = Path::new(source_file_path);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("module");
     let parent = path.parent().unwrap_or(Path::new("frontend/src"));
     let ext = path
         .extension()

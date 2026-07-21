@@ -29,9 +29,8 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         .and_then(|abs| std::fs::read_to_string(&abs).ok());
 
     let triage_block = extract_last_triage_block(input.accumulated_data);
-    let (command, exit_code, build_log) = triage_block
-        .map(parse_triage_evidence)
-        .unwrap_or_default();
+    let (command, exit_code, build_log) =
+        triage_block.map(parse_triage_evidence).unwrap_or_default();
 
     let mut report = String::new();
     report.push_str(&format!(
@@ -102,7 +101,10 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
     }
 
     report.push_str("\n## Debug trace\n");
-    report.push_str(&truncate_debug_trace(input.accumulated_data, DEBUG_TRACE_MAX));
+    report.push_str(&truncate_debug_trace(
+        input.accumulated_data,
+        DEBUG_TRACE_MAX,
+    ));
     report
 }
 
@@ -135,7 +137,10 @@ fn parse_triage_evidence(block: &str) -> (Option<String>, Option<i32>, String) {
     let mut capture = false;
 
     for line in block.lines() {
-        if let Some(cmd) = line.strip_prefix("Command: `").and_then(|s| s.strip_suffix('`')) {
+        if let Some(cmd) = line
+            .strip_prefix("Command: `")
+            .and_then(|s| s.strip_suffix('`'))
+        {
             command = Some(cmd.to_string());
             capture = false;
         } else if let Some(cmd) = backtick_command(line) {

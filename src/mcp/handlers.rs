@@ -14,16 +14,16 @@ use super::schemas::{
 };
 use crate::agent::{
     analyze_log_at_path, builder_task_parts, create_git_branch, default_builder_agent,
-    default_transformer_agent, default_verify_workspace, embed_source_files,
-    extract_json_object, format_babysitter_result, format_builder_report, format_eval_job_appendix,
-    format_scout_block, format_triage_success, gather_conventions_and_diff,
-    parse_plan_blueprint_args, parse_transpile_types_args, run_git_janitor, run_planner_hybrid,
-    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
-    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext, AgentEvalSummary,
-    AgentLoopOrchestrator, BabysitterAgent, BuilderReportInput, BUILDER_GREEN_MARKER,
-    CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner,
-    TranspilerAgent, TriageAgent, WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
-    BABYSITTER_SYSTEM_PROMPT, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    default_transformer_agent, default_verify_workspace, embed_source_files, extract_json_object,
+    format_babysitter_result, format_builder_report, format_eval_job_appendix, format_scout_block,
+    format_triage_success, gather_conventions_and_diff, parse_plan_blueprint_args,
+    parse_transpile_types_args, run_git_janitor, run_planner_hybrid, run_scout_with_cache,
+    run_web_fetch_with_cache, triage_passed, validate_blueprint, validate_blueprint_coordinator,
+    validate_blueprint_grounding, AgentContext, AgentEvalSummary, AgentLoopOrchestrator,
+    BabysitterAgent, BuilderReportInput, CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent,
+    ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TranspilerAgent, TriageAgent,
+    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
+    BUILDER_GREEN_MARKER, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
     TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
@@ -425,12 +425,8 @@ pub async fn handle_generate_tests_and_scaffolding(
                 .unwrap_or_else(|err| format!("(could not read source file: {err})"));
 
             let project_root = mcp_workspace_root();
-            let parts = builder_task_parts(
-                &source_path,
-                &test_type,
-                &source_file_path,
-                &project_root,
-            );
+            let parts =
+                builder_task_parts(&source_path, &test_type, &source_file_path, &project_root);
 
             let mut prompt = format!(
                 "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n{}",
@@ -448,9 +444,7 @@ pub async fn handle_generate_tests_and_scaffolding(
                 prompt.push_str("\n\n");
                 prompt.push_str(&parts.exemplar);
             }
-            prompt.push_str(&format!(
-                "\n\nSource excerpt:\n```\n{source_excerpt}\n```"
-            ));
+            prompt.push_str(&format!("\n\nSource excerpt:\n```\n{source_excerpt}\n```"));
 
             let original_task = prompt.clone();
             let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
@@ -459,18 +453,17 @@ pub async fn handle_generate_tests_and_scaffolding(
             let builder_hard_stopped = result.iterations >= BUILDER_MAX_ITERATIONS
                 && result.accumulated_data.contains("iteration limit after");
 
-            let (green_ok, verify_summary) = if result.is_finished
-                && green_marker
-                && !builder_hard_stopped
-            {
-                let test_path = extract_green_test_path(&result.accumulated_data).ok_or_else(|| {
-                    "builder finished GREEN but no test path found in log".to_string()
-                })?;
-                let summary = verify_test_passes(&test_path, &project_root)?;
-                (true, summary)
-            } else {
-                (false, String::new())
-            };
+            let (green_ok, verify_summary) =
+                if result.is_finished && green_marker && !builder_hard_stopped {
+                    let test_path =
+                        extract_green_test_path(&result.accumulated_data).ok_or_else(|| {
+                            "builder finished GREEN but no test path found in log".to_string()
+                        })?;
+                    let summary = verify_test_passes(&test_path, &project_root)?;
+                    (true, summary)
+                } else {
+                    (false, String::new())
+                };
 
             let output = format_builder_report(&BuilderReportInput {
                 accumulated_data: &result.accumulated_data,
@@ -480,15 +473,13 @@ pub async fn handle_generate_tests_and_scaffolding(
                 green_ok,
                 verify_summary: (!verify_summary.is_empty()).then_some(verify_summary.as_str()),
             });
-            Ok(
-                finish_agent_job_with_eval(
-                    &config,
-                    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-                    &original_task,
-                    output,
-                )
-                .await,
+            Ok(finish_agent_job_with_eval(
+                &config,
+                GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+                &original_task,
+                output,
             )
+            .await)
         },
     )
     .await

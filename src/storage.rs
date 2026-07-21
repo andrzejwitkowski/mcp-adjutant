@@ -39,8 +39,14 @@ pub fn migrate_config_value(value: &mut Value) {
         return;
     };
 
-    // Legacy UI used "transformer" before pruner existed in the config schema.
-    if phases.contains_key("transformer") && !phases.contains_key("pruner") {
+    // Legacy flat-phase configs used "transformer" for what is now "pruner".
+    // Only rename when it's a legacy flat binding (has a "provider" key directly on the phase),
+    // not a modern profile-based config where "transformer" is its own distinct agent phase.
+    let transformer_is_legacy = phases
+        .get("transformer")
+        .and_then(Value::as_object)
+        .is_some_and(|obj| obj.contains_key("provider"));
+    if transformer_is_legacy && !phases.contains_key("pruner") {
         if let Some(transformer) = phases.remove("transformer") {
             phases.insert("pruner".to_string(), transformer);
         }
@@ -253,6 +259,45 @@ mod tests {
         assert_eq!(
             phases.get("planner").and_then(|v| v.get("model_name")),
             Some(&json!("scout-model"))
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_preserves_modern_transformer_phase() {
+        // Modern profile-based config: transformer must NOT be renamed to pruner.
+        let mut value = json!({
+            "profiles": { "p1": { "id": "p1", "name": "OR", "provider": "open_router", "api_key": null, "base_url": "https://openrouter.ai/api/v1" } },
+            "phases": {
+                "transformer": { "profile_id": "p1", "model_name": "qwen/qwen3-235b-a22b", "max_tokens": 8192, "temperature": 0.1 },
+                "scout":       { "profile_id": "p1", "model_name": "qwen/qwen3.6-35b-a3b", "max_tokens": 4096, "temperature": 0.3 }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(
+            phases.contains_key("transformer"),
+            "transformer must survive in modern configs"
+        );
+        assert!(
+            !phases.contains_key("pruner") || phases.contains_key("transformer"),
+            "pruner should not steal transformer's binding"
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_renames_legacy_transformer_to_pruner() {
+        // Legacy flat config: transformer (with provider key) should become pruner.
+        let mut value = json!({
+            "phases": {
+                "transformer": { "provider": "deep_seek", "api_key": null, "base_url": "https://api.deepseek.com/v1", "model_name": "deepseek-coder", "max_tokens": 8192, "temperature": 0.1 },
+                "scout":       { "provider": "deep_seek", "api_key": null, "base_url": "https://api.deepseek.com/v1", "model_name": "deepseek-chat",  "max_tokens": 4096, "temperature": 0.3 }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert!(
+            phases.contains_key("pruner"),
+            "legacy transformer should be renamed pruner"
         );
     }
 

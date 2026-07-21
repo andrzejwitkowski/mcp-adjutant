@@ -311,9 +311,7 @@ impl<
                         cache.project_root().to_path_buf()
                     };
                     if self.source_file.is_file() {
-                        if let Err(err) =
-                            validate_test_path_for_source(&path, &self.source_file)
-                        {
+                        if let Err(err) = validate_test_path_for_source(&path, &self.source_file) {
                             context
                                 .accumulated_data
                                 .push_str(&format!("Observation:\n{err}\n"));
