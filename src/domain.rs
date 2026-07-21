@@ -132,8 +132,14 @@ impl Default for AdjutantConfig {
             },
         )]);
         let phases = [
-            (AgentPhase::Scout, phase_binding("deepseek-chat", 4_096, 0.3)),
-            (AgentPhase::Pruner, phase_binding("deepseek-chat", 8_192, 0.1)),
+            (
+                AgentPhase::Scout,
+                phase_binding("deepseek-chat", 4_096, 0.3),
+            ),
+            (
+                AgentPhase::Pruner,
+                phase_binding("deepseek-chat", 8_192, 0.1),
+            ),
             (
                 AgentPhase::Builder,
                 phase_binding("deepseek-coder", 8_192, 0.2),
@@ -266,9 +272,7 @@ impl AdjutantConfig {
     }
 
     pub fn profile_in_use(&self, profile_id: &str) -> bool {
-        self.phases
-            .values()
-            .any(|b| b.profile_id == profile_id)
+        self.phases.values().any(|b| b.profile_id == profile_id)
             || self.default_profile_id.as_deref() == Some(profile_id)
     }
 }
@@ -342,8 +346,7 @@ mod tests {
     #[test]
     fn resolve_shares_provider_credentials_across_phases() {
         let mut config = AdjutantConfig::default();
-        config.profiles.get_mut(DEFAULT_PROFILE_ID).unwrap().api_key =
-            Some("sk-shared".into());
+        config.profiles.get_mut(DEFAULT_PROFILE_ID).unwrap().api_key = Some("sk-shared".into());
         assert_eq!(
             config.get_profile(&AgentPhase::Scout).api_key.as_deref(),
             Some("sk-shared")
@@ -386,9 +389,9 @@ mod tests {
             ..Default::default()
         };
         // wipe other phases that Default filled via ..Default
-        legacy.phases.retain(|p, _| {
-            matches!(p, AgentPhase::Scout | AgentPhase::Builder)
-        });
+        legacy
+            .phases
+            .retain(|p, _| matches!(p, AgentPhase::Scout | AgentPhase::Builder));
 
         assert!(legacy.try_get_profile(AgentPhase::Evaluator).is_err());
         legacy.merge_missing_from_defaults();

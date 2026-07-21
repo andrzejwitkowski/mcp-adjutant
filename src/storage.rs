@@ -278,9 +278,7 @@ mod tests {
             .and_then(|v| v.get("profile_id"))
             .is_some());
         assert_eq!(
-            phases
-                .get("git_janitor")
-                .and_then(|v| v.get("model_name")),
+            phases.get("git_janitor").and_then(|v| v.get("model_name")),
             Some(&json!("qwen/qwen3.6-35b-a3b"))
         );
         assert!(!phases.contains_key("unknown_phase"));
