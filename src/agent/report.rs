@@ -194,9 +194,15 @@ fn truncate_debug_trace(log: &str, max_chars: usize) -> String {
     if log.len() <= max_chars {
         log.to_string()
     } else {
+        let byte_offset = log
+            .char_indices()
+            .rev()
+            .nth(max_chars - 1)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
         format!(
             "(truncated to last {max_chars} chars)\n{}",
-            &log[log.len() - max_chars..]
+            &log[byte_offset..]
         )
     }
 }

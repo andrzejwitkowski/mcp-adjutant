@@ -455,12 +455,16 @@ pub async fn handle_generate_tests_and_scaffolding(
 
             let (green_ok, verify_summary) =
                 if result.is_finished && green_marker && !builder_hard_stopped {
-                    let test_path =
-                        extract_green_test_path(&result.accumulated_data).ok_or_else(|| {
-                            "builder finished GREEN but no test path found in log".to_string()
-                        })?;
-                    let summary = verify_test_passes(&test_path, &project_root)?;
-                    (true, summary)
+                    match extract_green_test_path(&result.accumulated_data) {
+                        None => (
+                            false,
+                            "builder GREEN but no test path found in log".to_string(),
+                        ),
+                        Some(test_path) => match verify_test_passes(&test_path, &project_root) {
+                            Ok(summary) => (true, summary),
+                            Err(err) => (false, format!("post-GREEN verify failed: {err}")),
+                        },
+                    }
                 } else {
                     (false, String::new())
                 };
