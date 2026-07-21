@@ -161,9 +161,10 @@ fn migrate_flat_phases_to_profiles(value: &mut Value) {
         );
     }
 
+    // Stable tie-break: highest use count, then prefer id "default", else lexicographic min.
     let default_id = counts
         .into_iter()
-        .max_by_key(|(_, n)| *n)
+        .min_by_key(|(id, n)| (std::cmp::Reverse(*n), id.as_str() != "default", id.clone()))
         .map(|(id, _)| id)
         .or_else(|| profiles.keys().next().cloned())
         .unwrap_or_else(|| "default".into());

@@ -13,6 +13,16 @@ interface Props {
   onWebFetcherChange?: (patch: Partial<WebFetcherProfile>) => void
 }
 
+function parseUint(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function parseFloatValue(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 export function AgentPhaseCard({
   id,
   title,
@@ -70,7 +80,10 @@ export function AgentPhaseCard({
             step={0.1}
             value={binding.temperature}
             onChange={(e) =>
-              onChange({ ...binding, temperature: Number(e.target.value) })
+              onChange({
+                ...binding,
+                temperature: parseFloatValue(e.target.value, binding.temperature),
+              })
             }
           />
         </label>
@@ -82,7 +95,10 @@ export function AgentPhaseCard({
             step={256}
             value={binding.max_tokens}
             onChange={(e) =>
-              onChange({ ...binding, max_tokens: Number(e.target.value) })
+              onChange({
+                ...binding,
+                max_tokens: Math.max(256, parseUint(e.target.value, binding.max_tokens)),
+              })
             }
           />
         </label>

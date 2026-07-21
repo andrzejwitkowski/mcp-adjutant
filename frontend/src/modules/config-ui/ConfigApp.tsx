@@ -222,7 +222,8 @@ export function ConfigApp() {
   }
 
   function addProfile() {
-    const id = `profile-${crypto.randomUUID().slice(0, 8)}`
+    // ponytail: avoid crypto.randomUUID (secure-context only); config UI may be http://127.0.0.1
+    const id = `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const profile: ProviderProfile = {
       id,
       name: 'New Profile',
