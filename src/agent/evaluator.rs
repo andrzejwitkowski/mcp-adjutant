@@ -279,22 +279,24 @@ fn git_janitor_rubric_for(original_task: &str, received_output: &str) -> &'stati
     }
 }
 
-/// True when evaluating create_git_branch (task name or branch/status JSON without prepare fields).
+/// True when evaluating create_git_branch. Output shape is authoritative:
+/// commit_message present → prepare result (false); branch+status → branch result (true).
+/// Task name is only a fallback when the shape is inconclusive.
 fn is_git_janitor_create_branch_eval(original_task: &str, received_output: &str) -> bool {
-    if original_task
+    let body = extract_json_object(received_output.trim()).unwrap_or(received_output.trim());
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(obj) = value.as_object() {
+            if obj.contains_key("commit_message") {
+                return false;
+            }
+            if obj.contains_key("branch") && obj.contains_key("status") {
+                return true;
+            }
+        }
+    }
+    original_task
         .to_ascii_lowercase()
         .contains("create_git_branch")
-    {
-        return true;
-    }
-    let body = extract_json_object(received_output.trim()).unwrap_or(received_output.trim());
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return false;
-    };
-    let Some(obj) = value.as_object() else {
-        return false;
-    };
-    obj.contains_key("branch") && obj.contains_key("status") && !obj.contains_key("commit_message")
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -418,6 +420,20 @@ mod tests {
         let rubric = git_janitor_rubric_for("prepare_git_copy for feature", out);
         assert!(rubric.contains("prepare_git_copy"));
         assert!(rubric.contains("commit_allowed"));
+    }
+
+    #[test]
+    fn git_janitor_prepare_shape_wins_over_create_branch_task_name() {
+        let out = r#"{"commit_message":"feat: x","pr_title":"feat: x","pr_body":"b","changelog_entry":"c","branch_status":"on_default","action_required":"create_branch","commit_allowed":false,"suggested_branch_name":"feat/x","current_branch":"main"}"#;
+        // Task mentions create_git_branch, but the output is a prepare result —
+        // shape must win so the prepare rubric applies, not the branch rubric.
+        assert!(!is_git_janitor_create_branch_eval(
+            "create_git_branch then re-run prepare_git_copy",
+            out
+        ));
+        let rubric = git_janitor_rubric_for("create_git_branch then re-run prepare_git_copy", out);
+        assert!(rubric.contains("prepare_git_copy"));
+        assert!(!rubric.contains("create_git_branch (override"));
     }
 
     #[test]
