@@ -130,7 +130,8 @@ fn config_with_transformer_phase_deserializes() {
         "storage_path": "/tmp/transformer-phase.json"
     }"#;
 
-    let config = mcp_adjutant::storage::parse_config_json(json).expect("deserialize transformer phase");
+    let config =
+        mcp_adjutant::storage::parse_config_json(json).expect("deserialize transformer phase");
     // migrate remaps transformer → pruner when pruner missing
     let pruner = config.get_profile(&AgentPhase::Pruner);
     let builder = config.get_profile(&AgentPhase::Builder);
