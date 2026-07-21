@@ -50,11 +50,11 @@ pub fn create_llm_client_for_phase(
     phase: AgentPhase,
 ) -> Result<ConfiguredLlmClient, String> {
     let profile = match config.try_get_profile(phase) {
-        Ok(profile) => profile.clone(),
+        Ok(profile) => profile,
         Err(_) => {
             let mut merged = config.clone();
             merged.merge_missing_from_defaults();
-            merged.try_get_profile(phase)?.clone()
+            merged.try_get_profile(phase)?
         }
     };
     create_llm_client(profile, phase)
@@ -147,11 +147,22 @@ mod tests {
         let mut config = AdjutantConfig::default();
         config.phases.insert(
             AgentPhase::Transformer,
-            PhaseProfile {
-                provider: Provider::OpenRouter,
-                api_key: Some("sk-test".to_string()),
-                base_url: "https://openrouter.ai/api/v1".to_string(),
-                model_name: "google/gemini-2.5-flash".to_string(),
+            crate::domain::PhaseBinding {
+                profile_id: {
+                    let id = "or-test".to_string();
+                    config.profiles.insert(
+                        id.clone(),
+                        crate::domain::ProviderProfile {
+                            id: id.clone(),
+                            name: "OpenRouter".into(),
+                            provider: Provider::OpenRouter,
+                            api_key: Some("sk-test".into()),
+                            base_url: "https://openrouter.ai/api/v1".into(),
+                        },
+                    );
+                    id
+                },
+                model_name: "google/gemini-2.5-flash".into(),
                 max_tokens: 4_096,
                 temperature: 0.1,
             },

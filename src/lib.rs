@@ -35,7 +35,10 @@ pub use cache::{
     resolve_workspace_path_bounded, LocalEmbeddingEngine, ProjectCacheManager, EMBEDDING_DIM,
     SEMANTIC_SIMILARITY_THRESHOLD,
 };
-pub use domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider, WebFetcherProfile};
+pub use domain::{
+    AdjutantConfig, AgentPhase, PhaseBinding, PhaseProfile, Provider, ProviderProfile,
+    WebFetcherProfile, DEFAULT_PROFILE_ID,
+};
 pub use error::AdjutantConfigError;
 pub use jobs::{query_job_status_schema, JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 pub use llm::{

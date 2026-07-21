@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
@@ -32,7 +33,7 @@ pub fn parse_config_json(contents: &str) -> Result<AdjutantConfig, AdjutantConfi
     Ok(serde_json::from_value(value)?)
 }
 
-/// Strips legacy/unknown phase keys so serde can map phases to `AgentPhase`.
+/// Legacy phase keys + flat PhaseProfile → shared profiles + PhaseBinding.
 pub fn migrate_config_value(value: &mut Value) {
     let Some(phases) = value.get_mut("phases").and_then(Value::as_object_mut) else {
         return;
@@ -45,7 +46,6 @@ pub fn migrate_config_value(value: &mut Value) {
         }
     }
 
-    // New installs often have scout/builder tuned but no planner rows yet.
     if !phases.contains_key("planner") {
         if let Some(scout) = phases.get("scout").cloned() {
             phases.insert("planner".to_string(), scout);
@@ -63,6 +63,115 @@ pub fn migrate_config_value(value: &mut Value) {
     }
 
     phases.retain(|key, _| KNOWN_PHASES.contains(&key.as_str()));
+    migrate_flat_phases_to_profiles(value);
+}
+
+fn normalize_provider(raw: &str) -> String {
+    match raw {
+        "deepseek" => "deep_seek".into(),
+        other => other.to_string(),
+    }
+}
+
+fn migrate_flat_phases_to_profiles(value: &mut Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    if root
+        .get("profiles")
+        .and_then(Value::as_object)
+        .is_some_and(|o| !o.is_empty())
+    {
+        return;
+    }
+    let Some(phases) = root.get("phases").and_then(Value::as_object) else {
+        return;
+    };
+    let is_legacy = phases.values().any(|v| v.get("provider").is_some());
+    if !is_legacy {
+        return;
+    }
+
+    let mut profiles = Map::new();
+    let mut dedupe: HashMap<(String, String, String), String> = HashMap::new();
+    let mut new_phases = Map::new();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut next = 0usize;
+
+    for (phase_name, phase_val) in phases {
+        let Some(obj) = phase_val.as_object() else {
+            continue;
+        };
+        let provider = normalize_provider(
+            obj.get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("deep_seek"),
+        );
+        let base_url = obj
+            .get("base_url")
+            .and_then(Value::as_str)
+            .unwrap_or("https://api.deepseek.com/v1")
+            .to_string();
+        let api_key_val = obj.get("api_key").cloned().unwrap_or(Value::Null);
+        let api_key_str = api_key_val.as_str().unwrap_or("").to_string();
+        let key = (provider.clone(), base_url.clone(), api_key_str);
+
+        let profile_id = if let Some(id) = dedupe.get(&key) {
+            id.clone()
+        } else {
+            next += 1;
+            let id = if next == 1 {
+                "default".to_string()
+            } else {
+                format!("profile-{next}")
+            };
+            dedupe.insert(key, id.clone());
+            let name = match provider.as_str() {
+                "open_router" if next == 1 => "OpenRouter Default".into(),
+                "open_router" => format!("OpenRouter {next}"),
+                "deep_seek" if next == 1 => "DeepSeek Default".into(),
+                "deep_seek" => format!("DeepSeek {next}"),
+                "open_ai" if next == 1 => "OpenAI Default".into(),
+                "open_ai" => format!("OpenAI {next}"),
+                _ if next == 1 => format!("{provider} Default"),
+                _ => format!("{provider} {next}"),
+            };
+            profiles.insert(
+                id.clone(),
+                json!({
+                    "id": id,
+                    "name": name,
+                    "provider": provider,
+                    "api_key": api_key_val,
+                    "base_url": base_url,
+                }),
+            );
+            id
+        };
+        *counts.entry(profile_id.clone()).or_insert(0) += 1;
+
+        new_phases.insert(
+            phase_name.clone(),
+            json!({
+                "profile_id": profile_id,
+                "model_name": obj.get("model_name").cloned().unwrap_or(json!("deepseek-chat")),
+                "max_tokens": obj.get("max_tokens").cloned().unwrap_or(json!(4096)),
+                "temperature": obj.get("temperature").cloned().unwrap_or(json!(0.2)),
+            }),
+        );
+    }
+
+    // Stable tie-break: highest use count, then prefer id "default", else lexicographic min.
+    let default_id = counts
+        .into_iter()
+        .min_by_key(|(id, n)| (std::cmp::Reverse(*n), id.as_str() != "default", id.clone()))
+        .map(|(id, _)| id)
+        .or_else(|| profiles.keys().next().cloned())
+        .unwrap_or_else(|| "default".into());
+
+    root.insert("profiles".to_string(), Value::Object(profiles));
+    root.insert("default_profile_id".to_string(), json!(default_id));
+    root.insert("phases".to_string(), Value::Object(new_phases));
 }
 
 pub fn save_to_file(config: &AdjutantConfig, path: &Path) -> Result<(), AdjutantConfigError> {
@@ -101,24 +210,49 @@ mod tests {
         let phases = value.get("phases").unwrap().as_object().unwrap();
         assert!(phases.contains_key("planner_emit"));
         assert_eq!(
-            phases.get("planner_emit").unwrap(),
-            phases.get("builder").unwrap()
+            phases.get("planner_emit").and_then(|v| v.get("model_name")),
+            phases.get("builder").and_then(|v| v.get("model_name"))
         );
+        assert!(value.get("profiles").and_then(|p| p.as_object()).is_some());
+        assert!(phases
+            .get("builder")
+            .and_then(|v| v.get("profile_id"))
+            .is_some());
     }
 
     #[test]
     fn migrate_config_value_seeds_planner_emit_from_planner_when_no_builder() {
         let mut value = json!({
             "phases": {
-                "scout": { "model_name": "scout-model" },
-                "planner": { "model_name": "planner-model" }
+                "scout": { "model_name": "scout-model", "provider": "deep_seek", "base_url": "https://api.deepseek.com/v1", "api_key": null, "max_tokens": 1, "temperature": 0.0 },
+                "planner": { "model_name": "planner-model", "provider": "deep_seek", "base_url": "https://api.deepseek.com/v1", "api_key": null, "max_tokens": 1, "temperature": 0.0 }
             }
         });
         migrate_config_value(&mut value);
         let phases = value.get("phases").unwrap().as_object().unwrap();
         assert_eq!(
-            phases.get("planner_emit").unwrap(),
-            phases.get("planner").unwrap()
+            phases.get("planner_emit").and_then(|v| v.get("model_name")),
+            phases.get("planner").and_then(|v| v.get("model_name"))
+        );
+    }
+
+    #[test]
+    fn migrate_config_value_scout_builder_inherits_builder_for_planner_emit() {
+        let mut value = json!({
+            "phases": {
+                "scout": { "model_name": "scout-model", "provider": "deep_seek", "base_url": "u", "api_key": null, "max_tokens": 1, "temperature": 0.0 },
+                "builder": { "model_name": "builder-coder", "provider": "deep_seek", "base_url": "u", "api_key": null, "max_tokens": 1, "temperature": 0.0 }
+            }
+        });
+        migrate_config_value(&mut value);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("planner_emit").and_then(|v| v.get("model_name")),
+            Some(&json!("builder-coder"))
+        );
+        assert_eq!(
+            phases.get("planner").and_then(|v| v.get("model_name")),
+            Some(&json!("scout-model"))
         );
     }
 
@@ -140,10 +274,50 @@ mod tests {
         migrate_config_value(&mut value);
         let phases = value.get("phases").unwrap().as_object().unwrap();
         assert!(phases.contains_key("git_janitor"));
+        assert!(phases
+            .get("git_janitor")
+            .and_then(|v| v.get("profile_id"))
+            .is_some());
         assert_eq!(
-            phases.get("git_janitor").and_then(|v| v.get("api_key")),
-            Some(&json!("sk-test-janitor"))
+            phases.get("git_janitor").and_then(|v| v.get("model_name")),
+            Some(&json!("qwen/qwen3.6-35b-a3b"))
         );
         assert!(!phases.contains_key("unknown_phase"));
+        let profiles = value.get("profiles").unwrap().as_object().unwrap();
+        assert!(profiles
+            .values()
+            .any(|p| p.get("api_key") == Some(&json!("sk-test-janitor"))));
+    }
+
+    #[test]
+    fn migrate_dedupes_identical_credentials() {
+        let mut value = json!({
+            "phases": {
+                "scout": {
+                    "provider": "open_router",
+                    "api_key": "sk-1",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "model_name": "a",
+                    "max_tokens": 1,
+                    "temperature": 0.0
+                },
+                "triage": {
+                    "provider": "open_router",
+                    "api_key": "sk-1",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "model_name": "b",
+                    "max_tokens": 2,
+                    "temperature": 0.1
+                }
+            }
+        });
+        migrate_config_value(&mut value);
+        let profiles = value.get("profiles").unwrap().as_object().unwrap();
+        assert_eq!(profiles.len(), 1);
+        let phases = value.get("phases").unwrap().as_object().unwrap();
+        assert_eq!(
+            phases.get("scout").and_then(|v| v.get("profile_id")),
+            phases.get("triage").and_then(|v| v.get("profile_id"))
+        );
     }
 }

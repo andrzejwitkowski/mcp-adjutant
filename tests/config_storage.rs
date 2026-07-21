@@ -71,14 +71,23 @@ fn custom_config_roundtrip_preserves_all_fields() {
         ..Default::default()
     };
 
-    let builder_profile = config.get_profile(&AgentPhase::Builder).clone();
+    let builder_profile = config.get_profile(&AgentPhase::Builder);
+    let openai_id = "openai-custom".to_string();
+    config.profiles.insert(
+        openai_id.clone(),
+        mcp_adjutant::ProviderProfile {
+            id: openai_id.clone(),
+            name: "OpenAI".into(),
+            provider: Provider::OpenAI,
+            api_key: Some("sk-test".into()),
+            base_url: "https://api.openai.com/v1".into(),
+        },
+    );
     config.phases.insert(
         AgentPhase::Builder,
-        mcp_adjutant::PhaseProfile {
-            provider: Provider::OpenAI,
-            api_key: Some("sk-test".to_string()),
-            base_url: "https://api.openai.com/v1".to_string(),
-            model_name: "gpt-4o-mini".to_string(),
+        mcp_adjutant::PhaseBinding {
+            profile_id: openai_id,
+            model_name: "gpt-4o-mini".into(),
             max_tokens: 16_384,
             temperature: 0.5,
         },
@@ -91,7 +100,7 @@ fn custom_config_roundtrip_preserves_all_fields() {
 
     let loaded = AdjutantConfig::load_from_file(&config_path).expect("load custom config");
     assert_eq!(config, loaded);
-    assert_ne!(loaded.get_profile(&AgentPhase::Builder), &builder_profile);
+    assert_ne!(loaded.get_profile(&AgentPhase::Builder), builder_profile);
 
     std::fs::remove_dir_all(&temp_dir).ok();
 }
@@ -121,12 +130,15 @@ fn config_with_transformer_phase_deserializes() {
         "storage_path": "/tmp/transformer-phase.json"
     }"#;
 
-    let config: AdjutantConfig = serde_json::from_str(json).expect("deserialize transformer phase");
-    let transformer = config.get_profile(&AgentPhase::Transformer);
+    let config =
+        mcp_adjutant::storage::parse_config_json(json).expect("deserialize transformer phase");
+    // migrate remaps transformer → pruner when pruner missing
+    let pruner = config.get_profile(&AgentPhase::Pruner);
     let builder = config.get_profile(&AgentPhase::Builder);
-    assert_eq!(transformer.model_name, "google/gemini-2.5-flash");
-    assert_eq!(transformer.base_url, "https://openrouter.ai/api/v1");
-    assert_ne!(transformer.max_tokens, builder.max_tokens);
+    assert_eq!(pruner.model_name, "google/gemini-2.5-flash");
+    assert_eq!(pruner.base_url, "https://openrouter.ai/api/v1");
+    assert_ne!(pruner.max_tokens, builder.max_tokens);
+    assert_eq!(pruner.provider, Provider::OpenRouter);
 }
 
 #[test]
