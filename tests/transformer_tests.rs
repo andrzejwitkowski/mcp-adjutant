@@ -7,6 +7,7 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::metrics::{with_job_context_async, JobContext};
 use mcp_adjutant::BuildResult;
 
 struct MockTransformerLlm {
@@ -157,10 +158,20 @@ async fn transformer_agent_applies_multi_file_codemod_and_chains_triage() {
         triage_agent,
     );
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nAdd true as argument to validate call sites".to_string(),
-        1,
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(project_root.clone()),
+        },
+        || async {
+            AgentLoopOrchestrator::run(
+                &agent,
+                "PHASE_3_5_TRANSFORMER\nAdd true as argument to validate call sites".to_string(),
+                1,
+            )
+            .await
+        },
     )
     .await
     .expect("transformer loop should complete");
@@ -225,10 +236,21 @@ async fn transformer_agent_applies_range_codemod_for_struct_literals() {
         triage_agent,
     );
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nRename headline to subject in LogEvent literals".to_string(),
-        1,
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(project_root.clone()),
+        },
+        || async {
+            AgentLoopOrchestrator::run(
+                &agent,
+                "PHASE_3_5_TRANSFORMER\nRename headline to subject in LogEvent literals"
+                    .to_string(),
+                1,
+            )
+            .await
+        },
     )
     .await
     .expect("transformer loop should complete");
@@ -286,10 +308,20 @@ async fn transformer_skips_missing_target_files_without_failing_whole_job() {
         triage_agent,
     );
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "PHASE_3_5_TRANSFORMER\nAdd true as argument to validate call sites".to_string(),
-        1,
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(project_root.clone()),
+        },
+        || async {
+            AgentLoopOrchestrator::run(
+                &agent,
+                "PHASE_3_5_TRANSFORMER\nAdd true as argument to validate call sites".to_string(),
+                1,
+            )
+            .await
+        },
     )
     .await
     .expect("transformer should continue after missing file");
