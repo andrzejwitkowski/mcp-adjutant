@@ -60,7 +60,7 @@ async fn scout_cache_hit_skips_llm() {
     write_demo_cargo_manifest(&project_root);
 
     let (auth_file, stored_query, paraphrase_query) = jwt_fixture(&project_root);
-    let insight = "## Insight\nUse `jwt_routes` for JWT middleware.";
+    let insight = "## Insight\nUse `jwt_routes` for JWT middleware at auth.rs:1.";
 
     let mut cache = open_cache_manager(&project_root);
     cache
@@ -114,7 +114,7 @@ async fn scout_cache_stores_finished_report() {
                 content: Some("Done.".to_string()),
                 tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
-                    arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
+                    arguments: serde_json::json!({ "report": "## Scout\n- alpha marker at marker.txt:1" }),
                 }],
                 ..Default::default()
             },
@@ -148,7 +148,7 @@ async fn scout_cache_invalidates_when_dependency_changes() {
     write_demo_cargo_manifest(&project_root);
 
     let (auth_file, stored_query, paraphrase_query) = jwt_fixture(&project_root);
-    let insight = "## Insight\nUse `jwt_routes` for JWT middleware.";
+    let insight = "## Insight\nUse `jwt_routes` for JWT middleware at auth.rs:1.";
 
     let mut cache = open_cache_manager(&project_root);
     cache
@@ -189,7 +189,7 @@ async fn scout_cache_invalidates_when_dependency_changes() {
                 content: Some("Refreshed.".to_string()),
                 tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
-                    arguments: serde_json::json!({ "report": "## Scout\n- refreshed insight" }),
+                    arguments: serde_json::json!({ "report": "## Scout\n- refreshed insight at auth.rs:1" }),
                 }],
                 ..Default::default()
             },
@@ -332,7 +332,7 @@ async fn scout_cache_stores_after_ripgrep_only_run() {
                 content: Some("Done.".to_string()),
                 tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
-                    arguments: serde_json::json!({ "report": "## Scout\n- alpha_marker in src/marker.rs" }),
+                    arguments: serde_json::json!({ "report": "## Scout\n- alpha_marker in marker.rs:1" }),
                 }],
                 ..Default::default()
             },
@@ -388,7 +388,7 @@ async fn scout_cache_stores_when_read_cache_disabled() {
                 content: Some("Done.".to_string()),
                 tool_calls: vec![LlmToolCall {
                     name: "finalize".to_string(),
-                    arguments: serde_json::json!({ "report": "## Scout\n- alpha marker" }),
+                    arguments: serde_json::json!({ "report": "## Scout\n- alpha marker at marker.txt:1" }),
                 }],
                 ..Default::default()
             },
