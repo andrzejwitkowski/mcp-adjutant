@@ -9,6 +9,7 @@ use mcp_adjutant::agent::{
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::find_nearest_module_boundary;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::metrics::{with_job_context_async, JobContext};
 use mcp_adjutant::BuildResult;
 
 struct MockBuildRunner {
@@ -150,9 +151,16 @@ async fn triage_agent_fix_loop_edits_file_and_finishes_successfully() {
     let agent =
         TriageAgent::with_build_runner(llm, vec![source.clone()], Arc::clone(&config), runner);
 
-    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 3)
-        .await
-        .expect("triage loop should complete");
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(root.clone()),
+        },
+        || async { AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 3).await },
+    )
+    .await
+    .expect("triage loop should complete");
 
     let updated = std::fs::read_to_string(&source).expect("read updated source");
     assert_ne!(updated, broken, "file should be modified on disk");
@@ -195,9 +203,16 @@ async fn triage_agent_verifies_fix_within_single_iteration() {
     let agent =
         TriageAgent::with_build_runner(llm, vec![source.clone()], Arc::clone(&config), runner);
 
-    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 1)
-        .await
-        .expect("triage loop should complete");
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(root.clone()),
+        },
+        || async { AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 1).await },
+    )
+    .await
+    .expect("triage loop should complete");
 
     assert!(
         result.is_finished,
@@ -258,10 +273,21 @@ async fn triage_agent_builder_retarget_blocks_shared_test_infra_edits() {
         TriageAgent::with_build_runner(llm, vec![test_file.clone()], Arc::clone(&config), runner);
     agent.retarget(vec![test_file.clone()]).expect("retarget");
 
-    let result = AgentLoopOrchestrator::run(
-        &agent,
-        "Verify tests/new_integration_test.rs:\nTDD RED PHASE: fix compile errors only".to_string(),
-        1,
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(root.clone()),
+        },
+        || async {
+            AgentLoopOrchestrator::run(
+                &agent,
+                "Verify tests/new_integration_test.rs:\nTDD RED PHASE: fix compile errors only"
+                    .to_string(),
+                1,
+            )
+            .await
+        },
     )
     .await
     .expect("triage should continue after rejected edit");
@@ -321,9 +347,16 @@ async fn triage_agent_discovers_build_command_for_unknown_stack() {
         discoverer,
     );
 
-    let result = AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 2)
-        .await
-        .expect("triage with discovery should complete");
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(root.clone()),
+        },
+        || async { AgentLoopOrchestrator::run(&agent, "verify triage".to_string(), 2).await },
+    )
+    .await
+    .expect("triage with discovery should complete");
 
     assert!(
         result.is_finished,
