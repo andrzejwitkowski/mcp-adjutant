@@ -274,12 +274,8 @@ async fn builder_agent_red_phase_runs_full_triage_loop_for_compile_fixes() {
             workspace_root: Some(project_root.clone()),
         },
         || async {
-            AgentLoopOrchestrator::run(
-                &agent,
-                "PHASE_4_BUILDER\nGenerate unit test".to_string(),
-                1,
-            )
-            .await
+            AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
+                .await
         },
     )
     .await
