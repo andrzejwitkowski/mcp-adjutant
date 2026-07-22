@@ -149,8 +149,7 @@ impl<C: LlmClient> EvaluatorAgent<C> {
             "AGENT: {canonical}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
             self.original_task, agent_output
         );
-        if let Some(rubric) =
-            agent_evaluation_rubric(&canonical, &self.original_task, agent_output)
+        if let Some(rubric) = agent_evaluation_rubric(&canonical, &self.original_task, agent_output)
         {
             message.push_str(rubric);
         }

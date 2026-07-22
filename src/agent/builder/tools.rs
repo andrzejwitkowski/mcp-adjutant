@@ -224,9 +224,7 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
                 || trimmed.contains("use ")
         }
         "py" => {
-            trimmed.contains("def test")
-                || trimmed.contains("import ")
-                || trimmed.contains("from ")
+            trimmed.contains("def test") || trimmed.contains("import ") || trimmed.contains("from ")
         }
         _ => true,
     };

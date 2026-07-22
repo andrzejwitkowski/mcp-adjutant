@@ -203,7 +203,11 @@ impl MetricsStore {
         Ok(())
     }
 
-    fn phase_had_metered_activity(&self, phase: AgentPhase, request_uuid: &str) -> Result<bool, String> {
+    fn phase_had_metered_activity(
+        &self,
+        phase: AgentPhase,
+        request_uuid: &str,
+    ) -> Result<bool, String> {
         let label = phase_label(phase);
         let llm: i64 = self
             .conn
