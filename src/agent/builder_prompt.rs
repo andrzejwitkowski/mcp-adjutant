@@ -77,7 +77,10 @@ fn ts_parts(test_type: &str, source_file_path: &str, project_root: &Path) -> Bui
              Source language: typescript/tsx — do NOT write Rust tests.\n\
              Write the test to `{test_path}` (co-located vitest + @testing-library/react).\n\
              Workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). Job succeeds only when GREEN passes.\n\
-             Import the component under test from a relative path. Use `npm test` from the `frontend/` workspace."
+             Import the component under test from a relative path. Use `npm test` from the `frontend/` workspace.\n\
+             Always `import {{ cleanup }} from '@testing-library/react'` and `afterEach(cleanup)`.\n\
+             Prefer getByRole over getByLabelText. Type mocks to real exported types from the module under test — no `as any`.\n\
+             write_test_suite `content` must be ONLY valid TS/TSX source (no markdown narrative)."
         ),
         exemplar,
     }
@@ -180,6 +183,7 @@ mod tests {
         );
         assert!(parts.workflow.contains("AgentPhaseCard.test.tsx"));
         assert!(parts.workflow.contains("do NOT write Rust"));
+        assert!(parts.workflow.contains("afterEach(cleanup)"));
         assert!(parts.exemplar.contains("vitest"));
     }
 }

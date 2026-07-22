@@ -9,6 +9,7 @@ interface Props {
   binding: PhaseBinding
   profiles: Record<string, ProviderProfile>
   onChange: (binding: PhaseBinding) => void
+  onApplyToAll?: () => void
   webFetcher?: WebFetcherProfile
   onWebFetcherChange?: (patch: Partial<WebFetcherProfile>) => void
 }
@@ -31,6 +32,7 @@ export function AgentPhaseCard({
   binding,
   profiles,
   onChange,
+  onApplyToAll,
   webFetcher,
   onWebFetcherChange,
 }: Props) {
@@ -45,6 +47,16 @@ export function AgentPhaseCard({
             <h3>{title}</h3>
             <p>{hint}</p>
           </div>
+          {onApplyToAll && (
+            <button
+              type="button"
+              className="phase-card__apply-all"
+              onClick={onApplyToAll}
+            >
+              <span className="material-symbols-outlined">done_all</span>
+              Apply to all
+            </button>
+          )}
         </div>
       </header>
       <div className="phase-card__grid">

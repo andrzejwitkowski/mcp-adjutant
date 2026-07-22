@@ -75,7 +75,7 @@ impl WriteTestSuiteTool {
         Self {
             definition: ToolDefinition::new(
                 "write_test_suite",
-                "Writes the generated test suite to disk. Always pass complete test code in the `content` argument. Output path must be a new file under `tests/`.",
+                "Writes the generated test suite to disk. Pass ONLY valid source code in `content` (no markdown/prose). Prefer co-located `*.test.ts(x)` or a new file under `tests/`.",
             )
             .string_param("path", "Destination test file path.", true)
             .string_param(
@@ -171,10 +171,74 @@ fn strip_code_fences(text: &str) -> String {
     normalize_test_source(body)
 }
 
-pub fn extract_test_content(content: Option<&str>, arguments: &Value) -> Result<String, String> {
-    if let Some(text) = content.map(str::trim).filter(|text| !text.is_empty()) {
-        return Ok(strip_code_fences(text));
+// ponytail: provider tool-arg EOF ~30k; bump if larger suites become common
+pub const MAX_TEST_CONTENT_CHARS: usize = 24_000;
+
+pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
+    if content.len() > MAX_TEST_CONTENT_CHARS {
+        return Err(format!(
+            "write_test_suite content is {} chars (max {MAX_TEST_CONTENT_CHARS}); shrink the file",
+            content.len()
+        ));
     }
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("write_test_suite content is empty".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    // `# ` is a normal Python comment; only treat it as markdown for non-py.
+    let looks_like_markdown = lower.starts_with("**")
+        || lower.starts_with("## ")
+        || (ext != "py" && lower.starts_with("# "))
+        || lower.starts_with("the triage results")
+        || lower.starts_with("i will now")
+        || lower.starts_with("thought:")
+        || lower.starts_with("rationale:")
+        || lower.starts_with("status: green")
+        || lower.starts_with("status: red")
+        || lower.starts_with("previous triage")
+        || lower.starts_with("the previous tdd")
+        || lower.starts_with("build & test command");
+    if looks_like_markdown {
+        return Err(
+            "write_test_suite content must be source code only — no markdown/prose narrative"
+                .to_string(),
+        );
+    }
+
+    let looks_like_code = match ext {
+        "ts" | "tsx" | "js" | "jsx" => {
+            trimmed.contains("import ")
+                || trimmed.contains("describe(")
+                || trimmed.contains("it(")
+                || trimmed.contains("test(")
+                || trimmed.contains("export ")
+        }
+        "rs" => {
+            trimmed.contains("#[test]")
+                || trimmed.contains("fn ")
+                || trimmed.contains("mod ")
+                || trimmed.contains("use ")
+        }
+        "py" => {
+            trimmed.contains("def test") || trimmed.contains("import ") || trimmed.contains("from ")
+        }
+        _ => true,
+    };
+    if !looks_like_code {
+        return Err(format!(
+            "write_test_suite content for `{path}` does not look like {ext} source (missing imports/tests)"
+        ));
+    }
+    Ok(())
+}
+
+pub fn extract_test_content(_content: Option<&str>, arguments: &Value) -> Result<String, String> {
+    // Require tool `content` — assistant Thought/message must not supply the suite body.
     if let Some(text) = arguments
         .get("content")
         .and_then(Value::as_str)
@@ -183,10 +247,7 @@ pub fn extract_test_content(content: Option<&str>, arguments: &Value) -> Result<
     {
         return Ok(strip_code_fences(text));
     }
-    Err(
-        "write_test_suite requires test content in the assistant message or tool argument 'content'"
-            .to_string(),
-    )
+    Err("write_test_suite requires non-empty tool argument 'content'".to_string())
 }
 
 #[cfg(test)]
@@ -238,10 +299,20 @@ mod tests {
     }
 
     #[test]
-    fn extract_test_content_prefers_assistant_message() {
-        let content = extract_test_content(Some("```rust\n#[test]\nfn t() {}\n```"), &json!({}))
-            .expect("content");
-        assert!(content.contains("#[test]"));
+    fn extract_test_content_prefers_tool_argument_over_thought() {
+        let content = extract_test_content(
+            Some("Thought: I will write the suite now."),
+            &json!({"content": "#[test]\nfn t() {}"}),
+        )
+        .expect("content");
+        assert_eq!(content, "#[test]\nfn t() {}");
+    }
+
+    #[test]
+    fn extract_test_content_rejects_assistant_message_fallback() {
+        let err = extract_test_content(Some("```rust\n#[test]\nfn t() {}\n```"), &json!({}))
+            .expect_err("require content arg");
+        assert!(err.contains("content"), "{err}");
     }
 
     #[test]
@@ -259,6 +330,51 @@ mod tests {
         let content =
             extract_test_content(None, &json!({"content": "#[test] fn t() {}"})).expect("content");
         assert_eq!(content, "#[test] fn t() {}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_thought_prefixed() {
+        let err = validate_test_content(
+            "Thought: rationale\nimport { describe } from 'vitest'\ndescribe('x', () => {})",
+            "foo.test.ts",
+        )
+        .expect_err("thought");
+        assert!(err.contains("source code only"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_markdown_prose() {
+        let err = validate_test_content(
+            "## PHASE_4_BUILDER Report\nimport { describe } from 'vitest'",
+            "foo.test.ts",
+        )
+        .expect_err("prose");
+        assert!(err.contains("source code only"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_accepts_python_hash_comment() {
+        validate_test_content(
+            "# helpers for the module under test\nimport pytest\n\ndef test_x():\n    assert True\n",
+            "tests/test_x.py",
+        )
+        .expect("ok");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_oversized() {
+        let huge = format!("import x from 'y'\n{}", "a".repeat(MAX_TEST_CONTENT_CHARS));
+        let err = validate_test_content(&huge, "foo.test.ts").expect_err("size");
+        assert!(err.contains("max"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_accepts_vitest() {
+        validate_test_content(
+            "import { describe, it } from 'vitest'\ndescribe('x', () => { it('y', () => {}) })",
+            "foo.test.ts",
+        )
+        .expect("ok");
     }
 
     #[test]

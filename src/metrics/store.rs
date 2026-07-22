@@ -177,6 +177,12 @@ impl MetricsStore {
             request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
 
         for phase in phases {
+            // Skip build-only / no-LLM completions so token tables don't show Runs with 0/0.
+            if let Some(uuid) = request_uuid.as_deref() {
+                if !self.phase_had_metered_activity(phase, uuid)? {
+                    continue;
+                }
+            }
             self.conn
                 .execute(
                     "INSERT INTO agent_runs (
@@ -195,6 +201,34 @@ impl MetricsStore {
                 .map_err(|err| format!("record agent run: {err}"))?;
         }
         Ok(())
+    }
+
+    fn phase_had_metered_activity(
+        &self,
+        phase: AgentPhase,
+        request_uuid: &str,
+    ) -> Result<bool, String> {
+        let label = phase_label(phase);
+        let llm: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM llm_calls WHERE request_uuid = ?1 AND agent_phase = ?2",
+                params![request_uuid, label],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("metered llm check: {err}"))?;
+        if llm > 0 {
+            return Ok(true);
+        }
+        let cache: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM cache_hits WHERE request_uuid = ?1 AND agent_phase = ?2",
+                params![request_uuid, label],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("metered cache check: {err}"))?;
+        Ok(cache > 0)
     }
 }
 
@@ -306,13 +340,36 @@ mod tests {
                     .expect("lock")
                     .record_cache_hit(AgentPhase::Scout)
                     .expect("cache");
+
+                store
+                    .lock()
+                    .expect("lock")
+                    .record_agent_run("scout_context", Some("req-1".to_string()))
+                    .expect("scout run");
             },
         )
         .await;
 
         with_job_context_async(
             JobContext {
-                request_uuid: Some("req-1".to_string()),
+                request_uuid: Some("req-triage-green".to_string()),
+                mcp_tool: Some("verify_and_triage".to_string()),
+                workspace_root: None,
+            },
+            || async {
+                // Green-path triage: no LLM → no agent_runs row.
+                store
+                    .lock()
+                    .expect("lock")
+                    .record_agent_run("verify_and_triage", Some("req-triage-green".to_string()))
+                    .expect("run");
+            },
+        )
+        .await;
+
+        with_job_context_async(
+            JobContext {
+                request_uuid: Some("req-triage-llm".to_string()),
                 mcp_tool: Some("verify_and_triage".to_string()),
                 workspace_root: None,
             },
@@ -320,8 +377,22 @@ mod tests {
                 store
                     .lock()
                     .expect("lock")
-                    .record_agent_run("verify_and_triage", Some("req-1".to_string()))
-                    .expect("run");
+                    .record_llm_call(
+                        AgentPhase::Triage,
+                        "deepseek-chat",
+                        LlmUsage {
+                            prompt_tokens: 3,
+                            completion_tokens: 1,
+                            total_tokens: 4,
+                            cached_tokens: 0,
+                        },
+                    )
+                    .expect("triage llm");
+                store
+                    .lock()
+                    .expect("lock")
+                    .record_agent_run("verify_and_triage", Some("req-triage-llm".to_string()))
+                    .expect("triage run");
             },
         )
         .await;
@@ -337,9 +408,17 @@ mod tests {
         let run_rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))
             .expect("count runs");
-        assert_eq!(llm_rows, 1);
+        let triage_runs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE agent_phase = 'triage'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count triage runs");
+        assert_eq!(llm_rows, 2);
         assert_eq!(cache_rows, 1);
-        assert_eq!(run_rows, 1);
+        assert_eq!(run_rows, 2); // scout + metered triage
+        assert_eq!(triage_runs, 1);
 
         drop(store);
 
@@ -357,11 +436,44 @@ mod tests {
         let store = Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")));
         init("session-plan-blueprint".to_string(), Arc::clone(&store));
 
-        store
-            .lock()
-            .expect("lock")
-            .record_agent_run("plan_blueprint", Some("req-planner-1".to_string()))
-            .expect("run");
+        with_job_context_async(
+            JobContext {
+                request_uuid: Some("req-planner-1".to_string()),
+                mcp_tool: Some("plan_blueprint".to_string()),
+                workspace_root: None,
+            },
+            || async {
+                let store = store.lock().expect("lock");
+                store
+                    .record_llm_call(
+                        AgentPhase::Planner,
+                        "m",
+                        LlmUsage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                            cached_tokens: 0,
+                        },
+                    )
+                    .expect("planner llm");
+                store
+                    .record_llm_call(
+                        AgentPhase::PlannerEmit,
+                        "m",
+                        LlmUsage {
+                            prompt_tokens: 2,
+                            completion_tokens: 2,
+                            total_tokens: 4,
+                            cached_tokens: 0,
+                        },
+                    )
+                    .expect("emit llm");
+                store
+                    .record_agent_run("plan_blueprint", Some("req-planner-1".to_string()))
+                    .expect("run");
+            },
+        )
+        .await;
 
         {
             let store = store.lock().expect("lock");

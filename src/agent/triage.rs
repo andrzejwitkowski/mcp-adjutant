@@ -226,8 +226,13 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
                         body
                     };
                     if result.success {
+                        let log_body = if log.trim().is_empty() {
+                            "(no further stdout/stderr)"
+                        } else {
+                            log.trim_end()
+                        };
                         let step = format!(
-                            "Workspace: {}\nCommand: `{command}`\nExit code: {}\nBuild output:\n{log}\n",
+                            "Workspace: {}\nCommand: `{command}`\nExit code: {}\nBuild output:\n{log_body}\n",
                             dir.display(),
                             result.exit_code,
                         );
