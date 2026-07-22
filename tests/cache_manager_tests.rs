@@ -59,7 +59,11 @@ fn finds_project_root_from_nested_directory() {
         fs::canonicalize(&project_root).unwrap()
     );
     let db = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("db path");
-    assert!(db.is_file(), "external cache db should exist at {}", db.display());
+    assert!(
+        db.is_file(),
+        "external cache db should exist at {}",
+        db.display()
+    );
     assert!(
         !project_root.join(".adjutant").is_dir(),
         "cache must not create in-repo .adjutant/"

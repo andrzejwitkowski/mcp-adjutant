@@ -51,9 +51,7 @@ impl AgentLoopOrchestrator {
                 return Err("job cancelled".to_string());
             }
             // Prefer job-registry age so nested scout/triage loops share one budget.
-            if crate::jobs::job_wall_clock_exceeded()
-                || started.elapsed() > wall
-            {
+            if crate::jobs::job_wall_clock_exceeded() || started.elapsed() > wall {
                 return Err(format!(
                     "job wall-clock limit exceeded ({}s)",
                     crate::jobs::JOB_WALL_CLOCK_SECS

@@ -518,7 +518,8 @@ mod tests {
                 r#"{"score": 5, "critique": "weak", "desired_output": "   "}"#,
             )
             .expect("parse");
-        normalize_desired_output(&mut payload).expect("empty desired_output allowed when score < 10");
+        normalize_desired_output(&mut payload)
+            .expect("empty desired_output allowed when score < 10");
         assert!(payload.desired_output.is_empty());
     }
 

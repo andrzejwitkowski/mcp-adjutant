@@ -94,7 +94,10 @@ fn model_listed(models_json: &Value, model_name: &str) -> bool {
     })
 }
 
-pub fn preflight_phase(profile: &PhaseProfile, config: &AdjutantConfig) -> Result<PreflightReport, String> {
+pub fn preflight_phase(
+    profile: &PhaseProfile,
+    config: &AdjutantConfig,
+) -> Result<PreflightReport, String> {
     let checksum = config_checksum(config);
     let mut client = OpenAiCompatibleClient::new(profile.clone());
 
@@ -114,17 +117,13 @@ pub fn preflight_phase(profile: &PhaseProfile, config: &AdjutantConfig) -> Resul
         "ping",
         &tools,
     );
-    let tool_turn = client.complete(tool_req).map_err(|err| {
-        format!("preflight tool-call failed ({checksum}): {err}")
-    })?;
+    let tool_turn = client
+        .complete(tool_req)
+        .map_err(|err| format!("preflight tool-call failed ({checksum}): {err}"))?;
     let tool_call_ok = !tool_turn.tool_calls.is_empty() || tool_turn.content.is_some();
 
     let empty = LlmToolSet::new();
-    let plain_req = LlmRequest::new(
-        "Reply with the single word ok.",
-        "Say ok",
-        &empty,
-    );
+    let plain_req = LlmRequest::new("Reply with the single word ok.", "Say ok", &empty);
     let plain = match client.complete(plain_req) {
         Ok(turn) => turn,
         Err(err) if err.to_ascii_lowercase().contains("temperature") => {
@@ -135,7 +134,9 @@ pub fn preflight_phase(profile: &PhaseProfile, config: &AdjutantConfig) -> Resul
                     "Say ok",
                     &empty,
                 ))
-                .map_err(|e| format!("preflight no-tools failed after omit temperature ({checksum}): {e}"))?
+                .map_err(|e| {
+                    format!("preflight no-tools failed after omit temperature ({checksum}): {e}")
+                })?
         }
         Err(err) => return Err(format!("preflight no-tools failed ({checksum}): {err}")),
     };
@@ -173,7 +174,9 @@ pub fn preflight_config(config: &AdjutantConfig) -> Result<String, String> {
         };
         let key = format!(
             "{}|{}|{}",
-            profile.base_url, profile.model_name, profile.temperature.to_bits()
+            profile.base_url,
+            profile.model_name,
+            profile.temperature.to_bits()
         );
         if !seen.insert(key) {
             continue;

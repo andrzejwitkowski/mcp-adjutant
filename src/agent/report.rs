@@ -49,8 +49,8 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         crate::tools::find_nearest_module_boundary(&source_abs, input.config)
     {
         let module_display = module_dir.display().to_string();
-        let module_rel = relativize_under_root(&module_display, input.project_root)
-            .unwrap_or(module_display);
+        let module_rel =
+            relativize_under_root(&module_display, input.project_root).unwrap_or(module_display);
         report.push_str(&format!(
             "[MODULE]\n{module_rel}\nVerify command: `{build_cmd}`\n\n"
         ));

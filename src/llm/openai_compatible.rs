@@ -373,15 +373,8 @@ mod tests {
 
     #[test]
     fn empty_tools_omits_tools_and_tool_choice() {
-        let body = build_chat_request_body(
-            "gpt-5-mini",
-            "sys",
-            "user",
-            None,
-            None,
-            Some(0.2),
-            1024,
-        );
+        let body =
+            build_chat_request_body("gpt-5-mini", "sys", "user", None, None, Some(0.2), 1024);
         assert!(body.get("tools").is_none());
         assert!(body.get("tool_choice").is_none());
         assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
@@ -409,8 +402,7 @@ mod tests {
 
     #[test]
     fn omitted_temperature_absent_from_body() {
-        let body =
-            build_chat_request_body("m", "s", "u", None, None, None, 100);
+        let body = build_chat_request_body("m", "s", "u", None, None, None, 100);
         assert!(body.get("temperature").is_none());
     }
 
