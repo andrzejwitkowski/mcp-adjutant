@@ -81,6 +81,12 @@ impl ProjectCacheManager {
             }
         }
 
+        // ponytail: naive file:line gate (basename.ext:N); evaluator score if false positives
+        if !insight_has_file_line_citation(&insight_content) {
+            self.invalidate_insight(&matched_query_id)?;
+            return Ok(None);
+        }
+
         Ok(Some(insight_content))
     }
 
@@ -514,6 +520,39 @@ fn is_local_cache_url(url: &str) -> bool {
     lower.contains("127.0.0.1") || lower.contains("localhost")
 }
 
+/// True when content has at least one `basename.ext:line` citation (SCOUT RUBRIC evidence).
+fn insight_has_file_line_citation(content: &str) -> bool {
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        if bytes[i] != b'.' {
+            i += 1;
+            continue;
+        }
+        if i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+            j += 1;
+        }
+        if j == i + 1 || j >= bytes.len() || bytes[j] != b':' {
+            i += 1;
+            continue;
+        }
+        let mut k = j + 1;
+        while k < bytes.len() && bytes[k].is_ascii_digit() {
+            k += 1;
+        }
+        if k > j + 1 {
+            return true;
+        }
+        i = j;
+    }
+    false
+}
+
 fn decode_embedding_blob(blob: &[u8]) -> Option<&[f32]> {
     let expected_bytes = EMBEDDING_DIM * std::mem::size_of::<f32>();
     if blob.len() != expected_bytes {
@@ -521,4 +560,27 @@ fn decode_embedding_blob(blob: &[u8]) -> Option<&[f32]> {
     }
 
     bytemuck::try_cast_slice(blob).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::insight_has_file_line_citation;
+
+    #[test]
+    fn citation_accepts_basename_ext_line() {
+        assert!(insight_has_file_line_citation("see manager.rs:42"));
+        assert!(insight_has_file_line_citation("path/to/cache_flow.rs:28"));
+        assert!(insight_has_file_line_citation("foo.ts:1 and bar.tsx:99"));
+    }
+
+    #[test]
+    fn citation_rejects_prose_without_file_line() {
+        assert!(!insight_has_file_line_citation(
+            "## Insight\nUse jwt_routes for JWT middleware."
+        ));
+        assert!(!insight_has_file_line_citation(
+            "version 1.2: not a citation"
+        ));
+        assert!(!insight_has_file_line_citation("no dots or colon digits"));
+    }
 }

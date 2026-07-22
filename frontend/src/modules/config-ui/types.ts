@@ -188,6 +188,7 @@ export interface PhaseTokenSummary {
   agent_phase: string
   prompt_tokens: number
   completion_tokens: number
+  cache_hits: number
   job_runs: number
 }
 

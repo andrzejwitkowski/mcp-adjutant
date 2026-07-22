@@ -20,7 +20,7 @@ fn semantic_graph_matches_paraphrase_and_invalidates_on_file_change() {
 
     let stored_query = "How to set up JWT authentication routing";
     let paraphrase_query = "JWT auth middleware configuration";
-    let insight = "## Insight\nUse `jwt_routes` for JWT middleware.";
+    let insight = "## Insight\nUse `jwt_routes` for JWT middleware at auth.rs:1.";
 
     let mut cache = open_cache_manager(&project_root);
     cache
@@ -93,7 +93,7 @@ fn semantic_lookup_stays_under_budget_after_warmup() {
     cache
         .store_insight(
             "How to set up JWT authentication routing",
-            "insight",
+            "insight at auth.rs:1",
             vec![auth_file],
         )
         .expect("store insight");

@@ -273,6 +273,7 @@ export function MetricsView() {
                 <th>Runs</th>
                 <th>Input tokens</th>
                 <th>Output tokens</th>
+                <th>Cache hits</th>
               </tr>
             </thead>
             <tbody>
@@ -288,6 +289,7 @@ export function MetricsView() {
                   <td>{row.job_runs}</td>
                   <td>{row.prompt_tokens.toLocaleString()}</td>
                   <td>{row.completion_tokens.toLocaleString()}</td>
+                  <td>{row.cache_hits}</td>
                 </tr>
               ))}
             </tbody>

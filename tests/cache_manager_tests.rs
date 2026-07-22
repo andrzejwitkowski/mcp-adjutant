@@ -91,7 +91,7 @@ fn store_and_retrieve_valid_insight() {
     cache
         .store_insight(
             "how does hello work?",
-            "## Insight\nCalls `hello`.",
+            "## Insight\nCalls `hello` at lib.rs:1.",
             vec![source_file.clone()],
         )
         .expect("store insight");
@@ -101,7 +101,7 @@ fn store_and_retrieve_valid_insight() {
         .expect("lookup")
         .expect("cache hit");
 
-    assert_eq!(cached, "## Insight\nCalls `hello`.");
+    assert_eq!(cached, "## Insight\nCalls `hello` at lib.rs:1.");
 
     fs::remove_dir_all(&project_root).ok();
 }
@@ -159,7 +159,7 @@ fn re_store_insight_refreshes_dependencies() {
     cache
         .store_insight(
             "dual dependency query",
-            "## Insight\nFirst version.",
+            "## Insight\nFirst version at a.rs:1.",
             vec![first_file.clone()],
         )
         .expect("store first insight");
@@ -167,7 +167,7 @@ fn re_store_insight_refreshes_dependencies() {
     cache
         .store_insight(
             "dual dependency query",
-            "## Insight\nSecond version.",
+            "## Insight\nSecond version at b.rs:1.",
             vec![second_file.clone()],
         )
         .expect("store updated insight");
@@ -177,7 +177,7 @@ fn re_store_insight_refreshes_dependencies() {
         .expect("lookup")
         .expect("cache hit");
 
-    assert_eq!(cached, "## Insight\nSecond version.");
+    assert_eq!(cached, "## Insight\nSecond version at b.rs:1.");
 
     fs::write(&first_file, "fn a() {}\n// stale\n").expect("modify stale dependency");
 
@@ -186,7 +186,7 @@ fn re_store_insight_refreshes_dependencies() {
         .expect("lookup after stale file change")
         .expect("cache should remain valid");
 
-    assert_eq!(still_valid, "## Insight\nSecond version.");
+    assert_eq!(still_valid, "## Insight\nSecond version at b.rs:1.");
 
     fs::remove_dir_all(&project_root).ok();
 }

@@ -49,8 +49,8 @@ fn seed_cache(repo: &Path) {
     let mut cache = open_cache_manager(repo);
     let insight = "## Scout insight\n\
 `run_scout_with_cache` checks `ProjectCacheManager::try_get_valid_insight` (cosine ≥ 0.82) \
-before running the scout loop. On `agent_completed` with file deps it calls `store_insight` \
-into `.adjutant/cache.db` (queries.embedding BLOB + insights + code_nodes).";
+at cache_flow.rs:15 before running the scout loop. On `agent_completed` with file deps it \
+calls `store_insight` into `.adjutant/cache.db` (queries.embedding BLOB + insights + code_nodes).";
     let dep = repo.join("src/agent/scout/cache_flow.rs");
     cache
         .store_insight(PROMPTS[0].0, insight, vec![dep])
@@ -77,7 +77,8 @@ async fn scout_live_eval_probe() {
 async fn scout_live_eval_tool_pair_cache_hit() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut cache = open_cache_manager(repo);
-    let insight = "## ScoutAgent: ripgrep vs ast_calls\nSelection: ripgrep when location unknown; ast_calls when file+method known.";
+    let insight = "## ScoutAgent: ripgrep vs ast_calls\n\
+Selection at tools.rs:1: ripgrep when location unknown; ast_calls when file+method known.";
     cache
         .store_insight(
             PROMPTS[1].0,

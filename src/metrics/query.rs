@@ -27,6 +27,7 @@ pub struct PhaseTokenSummary {
     pub agent_phase: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub cache_hits: u64,
     pub job_runs: u64,
 }
 
@@ -90,11 +91,17 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
             "WITH phases(agent_phase) AS (
                 SELECT DISTINCT agent_phase FROM llm_calls WHERE utc_date = ?1
                 UNION
+                SELECT DISTINCT agent_phase FROM cache_hits WHERE utc_date = ?1
+                UNION
                 SELECT DISTINCT agent_phase FROM agent_runs WHERE utc_date = ?1
              )
              SELECT p.agent_phase,
                     COALESCE(SUM(l.prompt_tokens), 0),
                     COALESCE(SUM(l.completion_tokens), 0),
+                    COALESCE((
+                        SELECT COUNT(*) FROM cache_hits c
+                        WHERE c.utc_date = ?1 AND c.agent_phase = p.agent_phase
+                    ), 0),
                     COALESCE(
                         NULLIF((
                             SELECT COUNT(*) FROM agent_runs r
@@ -121,7 +128,8 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
                 agent_phase: row.get(0)?,
                 prompt_tokens: row.get::<_, i64>(1)? as u64,
                 completion_tokens: row.get::<_, i64>(2)? as u64,
-                job_runs: row.get::<_, i64>(3)? as u64,
+                cache_hits: row.get::<_, i64>(3)? as u64,
+                job_runs: row.get::<_, i64>(4)? as u64,
             })
         })
         .map_err(|err| format!("summary by phase query: {err}"))?
@@ -369,6 +377,57 @@ mod tests {
 
         drop(store);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn summary_by_phase_includes_cache_hits() {
+        let dir = std::env::temp_dir().join(format!("metrics-summary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let db_path = dir.join("metrics.db");
+        let store = Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")));
+        init("session-summary".to_string(), Arc::clone(&store));
+
+        let today = utc_date_from_secs(current_unix_timestamp().expect("now"));
+        let now = current_unix_timestamp().expect("now");
+        {
+            let store = store.lock().expect("lock");
+            let conn = store.connection();
+            conn.execute(
+                "INSERT INTO llm_calls (
+                    id, session_id, request_uuid, mcp_tool, agent_phase, model_name,
+                    prompt_tokens, completion_tokens, created_at, utc_date
+                ) VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    "s1",
+                    "session-summary",
+                    "scout",
+                    "deepseek-chat",
+                    10,
+                    2,
+                    now,
+                    today
+                ],
+            )
+            .expect("insert llm");
+            conn.execute(
+                "INSERT INTO cache_hits (
+                    id, session_id, request_uuid, mcp_tool, agent_phase, created_at, utc_date
+                ) VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5)",
+                params!["s2", "session-summary", "scout", now, today],
+            )
+            .expect("insert cache hit");
+        }
+
+        let store = store.lock().expect("lock");
+        let summary = query_summary(store.connection(), "session-summary").expect("summary");
+        assert_eq!(summary.cache_hits.scout, 1);
+        assert!(summary.by_phase.iter().any(|row| row.agent_phase == "scout"
+            && row.cache_hits == 1
+            && row.prompt_tokens == 10));
+
+        drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
