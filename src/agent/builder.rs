@@ -348,11 +348,8 @@ impl<
                     }
 
                     let path_buf = resolve_test_output_path(&project_root, &path)?;
-
-                    if let Some(parent) = path_buf.parent() {
-                        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-                    }
-                    std::fs::write(&path_buf, &content).map_err(|err| err.to_string())?;
+                    crate::mutation_journal::assert_path_under_root(&path_buf, &project_root)?;
+                    crate::mutation_journal::journaled_write(&path_buf, content.as_bytes())?;
 
                     let triage_directive = Self::triage_directive(&tdd_phase);
                     context.accumulated_data.push_str(&format!(

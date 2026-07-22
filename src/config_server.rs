@@ -97,6 +97,13 @@ async fn put_config(
         .save_to_file(&state.config_path)
         .map_err(AppError::from)?;
 
+    let checksum = crate::llm::config_checksum(&config);
+    tracing::info!(
+        "config saved path={} checksum={}",
+        state.config_path.display(),
+        checksum
+    );
+
     Ok(Json(config.clone()))
 }
 

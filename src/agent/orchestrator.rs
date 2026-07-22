@@ -44,8 +44,25 @@ impl AgentLoopOrchestrator {
         agent: &impl AutonomousAgent,
         context: &mut AgentContext,
     ) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        let wall = std::time::Duration::from_secs(crate::jobs::JOB_WALL_CLOCK_SECS);
         while !context.is_finished && context.iterations < context.max_iterations {
+            if crate::jobs::job_cancel_requested() {
+                return Err("job cancelled".to_string());
+            }
+            // Prefer job-registry age so nested scout/triage loops share one budget.
+            if crate::jobs::job_wall_clock_exceeded() || started.elapsed() > wall {
+                return Err(format!(
+                    "job wall-clock limit exceeded ({}s)",
+                    crate::jobs::JOB_WALL_CLOCK_SECS
+                ));
+            }
             context.iterations += 1;
+            crate::jobs::publish_job_action(format!(
+                "{} turn {}",
+                agent.name(),
+                context.iterations
+            ));
 
             agent.process_and_evaluate(context).await?;
 

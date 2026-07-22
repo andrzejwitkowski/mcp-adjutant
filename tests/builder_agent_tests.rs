@@ -11,6 +11,7 @@ use mcp_adjutant::agent::{
 };
 use mcp_adjutant::domain::AdjutantConfig;
 use mcp_adjutant::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolCall};
+use mcp_adjutant::metrics::{with_job_context_async, JobContext};
 use mcp_adjutant::BuildResult;
 
 struct MockBuilderLlm {
@@ -266,10 +267,19 @@ async fn builder_agent_red_phase_runs_full_triage_loop_for_compile_fixes() {
         project_root.join("src/lib.rs"),
     );
 
-    let result =
-        AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
-            .await
-            .expect("builder loop should complete");
+    let result = with_job_context_async(
+        JobContext {
+            request_uuid: None,
+            mcp_tool: None,
+            workspace_root: Some(project_root.clone()),
+        },
+        || async {
+            AgentLoopOrchestrator::run(&agent, "PHASE_4_BUILDER\nGenerate unit test".to_string(), 1)
+                .await
+        },
+    )
+    .await
+    .expect("builder loop should complete");
 
     assert!(result.accumulated_data.contains("[RED OK]"));
     assert!(!result.accumulated_data.contains("[BUILDER GREEN OK]"));

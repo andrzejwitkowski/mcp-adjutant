@@ -23,7 +23,6 @@ pub fn with_thread_workspace_root<R>(root: PathBuf, f: impl FnOnce() -> R) -> R 
 
 pub const ADJUTANT_DIR: &str = ".adjutant";
 const CACHE_DB_FILE: &str = "cache.db";
-const GITIGNORE_ENTRY: &str = ".adjutant/";
 
 const MIGRATIONS: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS queries (
@@ -220,14 +219,30 @@ pub fn open_cache_connection(start_dir: &Path) -> Result<(PathBuf, Connection), 
 
 pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), String> {
     let project_root = find_project_root(start_dir)?;
-    let adjutant_dir = project_root.join(ADJUTANT_DIR);
+    // ponytail: cache lives under XDG, not repo/.adjutant (avoids dirty diffs / gitignore churn)
+    let adjutant_dir = external_cache_dir(&project_root)?;
 
     fs::create_dir_all(&adjutant_dir)
-        .map_err(|err| format!("failed to create {ADJUTANT_DIR} directory: {err}"))?;
-
-    ensure_gitignore_entry(&project_root)?;
+        .map_err(|err| format!("failed to create cache directory: {err}"))?;
 
     let db_path = adjutant_dir.join(CACHE_DB_FILE);
+    // One-shot migrate from legacy in-repo .adjutant/cache.db if present and external is empty.
+    let legacy = project_root.join(ADJUTANT_DIR).join(CACHE_DB_FILE);
+    if !db_path.exists() && legacy.exists() {
+        let tmp = adjutant_dir.join(format!("{CACHE_DB_FILE}.migrating-{}", std::process::id()));
+        match fs::copy(&legacy, &tmp).and_then(|_| fs::rename(&tmp, &db_path)) {
+            Ok(()) => {}
+            Err(err) => {
+                let _ = fs::remove_file(&tmp);
+                tracing::warn!(
+                    "failed to migrate legacy cache {} → {}: {err}",
+                    legacy.display(),
+                    db_path.display()
+                );
+            }
+        }
+    }
+
     let conn = Connection::open(&db_path).map_err(|err| {
         format!(
             "failed to open SQLite database at {}: {err}",
@@ -252,6 +267,33 @@ pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), 
     super::agent_names::backfill_evaluation_agent_names(&conn)?;
 
     Ok((project_root, conn))
+}
+
+fn external_cache_dir(project_root: &Path) -> Result<PathBuf, String> {
+    let canon = fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let key = hash_query_text(&canon.to_string_lossy());
+    let base = dirs_cache_home()
+        .join("mcp-adjutant")
+        .join("projects")
+        .join(&key[..16.min(key.len())]);
+    Ok(base)
+}
+
+/// Absolute path to the SQLite file for a project (outside the repo).
+pub fn project_cache_db_path(project_root: &Path) -> Result<PathBuf, String> {
+    Ok(external_cache_dir(project_root)?.join(CACHE_DB_FILE))
+}
+
+fn dirs_cache_home() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        let p = PathBuf::from(xdg);
+        if p.is_absolute() {
+            return p;
+        }
+    }
+    home::home_dir()
+        .map(|h| h.join(".cache"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/.cache"))
 }
 
 pub fn hash_query_text(query_text: &str) -> String {
@@ -316,38 +358,6 @@ pub fn find_project_root(start_dir: &Path) -> Result<PathBuf, String> {
             return Err(format!("could not find project root from {start_display}"));
         }
     }
-}
-
-fn ensure_gitignore_entry(project_root: &Path) -> Result<(), String> {
-    let gitignore_path = project_root.join(".gitignore");
-    if !gitignore_path.is_file() {
-        return Ok(());
-    }
-
-    let contents = fs::read_to_string(&gitignore_path)
-        .map_err(|err| format!("failed to read {}: {err}", gitignore_path.display()))?;
-
-    let already_ignored = contents.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed == ".adjutant" || trimmed == GITIGNORE_ENTRY
-    });
-
-    if already_ignored {
-        return Ok(());
-    }
-
-    let updated = if contents.is_empty() {
-        format!("{GITIGNORE_ENTRY}\n")
-    } else if contents.ends_with('\n') {
-        format!("{contents}{GITIGNORE_ENTRY}\n")
-    } else {
-        format!("{contents}\n{GITIGNORE_ENTRY}\n")
-    };
-
-    fs::write(&gitignore_path, updated)
-        .map_err(|err| format!("failed to update {}: {err}", gitignore_path.display()))?;
-
-    Ok(())
 }
 
 fn path_to_posix_string(path: &Path) -> String {

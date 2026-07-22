@@ -193,12 +193,8 @@ impl<C: LlmClient, TC: LlmClient, D: BuildCommandDiscoverer> TranspilerAgent<C, 
                 resolved.display()
             ));
         }
-        if let Some(parent) = resolved.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
-        }
-        std::fs::write(&resolved, content)
-            .map_err(|err| format!("write {}: {err}", resolved.display()))?;
+        crate::mutation_journal::assert_path_under_root(&resolved, &self.verify_workspace)?;
+        crate::mutation_journal::journaled_write(&resolved, content.as_bytes())?;
         if let Ok(mut guard) = self.triage_green.lock() {
             *guard = false;
         }

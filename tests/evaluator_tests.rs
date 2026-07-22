@@ -57,7 +57,7 @@ async fn evaluator_agent_stores_judgment_in_sqlite() {
         .accumulated_data
         .contains("src/sample.rs:10 invoke()"));
 
-    let db_path = project_root.join(".adjutant/cache.db");
+    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
     let conn = Connection::open(&db_path).expect("open cache.db");
     let (agent_name, score, feedback, desired): (String, i32, String, String) = conn
         .query_row(

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,6 +12,48 @@ pub const QUERY_JOB_STATUS_TOOL_NAME: &str = "query_job_status";
 const STALL_HINT_AFTER: Duration = Duration::from_secs(90);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const TERMINAL_RETENTION: Duration = Duration::from_secs(3600);
+pub const JOB_WALL_CLOCK_SECS: u64 = 900;
+
+static ACTIVE_REGISTRY: OnceLock<JobRegistry> = OnceLock::new();
+
+pub fn install_active_registry(registry: JobRegistry) {
+    let _ = ACTIVE_REGISTRY.set(registry);
+}
+
+pub fn active_registry() -> Option<&'static JobRegistry> {
+    ACTIVE_REGISTRY.get()
+}
+
+fn current_request_uuid() -> Option<String> {
+    crate::metrics::current_job_context()?.request_uuid
+}
+
+pub fn publish_job_action(action: impl Into<String>) {
+    let Some(uuid) = current_request_uuid() else {
+        return;
+    };
+    if let Some(reg) = active_registry() {
+        reg.set_action(&uuid, action);
+    }
+}
+
+pub fn job_cancel_requested() -> bool {
+    let Some(uuid) = current_request_uuid() else {
+        return false;
+    };
+    active_registry()
+        .map(|r| r.is_cancel_requested(&uuid))
+        .unwrap_or(false)
+}
+
+pub fn job_wall_clock_exceeded() -> bool {
+    let Some(uuid) = current_request_uuid() else {
+        return false;
+    };
+    active_registry()
+        .and_then(|r| r.job_age(&uuid))
+        .is_some_and(|age| age > Duration::from_secs(JOB_WALL_CLOCK_SECS))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +74,8 @@ struct JobRecord {
     created_at: Instant,
     updated_at: Instant,
     last_heartbeat: Instant,
+    current_action: Option<String>,
+    cancel_requested: bool,
 }
 
 struct HeartbeatHandle {
@@ -104,6 +148,8 @@ impl JobRegistry {
                 created_at: now,
                 updated_at: now,
                 last_heartbeat: now,
+                current_action: None,
+                cancel_requested: false,
             },
         );
         Ok(())
@@ -119,6 +165,38 @@ impl JobRegistry {
         self.mutate_if_active(request_uuid, |job| {
             job.last_heartbeat = Instant::now();
         });
+    }
+
+    pub fn set_action(&self, request_uuid: &str, action: impl Into<String>) {
+        self.mutate_if_active(request_uuid, |job| {
+            job.current_action = Some(action.into());
+            job.last_heartbeat = Instant::now();
+        });
+    }
+
+    pub fn request_cancel(&self, request_uuid: &str) -> Result<(), String> {
+        let mut jobs = self.inner.lock().expect("job registry lock");
+        let job = jobs
+            .get_mut(request_uuid)
+            .ok_or_else(|| format!("unknown request_uuid: {request_uuid}"))?;
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed) {
+            return Err(format!("job {request_uuid} already terminal"));
+        }
+        job.cancel_requested = true;
+        job.updated_at = Instant::now();
+        Ok(())
+    }
+
+    pub fn is_cancel_requested(&self, request_uuid: &str) -> bool {
+        let jobs = self.inner.lock().expect("job registry lock");
+        jobs.get(request_uuid)
+            .map(|j| j.cancel_requested)
+            .unwrap_or(false)
+    }
+
+    pub fn job_age(&self, request_uuid: &str) -> Option<Duration> {
+        let jobs = self.inner.lock().expect("job registry lock");
+        jobs.get(request_uuid).map(|j| j.created_at.elapsed())
     }
 
     pub fn complete(&self, request_uuid: &str, result: String) {
@@ -166,6 +244,8 @@ impl JobRegistry {
             "elapsed_secs": job.created_at.elapsed().as_secs(),
             "seconds_since_heartbeat": job.last_heartbeat.elapsed().as_secs(),
             "possibly_stalled": possibly_stalled,
+            "current_action": job.current_action,
+            "cancel_requested": job.cancel_requested,
             "result": job.result,
             "error": job.error,
             "terminal": matches!(job.status, JobStatus::Completed | JobStatus::Failed),
@@ -241,13 +321,17 @@ pub fn accepted_job_response(request_uuid: &str, tool_name: &str) -> String {
 pub fn query_job_status_schema() -> Value {
     json!({
         "name": QUERY_JOB_STATUS_TOOL_NAME,
-        "description": "Poll async adjutant job status by request_uuid. Most jobs return their result inline; use this only when a tool response says the job exceeded the await timeout, or to check liveness/staleness of a running job. possibly_stalled=true is advisory only; keep polling until terminal=true.",
+        "description": "Poll async adjutant job status by request_uuid. Set cancel=true to request cooperative cancel (checked between agent turns; mutating jobs roll back). possibly_stalled=true is advisory; keep polling until terminal=true.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "request_uuid": {
                     "type": "string",
                     "description": "UUID from the original tool call."
+                },
+                "cancel": {
+                    "type": "boolean",
+                    "description": "If true, request cancel of a non-terminal job."
                 }
             },
             "required": ["request_uuid"]
@@ -269,6 +353,17 @@ pub async fn run_tracked_job<F, Fut>(
     registry.heartbeat(&request_uuid);
     let _heartbeat = HeartbeatHandle::start(registry.clone(), request_uuid.clone());
 
+    let mutating = matches!(
+        tool_name.as_str(),
+        "generate_tests_and_scaffolding"
+            | "verify_and_triage"
+            | "execute_global_refactor"
+            | "transpile_types"
+    );
+    if mutating {
+        crate::mutation_journal::begin_job_journal(&request_uuid);
+    }
+
     let ctx = crate::metrics::JobContext {
         request_uuid: Some(request_uuid.clone()),
         mcp_tool: Some(tool_name.clone()),
@@ -280,17 +375,35 @@ pub async fn run_tracked_job<F, Fut>(
 
     match join_result {
         Ok(Ok(result)) => {
+            if mutating {
+                let _ = crate::mutation_journal::end_job_journal(&request_uuid, true);
+            }
             crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.complete(&request_uuid, result)
         }
         Ok(Err(error)) => {
+            if mutating {
+                if let Err(rb) = crate::mutation_journal::end_job_journal(&request_uuid, false) {
+                    tracing::warn!("mutation rollback: {rb}");
+                }
+            }
             crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.fail(&request_uuid, error)
         }
         Err(join_error) if join_error.is_panic() => {
+            if mutating {
+                if let Err(rb) = crate::mutation_journal::end_job_journal(&request_uuid, false) {
+                    tracing::warn!("mutation rollback after panic: {rb}");
+                }
+            }
             registry.fail(&request_uuid, "Job panicked during execution".to_string());
         }
         Err(join_error) => {
+            if mutating {
+                if let Err(rb) = crate::mutation_journal::end_job_journal(&request_uuid, false) {
+                    tracing::warn!("mutation rollback after cancel: {rb}");
+                }
+            }
             registry.fail(&request_uuid, format!("Job task cancelled: {join_error}"))
         }
     }

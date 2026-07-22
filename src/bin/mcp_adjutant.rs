@@ -26,6 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = load_or_default(&config_path);
     let port = config.server_port;
+    let checksum = mcp_adjutant::llm::config_checksum(&config);
+    tracing::info!("loaded config checksum={checksum}");
+    if mcp_adjutant::llm::skip_preflight() {
+        tracing::warn!("MCP_ADJUTANT_SKIP_PREFLIGHT set — skipping startup provider preflight");
+    } else {
+        match mcp_adjutant::llm::preflight_config(&config) {
+            Ok(cs) => tracing::info!("startup preflight ok checksum={cs}"),
+            Err(err) => tracing::warn!("startup preflight failed (jobs may fail closed): {err}"),
+        }
+    }
     let shared = Arc::new(RwLock::new(config));
 
     let metrics_db_path = metrics::resolve_metrics_db_path(&config_path);

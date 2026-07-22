@@ -57,6 +57,7 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
     if line_number == 0 {
         return Err("line_number must be >= 1".to_string());
     }
+    crate::mutation_journal::assert_path_under_root(path, &crate::cache::mcp_workspace_root())?;
 
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -78,8 +79,7 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
         updated.push_str(separator);
     }
 
-    std::fs::write(path, updated)
-        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+    crate::mutation_journal::journaled_write(path, updated.as_bytes())
 }
 
 pub fn edit_file_range(
@@ -96,6 +96,7 @@ pub fn edit_file_range(
             "end line {end_line} must be >= start line {start_line}"
         ));
     }
+    crate::mutation_journal::assert_path_under_root(path, &crate::cache::mcp_workspace_root())?;
 
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -119,8 +120,7 @@ pub fn edit_file_range(
         updated.push_str(separator);
     }
 
-    std::fs::write(path, updated)
-        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+    crate::mutation_journal::journaled_write(path, updated.as_bytes())
 }
 
 #[cfg(test)]
@@ -150,14 +150,18 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("mcp-adjutant-edit-{nanos}.txt"));
+        let dir = std::env::temp_dir().join(format!("mcp-adjutant-edit-{nanos}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("file.txt");
         fs::write(&path, "alpha\nbeta\ngamma\n").expect("write");
 
-        edit_file_line(&path, 2, "bravo").expect("edit");
+        crate::cache::with_thread_workspace_root(dir.clone(), || {
+            edit_file_line(&path, 2, "bravo").expect("edit");
+        });
         let updated = fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "alpha\nbravo\ngamma\n");
 
-        fs::remove_file(&path).ok();
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -166,14 +170,18 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("mcp-adjutant-edit-crlf-{nanos}.txt"));
+        let dir = std::env::temp_dir().join(format!("mcp-adjutant-edit-crlf-{nanos}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("file.txt");
         fs::write(&path, "alpha\r\nbeta\r\n").expect("write");
 
-        edit_file_line(&path, 2, "bravo").expect("edit");
+        crate::cache::with_thread_workspace_root(dir.clone(), || {
+            edit_file_line(&path, 2, "bravo").expect("edit");
+        });
         let updated = fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "alpha\r\nbravo\r\n");
 
-        fs::remove_file(&path).ok();
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -58,13 +58,25 @@ fn finds_project_root_from_nested_directory() {
         cache.project_root(),
         fs::canonicalize(&project_root).unwrap()
     );
-    assert!(project_root.join(".adjutant").is_dir());
+    let db = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("db path");
+    assert!(
+        db.is_file(),
+        "external cache db should exist at {}",
+        db.display()
+    );
+    assert!(
+        !project_root.join(".adjutant").is_dir(),
+        "cache must not create in-repo .adjutant/"
+    );
 
+    if let Some(parent) = db.parent() {
+        let _ = fs::remove_dir_all(parent);
+    }
     fs::remove_dir_all(&project_root).ok();
 }
 
 #[test]
-fn appends_adjutant_directory_to_existing_gitignore() {
+fn does_not_mutate_repo_gitignore_for_cache() {
     let project_root = unique_temp_project("gitignore");
     fs::create_dir_all(&project_root).expect("create project root");
     write_demo_cargo_manifest(&project_root);
@@ -73,7 +85,8 @@ fn appends_adjutant_directory_to_existing_gitignore() {
     open_cache_manager(&project_root);
 
     let gitignore = fs::read_to_string(project_root.join(".gitignore")).expect("read gitignore");
-    assert!(gitignore.contains(".adjutant/"));
+    assert_eq!(gitignore, "target/\n");
+    assert!(!gitignore.contains(".adjutant/"));
 
     fs::remove_dir_all(&project_root).ok();
 }
@@ -328,7 +341,7 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
         )
         .expect("second evaluation with same score");
 
-    let db_path = project_root.join(".adjutant/cache.db");
+    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
     let conn = Connection::open(&db_path).expect("open cache.db");
     let count: i32 = conn
         .query_row(

@@ -16,6 +16,7 @@ pub struct BuilderReportInput<'a> {
     pub test_type: &'a str,
     pub green_ok: bool,
     pub verify_summary: Option<&'a str>,
+    pub config: &'a crate::domain::AdjutantConfig,
 }
 
 pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
@@ -38,6 +39,22 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         source = input.source_file_path,
         test_type = input.test_type
     ));
+
+    let source_abs = if Path::new(input.source_file_path).is_absolute() {
+        PathBuf::from(input.source_file_path)
+    } else {
+        input.project_root.join(input.source_file_path)
+    };
+    if let Some((module_dir, build_cmd)) =
+        crate::tools::find_nearest_module_boundary(&source_abs, input.config)
+    {
+        let module_display = module_dir.display().to_string();
+        let module_rel =
+            relativize_under_root(&module_display, input.project_root).unwrap_or(module_display);
+        report.push_str(&format!(
+            "[MODULE]\n{module_rel}\nVerify command: `{build_cmd}`\n\n"
+        ));
+    }
 
     report.push_str("[TEST SOURCE]\n");
     if let Some(path) = &rel_path {
@@ -268,6 +285,7 @@ Tool: write_test_suite({\"path\":\"tests/foo_integration_test.rs\"})\n\
         let dir = std::env::temp_dir().join(format!("builder-report-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("tests")).expect("mkdir");
         std::fs::write(dir.join("tests/foo_integration_test.rs"), "fn test_x() {}").expect("write");
+        let config = crate::domain::AdjutantConfig::default();
         let report = format_builder_report(&BuilderReportInput {
             accumulated_data: fixture,
             project_root: &dir,
@@ -275,6 +293,7 @@ Tool: write_test_suite({\"path\":\"tests/foo_integration_test.rs\"})\n\
             test_type: "unit",
             green_ok: true,
             verify_summary: Some("cargo test --test foo_integration_test: all tests passed"),
+            config: &config,
         });
         assert!(report.contains("[TEST SOURCE]"));
         assert!(report.contains("tests/foo_integration_test.rs"));
