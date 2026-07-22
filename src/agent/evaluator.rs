@@ -27,7 +27,7 @@ Scoring guide:
 
 If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
 
-When score < 10, desired_output MUST be a complete exemplar that would earn 10/10 for ORIGINAL TASK (file:line evidence, commands, logs — match the agent rubric). When score is 10, desired_output MUST be "".
+When score < 10, desired_output SHOULD be a complete exemplar that would earn 10/10 when you can produce one; empty string is allowed for failed/partial jobs. When score is 10, desired_output MUST be "".
 
 desired_output MUST use real APIs/signatures from ORIGINAL TASK and THEIR OUTPUT — never invent functions, props, or compiler log lines the toolchain does not emit (e.g. do not fabricate per-file `Checking types for …` lines for `tsc -b`).
 
@@ -208,22 +208,13 @@ impl<C: LlmClient> EvaluatorAgent<C> {
     }
 }
 
-/// Score 10 → force empty desired_output; score &lt; 10 → require non-blank exemplar.
+/// Score 10 → force empty desired_output; score &lt; 10 → optional exemplar (trim if present).
 fn normalize_desired_output(evaluation: &mut EvaluationPayload) -> Result<(), String> {
     if evaluation.score == 10 {
         evaluation.desired_output.clear();
         return Ok(());
     }
-    let trimmed = evaluation.desired_output.trim();
-    if trimmed.is_empty() {
-        return Err(
-            "evaluator desired_output must be a non-empty 10/10 exemplar when score < 10"
-                .to_string(),
-        );
-    }
-    if trimmed.len() != evaluation.desired_output.len() {
-        evaluation.desired_output = trimmed.to_string();
-    }
+    evaluation.desired_output = evaluation.desired_output.trim().to_string();
     Ok(())
 }
 
@@ -521,16 +512,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_evaluation_response_rejects_empty_desired_when_score_below_10() {
+    fn parse_evaluation_response_allows_empty_desired_when_score_below_10() {
         let mut payload =
             EvaluatorAgent::<crate::llm::ConfiguredLlmClient>::parse_evaluation_response(
                 r#"{"score": 5, "critique": "weak", "desired_output": "   "}"#,
             )
             .expect("parse");
-        let err =
-            normalize_desired_output(&mut payload).expect_err("empty desired_output must fail");
-
-        assert!(err.contains("desired_output"));
+        normalize_desired_output(&mut payload).expect("empty desired_output allowed when score < 10");
+        assert!(payload.desired_output.is_empty());
     }
 
     #[test]

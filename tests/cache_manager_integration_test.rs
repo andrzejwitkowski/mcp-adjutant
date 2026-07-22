@@ -29,7 +29,7 @@ fn store_evaluation_persists_data() {
         )
         .expect("store evaluation");
 
-    let db_path = project_root.join(".adjutant/cache.db");
+    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
     let conn = Connection::open(&db_path).expect("open cache.db");
     let count: i32 = conn
         .query_row(
@@ -78,7 +78,7 @@ fn store_evaluation_normalizes_builder_alias() {
         .store_evaluation("builder", "task", "output", 7, "ok", "exemplar")
         .expect("store evaluation");
 
-    let db_path = project_root.join(".adjutant/cache.db");
+    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
     let conn = Connection::open(&db_path).expect("open cache.db");
     let agent_name: String = conn
         .query_row(

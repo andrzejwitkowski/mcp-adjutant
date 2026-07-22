@@ -78,8 +78,7 @@ pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Res
         updated.push_str(separator);
     }
 
-    std::fs::write(path, updated)
-        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+    crate::mutation_journal::journaled_write(path, updated.as_bytes())
 }
 
 pub fn edit_file_range(
@@ -119,8 +118,7 @@ pub fn edit_file_range(
         updated.push_str(separator);
     }
 
-    std::fs::write(path, updated)
-        .map_err(|err| format!("failed to write {}: {err}", path.display()))
+    crate::mutation_journal::journaled_write(path, updated.as_bytes())
 }
 
 #[cfg(test)]

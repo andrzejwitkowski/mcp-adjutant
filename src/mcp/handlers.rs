@@ -32,13 +32,13 @@ use crate::cache::{
     require_workspace_root_arg, resolve_workspace_path, with_thread_workspace_root,
     ProjectCacheManager,
 };
-use crate::domain::AdjutantConfig;
+use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
 use crate::llm::{
     create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
     create_git_janitor_llm_client, create_planner_emit_llm_client, create_planner_llm_client,
     create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
-    create_web_fetcher_llm_client,
+    create_web_fetcher_llm_client, preflight_phase,
 };
 use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
@@ -48,6 +48,27 @@ const SCOUT_MAX_ITERATIONS: u32 = 10;
 const TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_MAX_ITERATIONS: u32 = 8;
 const EVALUATOR_MAX_ITERATIONS: u32 = 1;
+
+fn ensure_mutating_preflight(config: &AdjutantConfig, phases: &[AgentPhase]) -> Result<(), String> {
+    if crate::llm::skip_preflight() {
+        return Ok(());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for &phase in phases {
+        let profile = config.try_get_profile(phase)?;
+        let key = format!(
+            "{}|{}|{}",
+            profile.base_url,
+            profile.model_name,
+            profile.temperature.to_bits()
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        preflight_phase(&profile, config)?;
+    }
+    Ok(())
+}
 
 fn tool_eval_target_agent(tool_name: &str) -> Option<&'static str> {
     match tool_name {
@@ -158,6 +179,9 @@ pub async fn handle_query_job_status(
     registry: &JobRegistry,
 ) -> Result<String, String> {
     let request_uuid = parse_request_uuid(&args)?;
+    if args.get("cancel").and_then(Value::as_bool) == Some(true) {
+        registry.request_cancel(&request_uuid)?;
+    }
     let status = registry.query(&request_uuid)?;
     serde_json::to_string_pretty(&status).map_err(|err| format!("serialize status: {err}"))
 }
@@ -308,6 +332,7 @@ pub async fn handle_verify_and_triage(
         config.job_await_timeout_secs,
         workspace_root,
         move || async move {
+            ensure_mutating_preflight(&config, &[AgentPhase::Triage])?;
             let target_paths: Vec<PathBuf> = target_path_raws
                 .iter()
                 .map(resolve_workspace_path)
@@ -415,6 +440,10 @@ pub async fn handle_generate_tests_and_scaffolding(
         config.job_await_timeout_secs,
         workspace_root,
         move || async move {
+            ensure_mutating_preflight(
+                &config,
+                &[AgentPhase::Builder, AgentPhase::Scout, AgentPhase::Triage],
+            )?;
             let source_path = resolve_workspace_path(&source_file_path);
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 
@@ -493,14 +522,27 @@ pub async fn handle_generate_tests_and_scaffolding(
                 test_type: &test_type,
                 green_ok,
                 verify_summary: (!verify_summary.is_empty()).then_some(verify_summary.as_str()),
+                config: &config,
             });
-            Ok(finish_agent_job_with_eval(
+            // Fail closed: do not leave intentional RED tests in the workspace.
+            if !green_ok {
+                return Err(format!(
+                    "Builder did not complete GREEN verification (rolling back writes).\n{output}"
+                ));
+            }
+            let journal_note = crate::mutation_journal::with_active_journal(|j| j.diff_summary())
+                .unwrap_or_default();
+            let mut final_out = finish_agent_job_with_eval(
                 &config,
                 GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
                 &original_task,
                 output,
             )
-            .await)
+            .await;
+            if !journal_note.is_empty() {
+                final_out.push_str(&format!("\n\n## Diff summary\n{journal_note}\n"));
+            }
+            Ok(final_out)
         },
     )
     .await
@@ -541,6 +583,14 @@ pub async fn handle_execute_global_refactor(
         config.job_await_timeout_secs,
         workspace_root,
         move || async move {
+            ensure_mutating_preflight(
+                &config,
+                &[
+                    AgentPhase::Transformer,
+                    AgentPhase::Scout,
+                    AgentPhase::Triage,
+                ],
+            )?;
             let scope_path = scope_path_raw.as_ref().map(resolve_workspace_path);
             let transformer_client = create_transformer_llm_client(&config)?;
             let codemod_client = create_transformer_llm_client(&config)?;
@@ -862,11 +912,16 @@ pub async fn handle_transpile_types(
         config.job_await_timeout_secs,
         workspace_root,
         move || async move {
+            ensure_mutating_preflight(
+                &config,
+                &[AgentPhase::Builder, AgentPhase::Triage],
+            )?;
             let resolved_sources: Vec<PathBuf> = parsed
                 .source_paths
                 .iter()
                 .map(resolve_workspace_path)
                 .collect();
+            // ponytail: transpile LLM uses builder phase profile
             let resolved_target = resolve_workspace_path(&parsed.target_path);
             let resolved_preserve: Vec<PathBuf> = parsed
                 .preserve_paths

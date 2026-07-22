@@ -1,13 +1,13 @@
 use crate::domain::{AdjutantConfig, AgentPhase, PhaseProfile, Provider};
 use crate::metrics::record_llm_call;
 
-use super::deepseek::DeepSeekClient;
+use super::openai_compatible::OpenAiCompatibleClient;
 use super::request::LlmRequest;
 use super::traits::LlmClient;
 use super::types::LlmModelTurn;
 
 pub(crate) struct InstrumentedLlmClient {
-    inner: DeepSeekClient,
+    inner: OpenAiCompatibleClient,
     phase: AgentPhase,
     model_name: String,
 }
@@ -37,7 +37,7 @@ pub fn create_llm_client(
         Provider::DeepSeek | Provider::OpenRouter | Provider::OpenAI | Provider::Custom => {
             let model_name = profile.model_name.clone();
             Ok(ConfiguredLlmClient(Box::new(InstrumentedLlmClient {
-                inner: DeepSeekClient::new(profile),
+                inner: OpenAiCompatibleClient::new(profile),
                 phase,
                 model_name,
             })))

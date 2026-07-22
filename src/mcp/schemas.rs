@@ -396,4 +396,32 @@ mod workspace_root_schema_tests {
             }
         }
     }
+
+    #[test]
+    fn evaluate_schema_does_not_require_desired_output_input() {
+        let schema = super::evaluate_agent_performance_schema();
+        let props = schema["input_schema"]["properties"]
+            .as_object()
+            .expect("properties");
+        // Runtime may emit desired_output in the model response; MCP clients do not pass it.
+        assert!(
+            !props.contains_key("desired_output"),
+            "desired_output must not be an MCP input (runtime optional on score < 10)"
+        );
+        let required = schema["input_schema"]["required"]
+            .as_array()
+            .expect("required");
+        let req: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(!req.contains(&"desired_output"));
+        for key in [
+            "target_agent",
+            "original_task",
+            "received_output",
+            "workspace_root",
+            "request_uuid",
+        ] {
+            assert!(props.contains_key(key), "missing {key}");
+            assert!(req.contains(&key), "{key} must be required");
+        }
+    }
 }

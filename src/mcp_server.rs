@@ -57,6 +57,7 @@ pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
         .map_err(|err| format!("failed to start tokio runtime: {err}"))?;
 
     let jobs = JobRegistry::new();
+    crate::jobs::install_active_registry(jobs.clone());
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut framing = None;
