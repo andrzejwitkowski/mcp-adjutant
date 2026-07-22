@@ -229,12 +229,17 @@ pub fn prepare_project_cache(start_dir: &Path) -> Result<(PathBuf, Connection), 
     // One-shot migrate from legacy in-repo .adjutant/cache.db if present and external is empty.
     let legacy = project_root.join(ADJUTANT_DIR).join(CACHE_DB_FILE);
     if !db_path.exists() && legacy.exists() {
-        if let Err(err) = fs::copy(&legacy, &db_path) {
-            tracing::warn!(
-                "failed to migrate legacy cache {} → {}: {err}",
-                legacy.display(),
-                db_path.display()
-            );
+        let tmp = adjutant_dir.join(format!("{CACHE_DB_FILE}.migrating-{}", std::process::id()));
+        match fs::copy(&legacy, &tmp).and_then(|_| fs::rename(&tmp, &db_path)) {
+            Ok(()) => {}
+            Err(err) => {
+                let _ = fs::remove_file(&tmp);
+                tracing::warn!(
+                    "failed to migrate legacy cache {} → {}: {err}",
+                    legacy.display(),
+                    db_path.display()
+                );
+            }
         }
     }
 
@@ -281,13 +286,14 @@ pub fn project_cache_db_path(project_root: &Path) -> Result<PathBuf, String> {
 
 fn dirs_cache_home() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg);
+        let p = PathBuf::from(xdg);
+        if p.is_absolute() {
+            return p;
         }
     }
     home::home_dir()
         .map(|h| h.join(".cache"))
-        .unwrap_or_else(|| PathBuf::from(".cache"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/.cache"))
 }
 
 pub fn hash_query_text(query_text: &str) -> String {

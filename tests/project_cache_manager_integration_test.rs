@@ -22,5 +22,8 @@ fn prepare_project_cache_creates_external_db_not_in_repo() {
         "cache must not create in-repo .adjutant/"
     );
 
+    if let Some(parent) = db_path.parent() {
+        let _ = fs::remove_dir_all(parent);
+    }
     fs::remove_dir_all(&project_root).ok();
 }

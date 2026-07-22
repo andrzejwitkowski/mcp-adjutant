@@ -52,10 +52,11 @@ impl MutationJournal {
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
     }
 
-    pub fn rollback(self) -> Result<(), String> {
+    pub fn rollback(&mut self) -> Result<(), String> {
         let mut errors = Vec::new();
-        for (path, prior) in self.entries {
-            let result = match prior {
+        let mut keep = HashMap::new();
+        for (path, prior) in self.entries.drain() {
+            let result = match &prior {
                 Prior::Absent => {
                     if path.exists() {
                         std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir_all(&path))
@@ -72,8 +73,10 @@ impl MutationJournal {
             };
             if let Err(err) = result {
                 errors.push(format!("{}: {err}", path.display()));
+                keep.insert(path, prior);
             }
         }
+        self.entries = keep;
         if errors.is_empty() {
             Ok(())
         } else {
@@ -125,33 +128,51 @@ pub fn journaled_write(path: &Path, content: &[u8]) -> Result<(), String> {
 }
 
 pub fn end_job_journal(job_id: &str, ok: bool) -> Result<Option<String>, String> {
-    let Some(journal) = journals()
+    let mut map = journals()
         .lock()
-        .map_err(|_| "mutation journal lock poisoned".to_string())?
-        .remove(job_id)
-    else {
+        .map_err(|_| "mutation journal lock poisoned".to_string())?;
+    let Some(journal) = map.get_mut(job_id) else {
         return Ok(None);
     };
     let summary = journal.diff_summary();
     if ok {
+        map.remove(job_id);
         Ok(Some(summary))
     } else {
         journal.rollback()?;
+        map.remove(job_id);
         Ok(Some(format!("rolled back {summary}")))
     }
 }
 
 pub fn assert_path_under_root(path: &Path, root: &Path) -> Result<(), String> {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "path {} contains '..' and is not allowed",
+            path.display()
+        ));
+    }
     let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let parent = path.parent().unwrap_or(path);
     let canon = if path.exists() {
         path.canonicalize()
             .map_err(|err| format!("canonicalize {}: {err}", path.display()))?
     } else {
-        let parent_canon = parent
+        let mut ancestor = path.parent().unwrap_or(path).to_path_buf();
+        while !ancestor.exists() {
+            if !ancestor.pop() {
+                return Err(format!("no existing ancestor for path {}", path.display()));
+            }
+        }
+        let ancestor_canon = ancestor
             .canonicalize()
-            .unwrap_or_else(|_| parent.to_path_buf());
-        parent_canon.join(path.file_name().unwrap_or_default())
+            .map_err(|err| format!("canonicalize {}: {err}", ancestor.display()))?;
+        let suffix = path
+            .strip_prefix(&ancestor)
+            .unwrap_or_else(|_| path.file_name().map(Path::new).unwrap_or(path));
+        ancestor_canon.join(suffix)
     };
     if canon.starts_with(&canon_root) {
         Ok(())
@@ -195,6 +216,14 @@ mod tests {
         journal.rollback().unwrap();
         assert_eq!(std::fs::read(&existing).unwrap(), b"old");
         assert!(!created.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn assert_path_under_root_rejects_parent_dir_components() {
+        let dir = temp_dir("escape");
+        let err = assert_path_under_root(&dir.join("a/../../outside"), &dir).unwrap_err();
+        assert!(err.contains(".."), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -69,6 +69,9 @@ fn finds_project_root_from_nested_directory() {
         "cache must not create in-repo .adjutant/"
     );
 
+    if let Some(parent) = db.parent() {
+        let _ = fs::remove_dir_all(parent);
+    }
     fs::remove_dir_all(&project_root).ok();
 }
 

@@ -120,7 +120,7 @@ pub fn preflight_phase(
     let tool_turn = client
         .complete(tool_req)
         .map_err(|err| format!("preflight tool-call failed ({checksum}): {err}"))?;
-    let tool_call_ok = !tool_turn.tool_calls.is_empty() || tool_turn.content.is_some();
+    let tool_call_ok = !tool_turn.tool_calls.is_empty();
 
     let empty = LlmToolSet::new();
     let plain_req = LlmRequest::new("Reply with the single word ok.", "Say ok", &empty);
