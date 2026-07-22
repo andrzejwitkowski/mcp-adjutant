@@ -27,7 +27,7 @@ pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHA
 Available tools (tool calls):
 - gather_integration_context — runs a Scout sub-agent (ripgrep, AST, read_file) before integration tests
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
-- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in `content` (or the assistant message) — never markdown, rationale, or status prose. Cap ~24k chars.
+- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in tool argument `content` — never markdown, rationale, Thought text, or status prose. Cap ~24k chars.
 
 Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new test file matching the source language — never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
 

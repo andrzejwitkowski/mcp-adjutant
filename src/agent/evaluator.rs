@@ -272,7 +272,11 @@ fn find_legacy_eval_appendix(output: &str) -> Option<usize> {
         let idx = from + rel;
         let rest = &output[idx + needle.len()..];
         if let Some(slash) = rest.find("/10\nCritique:") {
-            if slash <= 2 && rest[..slash].bytes().all(|b| b.is_ascii_digit()) {
+            let score = &rest[..slash];
+            if matches!(
+                score,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10"
+            ) {
                 return Some(idx);
             }
         }
@@ -380,10 +384,10 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_evaluation_rubric, extract_json_object, format_eval_job_appendix,
-        format_evaluation_result, git_janitor_rubric_for, is_git_janitor_create_branch_eval,
-        normalize_desired_output, strip_auto_eval_appendix, AgentEvalSummary, EvaluationPayload,
-        EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+        agent_evaluation_rubric, extract_json_object, find_legacy_eval_appendix,
+        format_eval_job_appendix, format_evaluation_result, git_janitor_rubric_for,
+        is_git_janitor_create_branch_eval, normalize_desired_output, strip_auto_eval_appendix,
+        AgentEvalSummary, EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
@@ -587,5 +591,22 @@ mod tests {
     fn strip_auto_eval_appendix_ignores_incidental_qa_score_mention() {
         let body = "Discussed prior run:\n\nEvaluation: QA score was weak overall.\nKeep going.";
         assert_eq!(strip_auto_eval_appendix(body), body);
+    }
+
+    #[test]
+    fn find_legacy_eval_appendix_rejects_empty_and_zero_scores() {
+        assert!(
+            find_legacy_eval_appendix("body\n\nEvaluation: QA score /10\nCritique: x").is_none()
+        );
+        assert!(
+            find_legacy_eval_appendix("body\n\nEvaluation: QA score 0/10\nCritique: x").is_none()
+        );
+        assert!(
+            find_legacy_eval_appendix("body\n\nEvaluation: QA score 00/10\nCritique: x").is_none()
+        );
+        assert_eq!(
+            find_legacy_eval_appendix("body\n\nEvaluation: QA score 10/10\nCritique: x"),
+            Some(4)
+        );
     }
 }

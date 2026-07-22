@@ -196,6 +196,7 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
         || (ext != "py" && lower.starts_with("# "))
         || lower.starts_with("the triage results")
         || lower.starts_with("i will now")
+        || lower.starts_with("thought:")
         || lower.starts_with("rationale:")
         || lower.starts_with("status: green")
         || lower.starts_with("status: red")
@@ -236,8 +237,8 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn extract_test_content(content: Option<&str>, arguments: &Value) -> Result<String, String> {
-    // Prefer tool `content` so a short Thought in the assistant message cannot displace the suite.
+pub fn extract_test_content(_content: Option<&str>, arguments: &Value) -> Result<String, String> {
+    // Require tool `content` — assistant Thought/message must not supply the suite body.
     if let Some(text) = arguments
         .get("content")
         .and_then(Value::as_str)
@@ -246,13 +247,7 @@ pub fn extract_test_content(content: Option<&str>, arguments: &Value) -> Result<
     {
         return Ok(strip_code_fences(text));
     }
-    if let Some(text) = content.map(str::trim).filter(|text| !text.is_empty()) {
-        return Ok(strip_code_fences(text));
-    }
-    Err(
-        "write_test_suite requires test content in the assistant message or tool argument 'content'"
-            .to_string(),
-    )
+    Err("write_test_suite requires non-empty tool argument 'content'".to_string())
 }
 
 #[cfg(test)]
@@ -314,10 +309,10 @@ mod tests {
     }
 
     #[test]
-    fn extract_test_content_falls_back_to_assistant_message() {
-        let content = extract_test_content(Some("```rust\n#[test]\nfn t() {}\n```"), &json!({}))
-            .expect("content");
-        assert!(content.contains("#[test]"));
+    fn extract_test_content_rejects_assistant_message_fallback() {
+        let err = extract_test_content(Some("```rust\n#[test]\nfn t() {}\n```"), &json!({}))
+            .expect_err("require content arg");
+        assert!(err.contains("content"), "{err}");
     }
 
     #[test]
@@ -335,6 +330,16 @@ mod tests {
         let content =
             extract_test_content(None, &json!({"content": "#[test] fn t() {}"})).expect("content");
         assert_eq!(content, "#[test] fn t() {}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_thought_prefixed() {
+        let err = validate_test_content(
+            "Thought: rationale\nimport { describe } from 'vitest'\ndescribe('x', () => {})",
+            "foo.test.ts",
+        )
+        .expect_err("thought");
+        assert!(err.contains("source code only"), "{err}");
     }
 
     #[test]
