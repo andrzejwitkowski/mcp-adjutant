@@ -19,7 +19,7 @@ use super::builder_prompt::{source_file_from_builder_prompt, validate_test_path_
 pub use tools::{
     build_scout_factory_query, build_scout_integration_query, builder_tool_set,
     extract_test_content, parse_components, parse_factory_arguments,
-    parse_write_test_suite_arguments,
+    parse_write_test_suite_arguments, validate_test_content,
 };
 
 pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHASE_4_BUILDER). You generate unit tests, integration tests, and data factories.
@@ -27,11 +27,11 @@ pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHA
 Available tools (tool calls):
 - gather_integration_context — runs a Scout sub-agent (ripgrep, AST, read_file) before integration tests
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
-- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Put the full test file contents in your message; the tool only takes path and tdd_phase.
+- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in `content` (or the assistant message) — never markdown, rationale, or status prose. Cap ~24k chars.
 
 Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new test file matching the source language — never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
 
-TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED.
+TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED. Never claim GREEN yourself — only the host marks [BUILDER GREEN OK] after triage.
 
 Deliverable requirements (mandatory — MCP output is a structured report, not a tool transcript):
 - Repo-relative test file path and the full test source you wrote (or a diff)
@@ -40,7 +40,7 @@ Deliverable requirements (mandatory — MCP output is a structured report, not a
 - Cover every function/symbol named in the task — never skip scope without file:line proof that existing tests already cover it
 - On env/compile errors: include the error output and attempt pathing/fix before giving up
 
-Reply with a short rationale (Thought), then call tools."#;
+Reply with a short rationale (Thought — not the test body), then call tools with source in `content`."#;
 
 const BUILDER_TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_SCOUT_MAX_ITERATIONS: u32 = 8;
@@ -340,6 +340,12 @@ impl<
                             return Ok(());
                         }
                     };
+                    if let Err(err) = validate_test_content(&content, &path) {
+                        context
+                            .accumulated_data
+                            .push_str(&format!("Observation:\n{err}\n"));
+                        return Ok(());
+                    }
 
                     let path_buf = resolve_test_output_path(&project_root, &path)?;
 

@@ -1,4 +1,4 @@
-import type { AgentPhase } from './types'
+import type { AdjutantConfig, AgentPhase, PhaseBinding } from './types'
 
 export const AGENT_PHASES: {
   phase: AgentPhase
@@ -73,3 +73,12 @@ export const AGENT_PHASES: {
     icon: 'commit',
   },
 ]
+
+export function applyBindingToAllPhases(
+  phases: AdjutantConfig['phases'],
+  binding: PhaseBinding,
+): AdjutantConfig['phases'] {
+  const next = { ...phases }
+  for (const { phase } of AGENT_PHASES) next[phase] = { ...binding }
+  return next
+}

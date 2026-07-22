@@ -313,8 +313,7 @@ pub async fn handle_verify_and_triage(
                 .map(resolve_workspace_path)
                 .collect();
             let triage_client = create_triage_llm_client(&config)?;
-            let scout_client = create_scout_llm_client(&config)?;
-            let discoverer = LlmBuildDiscoverer::new(scout_client);
+            let discoverer = LlmBuildDiscoverer::new(create_triage_llm_client(&config)?);
             let target_paths_for_report = target_paths.clone();
             let agent = TriageAgent::with_build_runner_and_discoverer(
                 triage_client,
@@ -420,9 +419,8 @@ pub async fn handle_generate_tests_and_scaffolding(
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
 
             let builder_client = create_builder_llm_client(&config)?;
-            // ponytail: builder sub-agents use builder phase model (same as parent agent)
-            let scout_client = create_builder_llm_client(&config)?;
-            let triage_client = create_builder_llm_client(&config)?;
+            let scout_client = create_scout_llm_client(&config)?;
+            let triage_client = create_triage_llm_client(&config)?;
             let agent = default_builder_agent(
                 builder_client,
                 cache_manager,
@@ -793,8 +791,7 @@ pub async fn handle_babysit_pr(
 
             let babysitter_client = create_babysitter_llm_client(&config)?;
             let triage_client = create_triage_llm_client(&config)?;
-            let scout_client = create_scout_llm_client(&config)?;
-            let discoverer = LlmBuildDiscoverer::new(scout_client);
+            let discoverer = LlmBuildDiscoverer::new(create_triage_llm_client(&config)?);
             let triage_agent = TriageAgent::with_build_runner_and_discoverer(
                 triage_client,
                 Vec::new(),
@@ -925,8 +922,7 @@ pub async fn handle_transpile_types(
                 );
                 AgentLoopOrchestrator::run(&agent, prompt, TRANSPILER_MAX_ITERATIONS).await
             } else {
-                let scout_client = create_scout_llm_client(&config)?;
-                let discoverer = LlmBuildDiscoverer::new(scout_client);
+                let discoverer = LlmBuildDiscoverer::new(create_triage_llm_client(&config)?);
                 let triage_agent = TriageAgent::with_build_runner_and_discoverer(
                     triage_client,
                     vec![resolved_target.clone()],

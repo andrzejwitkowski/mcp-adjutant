@@ -29,6 +29,10 @@ If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, sc
 
 When score < 10, desired_output MUST be a complete exemplar that would earn 10/10 for ORIGINAL TASK (file:line evidence, commands, logs — match the agent rubric). When score is 10, desired_output MUST be "".
 
+desired_output MUST use real APIs/signatures from ORIGINAL TASK and THEIR OUTPUT — never invent functions, props, or compiler log lines the toolchain does not emit (e.g. do not fabricate per-file `Checking types for …` lines for `tsc -b`).
+
+Ignore any trailing block starting with `[ADJUTANT AUTO-EVAL APPENDIX` — that is host metadata, not agent output.
+
 Be ruthless. Give 10/10 only for perfect, surgical execution."#;
 
 const PLANNER_RUBRIC: &str = r#"
@@ -64,12 +68,13 @@ Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technic
 const TRIAGE_RUBRIC: &str = r#"
 
 TRIAGE RUBRIC (override generic rubric):
-- 9-10: PASS/FAIL backed by build command, exit code, workspace path, target files, and log excerpt for each module tested
-- 7-8: Correct verdict with logs but missing exit code or incomplete target-file list
+- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a raw build log tail (batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
+- 7-8: Correct verdict with command + exit code + workspace; log tail thin or target list incomplete
 - 5-7: Correct FAIL (or incomplete PASS diagnosis) with command + exit code + log excerpt
-- 1-4: PASS/FAIL without logs, wrong project/workspace, or generic assertion without command output
-Hard caps: PASS without log excerpt max 3; wrong target project max 2.
-Evidenced FAIL scores 5-7, not 1-4."#;
+- 1-4: PASS/FAIL without command/exit evidence, wrong project/workspace, or generic assertion without command output
+Hard caps: PASS with no command+exit max 3; wrong target project max 2.
+Do NOT require invented per-module compiler lines. Evidenced FAIL scores 5-7, not 1-4.
+Identical structured PASS reports (same cmd/exit/workspace/targets) should score consistently (≥8 when exit 0 and log section present)."#;
 
 const BABYSITTER_RUBRIC: &str = r#"
 
@@ -138,14 +143,14 @@ impl<C: LlmClient> EvaluatorAgent<C> {
         }
     }
 
-    fn build_user_message(&self) -> String {
+    fn build_user_message(&self, agent_output: &str) -> String {
         let canonical = normalize_agent_name(&self.target_agent);
         let mut message = format!(
             "AGENT: {canonical}\n\nORIGINAL TASK:\n{}\n\nAGENT OUTPUT:\n{}",
-            self.original_task, self.received_output
+            self.original_task, agent_output
         );
         if let Some(rubric) =
-            agent_evaluation_rubric(&canonical, &self.original_task, &self.received_output)
+            agent_evaluation_rubric(&canonical, &self.original_task, agent_output)
         {
             message.push_str(rubric);
         }
@@ -153,7 +158,8 @@ impl<C: LlmClient> EvaluatorAgent<C> {
     }
 
     pub async fn evaluate_once(&self) -> Result<AgentEvalSummary, String> {
-        let user_message = self.build_user_message();
+        let agent_output = strip_auto_eval_appendix(&self.received_output);
+        let user_message = self.build_user_message(agent_output);
         let empty_tools = LlmToolSet::new();
         let request = LlmRequest::new(EVALUATOR_SYSTEM_PROMPT, &user_message, &empty_tools);
         let model_turn = self.client.complete(request)?;
@@ -178,7 +184,7 @@ impl<C: LlmClient> EvaluatorAgent<C> {
         cache.store_evaluation(
             &self.target_agent,
             &self.original_task,
-            &self.received_output,
+            agent_output,
             evaluation.score,
             &evaluation.critique,
             &evaluation.desired_output,
@@ -236,8 +242,9 @@ fn format_evaluation_result(evaluation: &EvaluationPayload) -> String {
 }
 
 pub fn format_eval_job_appendix(summary: &AgentEvalSummary) -> String {
+    // ponytail: marker lets MCP evaluate_agent_performance ignore host auto-eval noise
     let mut out = format!(
-        "\n\nEvaluation: QA score {}/10\nCritique: {}",
+        "\n\n[ADJUTANT AUTO-EVAL APPENDIX — not part of agent output]\nQA score: {}/10\nCritique: {}",
         summary.score, summary.critique
     );
     if !summary.desired_output.is_empty() {
@@ -245,6 +252,34 @@ pub fn format_eval_job_appendix(summary: &AgentEvalSummary) -> String {
         out.push_str(&summary.desired_output);
     }
     out
+}
+
+fn strip_auto_eval_appendix(output: &str) -> &str {
+    let mut cut = output.len();
+    if let Some(idx) = output.find("\n\n[ADJUTANT AUTO-EVAL APPENDIX") {
+        cut = cut.min(idx);
+    }
+    if let Some(idx) = find_legacy_eval_appendix(output) {
+        cut = cut.min(idx);
+    }
+    output[..cut].trim_end()
+}
+
+/// Old host appendix: `\n\nEvaluation: QA score N/10\nCritique:` (N = 1–10).
+fn find_legacy_eval_appendix(output: &str) -> Option<usize> {
+    let needle = "\n\nEvaluation: QA score ";
+    let mut from = 0;
+    while let Some(rel) = output[from..].find(needle) {
+        let idx = from + rel;
+        let rest = &output[idx + needle.len()..];
+        if let Some(slash) = rest.find("/10\nCritique:") {
+            if slash <= 2 && rest[..slash].bytes().all(|b| b.is_ascii_digit()) {
+                return Some(idx);
+            }
+        }
+        from = idx + needle.len();
+    }
+    None
 }
 
 fn payload_to_summary(evaluation: &EvaluationPayload) -> AgentEvalSummary {
@@ -346,9 +381,10 @@ impl<C: LlmClient> AutonomousAgent for EvaluatorAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_evaluation_rubric, extract_json_object, format_evaluation_result,
-        git_janitor_rubric_for, is_git_janitor_create_branch_eval, normalize_desired_output,
-        EvaluationPayload, EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
+        agent_evaluation_rubric, extract_json_object, format_eval_job_appendix,
+        format_evaluation_result, git_janitor_rubric_for, is_git_janitor_create_branch_eval,
+        normalize_desired_output, strip_auto_eval_appendix, AgentEvalSummary, EvaluationPayload,
+        EvaluatorAgent, EVALUATOR_SYSTEM_PROMPT,
     };
 
     #[test]
@@ -530,5 +566,27 @@ mod tests {
         assert!(text.contains("QA score: 10/10"));
         assert!(text.contains("Critique: perfect"));
         assert!(!text.contains("Desired output"));
+    }
+
+    #[test]
+    fn strip_auto_eval_appendix_cuts_new_and_legacy_markers() {
+        let with_new = format!(
+            "agent body{}",
+            format_eval_job_appendix(&AgentEvalSummary {
+                score: 7,
+                critique: "ok".into(),
+                desired_output: "better".into(),
+            })
+        );
+        assert_eq!(strip_auto_eval_appendix(&with_new), "agent body");
+
+        let with_legacy = "agent body\n\nEvaluation: QA score 3/10\nCritique: stale";
+        assert_eq!(strip_auto_eval_appendix(with_legacy), "agent body");
+    }
+
+    #[test]
+    fn strip_auto_eval_appendix_ignores_incidental_qa_score_mention() {
+        let body = "Discussed prior run:\n\nEvaluation: QA score was weak overall.\nKeep going.";
+        assert_eq!(strip_auto_eval_appendix(body), body);
     }
 }

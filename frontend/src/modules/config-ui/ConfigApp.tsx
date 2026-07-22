@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AGENT_PHASES } from './agents'
+import { AGENT_PHASES, applyBindingToAllPhases } from './agents'
 import { AgentPhaseCard } from './AgentPhaseCard'
 import { AppShell } from './AppShell'
 import { LLM_CLIENTS } from './clients'
@@ -214,6 +214,10 @@ export function ConfigApp() {
     setConfig((c) => ({ ...c, phases: { ...c.phases, [phase]: binding } }))
   }
 
+  function applyBindingToAll(binding: PhaseBinding) {
+    setConfig((c) => ({ ...c, phases: applyBindingToAllPhases(c.phases, binding) }))
+  }
+
   function updateProfile(profile: ProviderProfile) {
     setConfig((c) => ({
       ...c,
@@ -354,6 +358,9 @@ export function ConfigApp() {
                 binding={config.phases[phase] ?? defaultBinding(phase)}
                 profiles={config.profiles}
                 onChange={(b) => updateBinding(phase, b)}
+                onApplyToAll={() =>
+                  applyBindingToAll(config.phases[phase] ?? defaultBinding(phase))
+                }
                 webFetcher={
                   phase === 'web_fetcher'
                     ? (config.web_fetcher ?? DEFAULT_WEB_FETCHER)

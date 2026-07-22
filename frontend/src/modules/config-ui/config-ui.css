@@ -854,6 +854,31 @@
   align-items: center;
 }
 
+.phase-card__apply-all {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgba(173, 198, 255, 0.25);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--text-muted, #9aa8c0);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.phase-card__apply-all .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.phase-card__apply-all:hover {
+  color: var(--text, #e8eef8);
+  border-color: rgba(173, 198, 255, 0.45);
+}
+
 .phase-card__icon {
   width: 3rem;
   height: 3rem;
