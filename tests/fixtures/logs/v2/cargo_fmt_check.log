@@ -1,0 +1,6 @@
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:01.0000000Z ##[error]Process completed with exit code 1.
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:00.9000000Z Diff in /home/runner/work/mcp-adjutant/mcp-adjutant/src/agent/evaluator.rs at line 518:
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:00.9010000Z -        normalize_desired_output(&mut payload).expect("empty desired_output allowed when score < 10");
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:00.9020000Z +        normalize_desired_output(&mut payload)
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:00.9030000Z +            .expect("empty desired_output allowed when score < 10");
+Rust Backend (Check & Test)	Check formatting	2026-07-22T12:10:00.9040000Z Running `cargo fmt -- --check` failed

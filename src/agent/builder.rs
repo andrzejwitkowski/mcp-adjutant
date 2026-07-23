@@ -27,11 +27,13 @@ pub const BUILDER_SYSTEM_PROMPT: &str = r#"You are an autonomous TDD worker (PHA
 Available tools (tool calls):
 - gather_integration_context — runs a Scout sub-agent (ripgrep, AST, read_file) before integration tests
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
-- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in tool argument `content` — never markdown, rationale, Thought text, or status prose. Cap ~24k chars.
+- write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in tool argument `content` — never markdown, rationale, Thought text, status prose, or triage narrative. Cap ~24k chars.
 
 Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new test file matching the source language — never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
 
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED. Never claim GREEN yourself — only the host marks [BUILDER GREEN OK] after triage.
+
+Imports: prefer public crate re-exports (e.g. `mcp_adjutant::LOG_ANALYZER_SYSTEM_PROMPT`, `mcp_adjutant::tools::…`). Never import private modules (`mcp_adjutant::agent::log_analyzer`, …). Name integration tests after the source module (e.g. `tests/crash_log_report_integration_test.rs`), not `mod_integration_test.rs`.
 
 Deliverable requirements (mandatory — MCP output is a structured report, not a tool transcript):
 - Repo-relative test file path and the full test source you wrote (or a diff)

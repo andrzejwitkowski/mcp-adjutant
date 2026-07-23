@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use super::report::quiet_success_build_body;
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
@@ -226,11 +227,7 @@ impl<C: LlmClient, B: BuildCommandRunner, D: BuildCommandDiscoverer> TriageAgent
                         body
                     };
                     if result.success {
-                        let log_body = if log.trim().is_empty() {
-                            "(no further stdout/stderr)"
-                        } else {
-                            log.trim_end()
-                        };
+                        let log_body = quiet_success_build_body(&log);
                         let step = format!(
                             "Workspace: {}\nCommand: `{command}`\nExit code: {}\nBuild output:\n{log_body}\n",
                             dir.display(),

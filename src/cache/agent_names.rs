@@ -30,6 +30,10 @@ const ALIASES: &[(&str, &str)] = &[
     ("git_janitor", "GitJanitorAgent"),
     ("gitjanitoragent", "GitJanitorAgent"),
     ("phase_git_janitor", "GitJanitorAgent"),
+    ("loganalyzer", "LogAnalyzerAgent"),
+    ("log_analyzer", "LogAnalyzerAgent"),
+    ("loganalyzeragent", "LogAnalyzerAgent"),
+    ("LogAnalyzer", "LogAnalyzerAgent"),
 ];
 
 pub fn normalize_agent_name(name: &str) -> String {
@@ -90,6 +94,13 @@ mod tests {
         assert_eq!(normalize_agent_name("babysitter"), "BabysitterAgent");
         assert_eq!(normalize_agent_name("PHASE_BABYSITTER"), "BabysitterAgent");
         assert_eq!(normalize_agent_name("BabysitterAgent"), "BabysitterAgent");
+    }
+
+    #[test]
+    fn normalize_maps_log_analyzer_aliases() {
+        assert_eq!(normalize_agent_name("LogAnalyzer"), "LogAnalyzerAgent");
+        assert_eq!(normalize_agent_name("loganalyzer"), "LogAnalyzerAgent");
+        assert_eq!(normalize_agent_name("LogAnalyzerAgent"), "LogAnalyzerAgent");
     }
 
     #[test]

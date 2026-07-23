@@ -18,6 +18,18 @@ pub struct LogAnalysisReport {
     pub log_truncated: bool,
     pub log_source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub failing_test: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reproduction: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_steps: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_fallback_error: Option<String>,
 }
 
@@ -29,35 +41,62 @@ pub struct CrashAnalysisCore {
     pub line_number: Option<u32>,
     pub column_number: Option<u32>,
     pub isolated_stack_trace: String,
+    pub failing_test: Option<String>,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReportEnrichment {
+    pub summary: Option<String>,
+    pub diagnosis: Option<String>,
+    pub reproduction: Option<Vec<String>>,
+    pub next_steps: Option<Vec<String>>,
+    pub llm_fallback_error: Option<String>,
 }
 
 pub fn analyze_crash_log(log: &str) -> CrashAnalysisCore {
-    if let Some(core) = parsers::detect_rust_compile_error(log) {
-        return core;
-    }
-    if let Some(core) = parsers::detect_rust_panic(log) {
-        return core;
-    }
-    if let Some(core) = parsers::detect_python_traceback(log) {
-        return core;
-    }
-    if let Some(core) = parsers::detect_node_error(log) {
-        return core;
-    }
-    if let Some(core) = parsers::detect_java_exception(log) {
-        return core;
-    }
-    if let Some(core) = parsers::detect_generic_runtime(log) {
-        return core;
-    }
+    let mut core = if let Some(core) = parsers::detect_cargo_fmt_check(log) {
+        core
+    } else if let Some(core) = parsers::detect_rust_compile_error(log) {
+        core
+    } else if let Some(core) = parsers::detect_rust_panic(log) {
+        core
+    } else if let Some(core) = parsers::detect_python_traceback(log) {
+        core
+    } else if let Some(core) = parsers::detect_node_error(log) {
+        core
+    } else if let Some(core) = parsers::detect_java_exception(log) {
+        core
+    } else if let Some(core) = parsers::detect_generic_runtime(log) {
+        core
+    } else {
+        CrashAnalysisCore {
+            error_type: "Unknown".into(),
+            error_message: "no recognizable error pattern".into(),
+            target_file: None,
+            line_number: None,
+            column_number: None,
+            isolated_stack_trace: String::new(),
+            failing_test: None,
+            command: None,
+            exit_code: None,
+        }
+    };
+    sanitize_core(&mut core);
+    core
+}
 
-    CrashAnalysisCore {
-        error_type: "Unknown".into(),
-        error_message: "no recognizable error pattern".into(),
-        target_file: None,
-        line_number: None,
-        column_number: None,
-        isolated_stack_trace: String::new(),
+pub fn sanitize_core(core: &mut CrashAnalysisCore) {
+    core.error_message = parsers::strip_timestamp_noise(&core.error_message);
+    core.isolated_stack_trace = core
+        .isolated_stack_trace
+        .lines()
+        .map(parsers::strip_timestamp_noise)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(test) = core.failing_test.as_mut() {
+        *test = parsers::strip_timestamp_noise(test);
     }
 }
 
@@ -78,17 +117,72 @@ pub fn build_summary(core: &CrashAnalysisCore) -> String {
     format!("{} at {loc} — {}", core.error_type, core.error_message)
 }
 
+pub fn default_reproduction(core: &CrashAnalysisCore) -> Option<Vec<String>> {
+    if let Some(cmd) = &core.command {
+        return Some(vec![cmd.clone()]);
+    }
+    let test = core.failing_test.as_deref()?;
+    if let Some(file) = core.target_file.as_deref() {
+        if let Some(bin) = file
+            .strip_prefix("tests/")
+            .and_then(|rest| rest.strip_suffix(".rs"))
+        {
+            return Some(vec![format!(
+                "cargo test --test {bin} {test} -- --nocapture"
+            )]);
+        }
+    }
+    Some(vec![format!("cargo test {test} -- --nocapture")])
+}
+
+pub fn default_next_steps(core: &CrashAnalysisCore) -> Option<Vec<String>> {
+    let mut steps = Vec::new();
+    if let Some(repro) = default_reproduction(core) {
+        if let Some(cmd) = repro.first() {
+            steps.push(format!("Reproduce with: {cmd}"));
+        }
+    }
+    match (&core.target_file, core.line_number) {
+        (Some(file), Some(line)) => {
+            steps.push(format!(
+                "Inspect {file}:{line} for the failing assertion or call"
+            ));
+        }
+        (Some(file), None) => {
+            steps.push(format!("Inspect {file} for the failing assertion or call"));
+        }
+        _ => {}
+    }
+    if core.error_type == "FormattingCheckFailed" {
+        steps.push("Run `cargo fmt` locally and re-check with `cargo fmt -- --check`".into());
+    }
+    if steps.is_empty() {
+        None
+    } else {
+        steps.truncate(4);
+        Some(steps)
+    }
+}
+
 pub fn to_report(
     core: CrashAnalysisCore,
     log_path: impl Into<String>,
     log_source: impl Into<String>,
     log_truncated: bool,
-    summary: Option<String>,
-    llm_fallback_error: Option<String>,
+    enrichment: ReportEnrichment,
 ) -> LogAnalysisReport {
-    let summary = summary
+    let summary = enrichment
+        .summary
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| build_summary(&core));
+    let reproduction = enrichment
+        .reproduction
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_reproduction(&core));
+    let next_steps = enrichment
+        .next_steps
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_next_steps(&core));
     LogAnalysisReport {
         error_type: core.error_type,
         error_message: core.error_message,
@@ -100,7 +194,13 @@ pub fn to_report(
         log_path: log_path.into(),
         log_truncated,
         log_source: log_source.into(),
-        llm_fallback_error,
+        failing_test: core.failing_test,
+        command: core.command,
+        exit_code: core.exit_code,
+        diagnosis: enrichment.diagnosis.filter(|s| !s.trim().is_empty()),
+        reproduction,
+        next_steps,
+        llm_fallback_error: enrichment.llm_fallback_error,
     }
 }
 
@@ -143,6 +243,7 @@ mod tests {
             core.error_message,
             "index out of bounds: the len is 3 but the index is 9"
         );
+        assert_eq!(core.failing_test.as_deref(), Some("test_storage_roundtrip"));
         assert!(parser_confident(&core));
     }
 
@@ -183,5 +284,50 @@ mod tests {
         assert_eq!(core.error_type, "TypeError");
         assert_eq!(core.target_file.as_deref(), Some("src/app.ts"));
         assert_eq!(core.line_number, Some(10));
+    }
+
+    #[test]
+    fn gh_actions_panic_strips_tsv_and_sets_failing_test() {
+        let log = include_str!("../../../tests/fixtures/logs/v2/gh_actions_panic.log");
+        let core = analyze_crash_log(log);
+        assert_eq!(core.error_type, "Panic");
+        assert_eq!(
+            core.target_file.as_deref(),
+            Some("tests/project_cache_manager_integration_test.rs")
+        );
+        assert_eq!(core.line_number, Some(15));
+        assert_eq!(
+            core.error_message,
+            "assertion failed: adjutant_dir.is_dir()"
+        );
+        assert!(!core.error_message.contains('\t'));
+        assert!(!core.isolated_stack_trace.contains('\t'));
+        assert_eq!(
+            core.failing_test.as_deref(),
+            Some("prepare_project_cache_creates_adjutant_dir_and_db")
+        );
+        let report = to_report(
+            core,
+            "gh-run:1",
+            "gh_actions",
+            false,
+            ReportEnrichment::default(),
+        );
+        assert!(report
+            .reproduction
+            .as_ref()
+            .is_some_and(|r| r.iter().any(|c| c.contains("cargo test"))));
+    }
+
+    #[test]
+    fn cargo_fmt_check_extracts_command_and_path() {
+        let log = include_str!("../../../tests/fixtures/logs/v2/cargo_fmt_check.log");
+        let core = analyze_crash_log(log);
+        assert_eq!(core.error_type, "FormattingCheckFailed");
+        assert_eq!(core.target_file.as_deref(), Some("src/agent/evaluator.rs"));
+        assert_eq!(core.line_number, Some(518));
+        assert_eq!(core.command.as_deref(), Some("cargo fmt -- --check"));
+        assert_eq!(core.exit_code, Some(1));
+        assert!(parser_confident(&core));
     }
 }

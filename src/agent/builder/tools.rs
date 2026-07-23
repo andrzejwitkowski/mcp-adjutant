@@ -185,6 +185,9 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
     if trimmed.is_empty() {
         return Err("write_test_suite content is empty".to_string());
     }
+    if trimmed.contains('\0') {
+        return Err("write_test_suite content contains NUL bytes".into());
+    }
     let lower = trimmed.to_ascii_lowercase();
     let ext = std::path::Path::new(path)
         .extension()
@@ -194,18 +197,23 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
     let looks_like_markdown = lower.starts_with("**")
         || lower.starts_with("## ")
         || (ext != "py" && lower.starts_with("# "))
-        || lower.starts_with("the triage results")
-        || lower.starts_with("i will now")
         || lower.starts_with("thought:")
         || lower.starts_with("rationale:")
         || lower.starts_with("status: green")
         || lower.starts_with("status: red")
         || lower.starts_with("previous triage")
         || lower.starts_with("the previous tdd")
-        || lower.starts_with("build & test command");
+        || lower.starts_with("build & test command")
+        || lower.contains("## phase_4_builder")
+        || lower.contains("[builder green")
+        || lower.contains("[triage failure")
+        || lower.contains("[triage result]")
+        || lower.contains("[build command")
+        || trimmed.contains("```")
+        || has_embedded_status_prose(trimmed);
     if looks_like_markdown {
         return Err(
-            "write_test_suite content must be source code only — no markdown/prose narrative"
+            "write_test_suite content must be source code only — no markdown/prose/status narrative"
                 .to_string(),
         );
     }
@@ -235,6 +243,20 @@ pub fn validate_test_content(content: &str, path: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn has_embedded_status_prose(content: &str) -> bool {
+    content.lines().any(|line| {
+        let t = line.trim().to_ascii_lowercase();
+        t.starts_with("the triage results")
+            || t.starts_with("to resolve this")
+            || t.starts_with("i will ")
+            || t.starts_with("status claimed")
+            || t.contains("claimed green")
+            || t.contains("no green")
+            || t.contains("triage failure")
+            || t.contains("iteration limit after")
+    })
 }
 
 pub fn extract_test_content(_content: Option<&str>, arguments: &Value) -> Result<String, String> {
@@ -366,6 +388,32 @@ mod tests {
         let huge = format!("import x from 'y'\n{}", "a".repeat(MAX_TEST_CONTENT_CHARS));
         let err = validate_test_content(&huge, "foo.test.ts").expect_err("size");
         assert!(err.contains("max"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_embedded_triage_prose() {
+        let err = validate_test_content(
+            "import { describe } from 'vitest'\ndescribe('x', () => {})\nThe triage results indicate failure\n",
+            "foo.test.ts",
+        )
+        .expect_err("prose");
+        assert!(err.contains("source code only"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_fences_and_green_marker() {
+        let err = validate_test_content(
+            "```tsx\nimport { describe } from 'vitest'\n```\n[BUILDER GREEN OK]\n",
+            "foo.test.tsx",
+        )
+        .expect_err("fence");
+        assert!(err.contains("source code only"), "{err}");
+    }
+
+    #[test]
+    fn validate_test_content_rejects_nul() {
+        let err = validate_test_content("import x from 'y'\0", "foo.test.ts").expect_err("nul");
+        assert!(err.contains("NUL"), "{err}");
     }
 
     #[test]

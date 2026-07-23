@@ -49,11 +49,11 @@ Score down if blueprint violates stated coordinator plan_kind or expectations."#
 const BUILDER_RUBRIC: &str = r#"
 
 BUILDER RUBRIC (override generic rubric):
-- 9-10: Delivers full test source (or diff) at a repo-relative path, build command with exit code, and log excerpt proving pass/fail; covers every function named in the task
+- 9-10: Delivers full test source (or diff) at a repo-relative path, build command with exit code, and log excerpt proving pass/fail; covers every function named in the task; host [BUILDER GREEN OK] only when verify passed
 - 7-8: Correct test logic with file path but thin build evidence, or minor gaps in requested scope
 - 5-6: Partial scaffolding; OR env/compile FAIL that includes error log plus attempted path/fix; OR correct diagnosis missing only full test body
-- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, or unverifiable success claim
-Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
+- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, unverifiable success claim, or markdown/prose written into the test file
+Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3; markdown/Thought/status prose in test file max 3; claiming GREEN without host [BUILDER GREEN OK] max 4.
 Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4."#;
 
 const SCOUT_RUBRIC: &str = r#"
@@ -68,12 +68,14 @@ Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technic
 const TRIAGE_RUBRIC: &str = r#"
 
 TRIAGE RUBRIC (override generic rubric):
-- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a raw build log tail (batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
+- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a build log section (even if quiet)
 - 7-8: Correct verdict with command + exit code + workspace; log tail thin or target list incomplete
 - 5-7: Correct FAIL (or incomplete PASS diagnosis) with command + exit code + log excerpt
 - 1-4: PASS/FAIL without command/exit evidence, wrong project/workspace, or generic assertion without command output
 Hard caps: PASS with no command+exit max 3; wrong target project max 2.
-Do NOT require invented per-module compiler lines. Evidenced FAIL scores 5-7, not 1-4.
+Quiet PASS is valid: npm/cargo banners only (`> … typecheck`, `> tsc -b`, `Finished …`, or `(quiet success…)`) with exit 0 MUST score ≥8 when workspace + targets + command are present — do NOT dock for missing per-file diagnostics.
+Do NOT invent per-module lines like `Checking types for …` in desired_output for `tsc -b` / `cargo check` / `cargo test` batch tools.
+Evidenced FAIL scores 5-7, not 1-4.
 Identical structured PASS reports (same cmd/exit/workspace/targets) should score consistently (≥8 when exit 0 and log section present)."#;
 
 const BABYSITTER_RUBRIC: &str = r#"
@@ -84,6 +86,16 @@ BABYSITTER RUBRIC (override generic rubric):
 - 5-7: Blocked with refuse_reason plus named checks and review paths
 - 1-4: Meta status, prose-only, or JSON missing check names / review paths / gh_state
 Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review state, not cargo/npm logs."#;
+
+const LOG_ANALYZER_RUBRIC: &str = r#"
+
+LOG ANALYZER RUBRIC (override generic rubric):
+- 9-10: Clean error_message/summary/stack (no GH Actions job\tstep\tISO8601Z noise); correct coords; failing_test when a panic thread name exists; grounded diagnosis; concrete reproduction (1-3 cmds) and ≤4 next_steps; no invented patches or hallucinated log lines
+- 7-8: Correct coords and clean messages; missing diagnosis or thin next_steps only
+- 5-6: Right failure type with file:line but GH TSV noise remains, or missing failing_test when present in the log
+- 1-4: Wrong root cause, fabricated patches/compiler lines, or coords that contradict the log
+Hard caps: GH Actions TSV noise in error_message/summary max 6; invented patch/unified_diff as primary deliverable max 4.
+Do NOT require full unified diffs or applyable patches — inspect/reproduce next_steps are enough."#;
 
 const GIT_JANITOR_RUBRIC: &str = r#"
 
@@ -294,6 +306,7 @@ fn agent_evaluation_rubric(
         "Phase_1_Scout" => Some(SCOUT_RUBRIC),
         "Phase_5_Triage" => Some(TRIAGE_RUBRIC),
         "BabysitterAgent" => Some(BABYSITTER_RUBRIC),
+        "LogAnalyzerAgent" => Some(LOG_ANALYZER_RUBRIC),
         "GitJanitorAgent" => Some(git_janitor_rubric_for(original_task, received_output)),
         name if name.starts_with("Phase_4_Builder") => Some(BUILDER_RUBRIC),
         _ => None,
