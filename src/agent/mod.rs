@@ -38,7 +38,8 @@ pub use git_janitor::{
     GIT_JANITOR_SYSTEM_PROMPT,
 };
 pub use log_analyzer::{
-    analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_SYSTEM_PROMPT,
+    analyze_log_at_path, llm_payload_to_core, LogAnalyzerAgent, LOG_ANALYZER_ENRICH_PROMPT,
+    LOG_ANALYZER_SYSTEM_PROMPT,
 };
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use planner::{
@@ -50,8 +51,8 @@ pub use planner::{
     PLANNER_SCOUT_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
 };
 pub use report::{
-    format_builder_report, format_triage_success, triage_passed, BuilderReportInput,
-    BUILDER_GREEN_MARKER, TRIAGE_PASS_MARKER,
+    format_builder_report, format_triage_success, quiet_success_build_body, triage_passed,
+    BuilderReportInput, BUILDER_GREEN_MARKER, TRIAGE_PASS_MARKER,
 };
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,

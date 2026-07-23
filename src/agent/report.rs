@@ -118,10 +118,15 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
     }
 
     report.push_str("\n## Debug trace\n");
-    report.push_str(&truncate_debug_trace(
-        input.accumulated_data,
-        DEBUG_TRACE_MAX,
-    ));
+    let debug = if input.green_ok {
+        input.accumulated_data.to_string()
+    } else {
+        input.accumulated_data.replace(
+            BUILDER_GREEN_MARKER,
+            "(stripped false GREEN — host verify failed)",
+        )
+    };
+    report.push_str(&truncate_debug_trace(&debug, DEBUG_TRACE_MAX));
     report
 }
 
@@ -241,6 +246,13 @@ pub fn format_triage_success(
         report.push_str("### Verification log\n\n");
         report.push_str(context.accumulated_data.trim());
         report.push('\n');
+        if looks_like_quiet_pass_log(&context.accumulated_data)
+            && !context.accumulated_data.contains("quiet success")
+        {
+            report.push('\n');
+            report.push_str(QUIET_SUCCESS_NOTE);
+            report.push('\n');
+        }
     } else {
         report.push_str("### Verification log\n\n(no build output captured)\n");
     }
@@ -260,6 +272,66 @@ pub fn format_triage_success(
     }
 
     report
+}
+
+const QUIET_SUCCESS_NOTE: &str = "(quiet success — exit 0 with no compiler diagnostics; batch tools like `tsc -b` / `cargo check` often emit only a short banner)";
+
+pub fn quiet_success_build_body(log: &str) -> String {
+    let trimmed = log.trim();
+    if trimmed.is_empty() {
+        return QUIET_SUCCESS_NOTE.to_string();
+    }
+    if is_quiet_tool_banner(trimmed) {
+        return format!("{trimmed}\n{QUIET_SUCCESS_NOTE}");
+    }
+    trimmed.to_string()
+}
+
+fn looks_like_quiet_pass_log(log: &str) -> bool {
+    if !log.contains("Exit code: 0") {
+        return false;
+    }
+    let Some(after) = log.split("Build output:").last() else {
+        return false;
+    };
+    let body = after.split("### Summary").next().unwrap_or(after).trim();
+    body.is_empty() || is_quiet_tool_banner(body) || body.contains("quiet success")
+}
+
+fn is_quiet_tool_banner(body: &str) -> bool {
+    let lines: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty() && !l.starts_with("(quiet success") && !l.starts_with("(log truncated)")
+        })
+        .collect();
+    if lines.is_empty() {
+        return true;
+    }
+    if lines.len() > 8 {
+        return false;
+    }
+    if lines.iter().any(|l| {
+        let lower = l.to_ascii_lowercase();
+        (lower.contains("error") && !lower.contains("0 error"))
+            || lower.contains("failed")
+            || lower.contains("failing")
+    }) {
+        return false;
+    }
+    lines.iter().all(|l| {
+        let t = l.trim_start();
+        t.starts_with('>')
+            || t.starts_with("Finished ")
+            || t.starts_with("Checking ")
+            || t.starts_with("Compiling ")
+            || t.contains("tsc -b")
+            || t.contains("typecheck")
+            || t.contains("cargo check")
+            || t.contains("cargo test")
+            || t.starts_with("(no further")
+    })
 }
 
 #[cfg(test)]
@@ -327,6 +399,57 @@ Tool: write_test_suite({\"path\":\"tests/foo_integration_test.rs\"})\n\
         assert!(report.contains("npm run typecheck"));
         assert!(report.contains("Exit code: 0"));
         assert!(report.contains("Target files verified: src/foo.ts, src/bar.ts"));
+    }
+
+    #[test]
+    fn format_triage_success_annotates_quiet_npm_banner() {
+        let context = AgentContext {
+            input_prompt: TRIAGE_PASS_MARKER.to_string(),
+            accumulated_data: "Workspace: /tmp/frontend\nCommand: `npm run typecheck`\nExit code: 0\nBuild output:\n> frontend@0.0.0 typecheck\n> tsc -b\n".to_string(),
+            iterations: 1,
+            max_iterations: 3,
+            is_finished: true,
+            agent_completed: false,
+            touched_files: vec![],
+            last_tool_call: None,
+        };
+        let report = format_triage_success(&context, &[std::path::PathBuf::from("src/a.ts")]);
+        assert!(report.contains("Exit code: 0"));
+        assert!(report.contains("quiet success"));
+        assert!(report.contains("Target files verified"));
+    }
+
+    #[test]
+    fn quiet_success_build_body_annotates_banner() {
+        let body = quiet_success_build_body("> frontend@0.0.0 typecheck\n> tsc -b\n");
+        assert!(body.contains("quiet success"));
+        assert!(body.contains("tsc -b"));
+    }
+
+    #[test]
+    fn format_builder_report_strips_false_green_when_not_ok() {
+        let fixture = "\
+\n[SYSTEM]: Launching Triage (green) for tests/foo_integration_test.rs\n\
+\n[TRIAGE RESULT]: Workspace: /repo\nCommand: `cargo test`\nExit code: 1\nBuild FAILED:\nboom\n\
+[BUILDER GREEN OK]\n";
+        let dir =
+            std::env::temp_dir().join(format!("builder-report-nongreen-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("tests")).expect("mkdir");
+        std::fs::write(dir.join("tests/foo_integration_test.rs"), "fn test_x() {}").expect("write");
+        let config = crate::domain::AdjutantConfig::default();
+        let report = format_builder_report(&BuilderReportInput {
+            accumulated_data: fixture,
+            project_root: &dir,
+            source_file_path: "src/foo.rs",
+            test_type: "unit",
+            green_ok: false,
+            verify_summary: None,
+            config: &config,
+        });
+        assert!(report.contains("(no GREEN"));
+        assert!(!report.contains("[BUILDER GREEN OK]"));
+        assert!(report.contains("stripped false GREEN"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

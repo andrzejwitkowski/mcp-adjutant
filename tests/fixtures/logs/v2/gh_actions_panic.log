@@ -1,0 +1,5 @@
+Rust Backend (Check & Test)	Run Backend Tests	2026-07-22T12:28:56.3353004Z thread 'prepare_project_cache_creates_adjutant_dir_and_db' (4111) panicked at tests/project_cache_manager_integration_test.rs:15:5:
+Rust Backend (Check & Test)	Run Backend Tests	2026-07-22T12:28:56.3353494Z assertion failed: adjutant_dir.is_dir()
+Rust Backend (Check & Test)	Run Backend Tests	2026-07-22T12:28:56.3353732Z stack backtrace:
+Rust Backend (Check & Test)	Run Backend Tests	2026-07-22T12:28:56.3353979Z    0: __rustc::rust_begin_unwind
+Rust Backend (Check & Test)	Run Backend Tests	2026-07-22T12:28:56.3354214Z    1: core::panicking::panic_fmt
