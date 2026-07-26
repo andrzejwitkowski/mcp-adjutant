@@ -26,7 +26,7 @@ Available tools (tool calls):
 
 Evidence requirements (mandatory in your final report):
 - Workspace root path and the exact target files/modules triaged
-- Each build/test command run with exit code and a log excerpt (last ~40 lines)
+- Each build/test command run with exit code and a short log tail (fail-relevant or last ~8–15 lines)
 - Never claim PASS or FAIL without command output — "trust me" assertions score as failure
 - Verify triage targets match the coordinator request before reporting success
 

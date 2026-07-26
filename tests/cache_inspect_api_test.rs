@@ -8,7 +8,7 @@ use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest}
 use mcp_adjutant::cache::{
     list_evaluations, list_evaluations_page, load_best_desired_output_exemplar,
     load_cache_snapshot, load_scout_cache_page, load_web_cache_page, open_cache_connection,
-    EVALUATIONS_PAGE_SIZE,
+    truncate_exemplar_for_prompt, EVALUATIONS_PAGE_SIZE, EXEMPLAR_PROMPT_CHAR_CAP,
 };
 
 #[test]
@@ -176,6 +176,56 @@ fn load_best_desired_output_exemplar_picks_highest_score() {
     assert_eq!(got, "high exemplar");
 
     fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn load_best_desired_output_exemplar_prefers_shortest_at_top_score() {
+    let project_root = unique_temp_project("inspect-exemplar-short");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+    cache
+        .store_evaluation(
+            "Phase_4_Builder",
+            "t1",
+            "o1",
+            9,
+            "ok",
+            "path: tests/foo.rs\ncmd: cargo test\nexit: 0\nlog: ok",
+        )
+        .expect("long high-score exemplar");
+    thread::sleep(Duration::from_millis(10));
+    cache
+        .store_evaluation(
+            "Phase_4_Builder",
+            "t2",
+            "o2",
+            9,
+            "great",
+            "tests/foo.rs exit 0",
+        )
+        .expect("short high-score exemplar");
+    cache
+        .store_evaluation("Phase_4_Builder", "t3", "o3", 6, "meh", "x")
+        .expect("short lower-score exemplar");
+
+    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
+    let got = load_best_desired_output_exemplar(&conn, "Phase_4_Builder")
+        .expect("load")
+        .expect("some");
+    assert_eq!(got, "tests/foo.rs exit 0");
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn truncate_exemplar_for_prompt_caps_length() {
+    let long = "a".repeat(EXEMPLAR_PROMPT_CHAR_CAP + 50);
+    let truncated = truncate_exemplar_for_prompt(&long);
+    assert!(truncated.len() < long.len());
+    assert!(truncated.contains("(truncated exemplar"));
+    assert_eq!(truncate_exemplar_for_prompt("short"), "short".to_string());
 }
 
 #[test]

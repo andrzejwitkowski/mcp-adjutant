@@ -285,6 +285,8 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 3. Fire the tool; immediately poll `query_job_status` (do not guess timeouts).
 4. On `terminal=true` with `status=completed`, run `evaluate_agent_performance` with **`received_output` = the full `query_job_status.result` string verbatim** (if &gt;8k chars, keep the last 8k). Do not paraphrase into a one-line status.
 5. If evaluator score **< 7**, **loop**: refine prompt from critique → re-delegate same tool → re-evaluate. Repeat until score ≥ 7 or 5 rounds exhausted.
+   - **≥7 means correct + dense**, not verbose. Accept pointer-style answers (path:line, cmd/exit, short tails). Do **not** retry just to add prose, full file paste, or longer snippets when claims are already evidenced.
+   - Retry only for missing claims, wrong workspace, absent evidence pointers, or hallucinations — never to inflate token volume.
 6. Integrate verified results into your response; cite what the sub-agent found/changed.
 7. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
 
@@ -410,12 +412,13 @@ Use a **new `request_uuid` per attempt**. Keep a short mental log: `attempt N / 
 
 Stop iterating only when **one** of these is true:
 
-- Evaluator score ≥ 7 (medium/hard) or your spot-check passes (low)
+- Evaluator score ≥ 7 (medium/hard) — **correct + dense** counts; do not chase higher scores by requesting more prose/snippets — or your spot-check passes (low)
 - Retry budget for the level is exhausted — then self-serve the remainder or ask the user
 - Error is architectural (sub-agent cannot fix without human decision)
 - Same failure repeats twice with no progress — change strategy (narrow prompt, different paths, or switch tool)
 
 **Never** stop because "the first try wasn't good enough." That is the signal to refine, not quit.
+**Never** retry solely to make a correct dense answer longer.
 
 ---
 

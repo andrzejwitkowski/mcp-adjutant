@@ -29,8 +29,8 @@ use crate::agent::{
 };
 use crate::cache::{
     load_best_desired_output_exemplar, mcp_workspace_root, open_cache_connection,
-    require_workspace_root_arg, resolve_workspace_path, with_thread_workspace_root,
-    ProjectCacheManager,
+    require_workspace_root_arg, resolve_workspace_path, truncate_exemplar_for_prompt,
+    with_thread_workspace_root, ProjectCacheManager,
 };
 use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
@@ -483,7 +483,7 @@ pub async fn handle_generate_tests_and_scaffolding(
                     load_best_desired_output_exemplar(&conn, "Phase_4_Builder")
                 {
                     prompt.push_str("\n\n## 10/10 output exemplar (match this report shape)\n");
-                    prompt.push_str(&exemplar);
+                    prompt.push_str(&truncate_exemplar_for_prompt(&exemplar));
                 }
             }
             if !parts.exemplar.is_empty() {
@@ -864,7 +864,7 @@ pub async fn handle_babysit_pr(
                     load_best_desired_output_exemplar(&conn, "BabysitterAgent")
                 {
                     prompt.push_str("\n\n## 10/10 output exemplar (match this JSON shape)\n");
-                    prompt.push_str(&exemplar);
+                    prompt.push_str(&truncate_exemplar_for_prompt(&exemplar));
                 }
             }
             let result =

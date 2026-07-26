@@ -146,6 +146,8 @@ pub struct WebCachePage {
     pub total_pages: u32,
 }
 
+/// Prefer the shortest non-empty exemplar among the highest score for this agent
+/// (ties on length → newest). Avoids replaying bloated "ideal" rewrites.
 pub fn load_best_desired_output_exemplar(
     conn: &Connection,
     agent_name: &str,
@@ -154,7 +156,11 @@ pub fn load_best_desired_output_exemplar(
     conn.query_row(
         "SELECT desired_output FROM agent_evaluations
          WHERE agent_name = ?1 AND desired_output != ''
-         ORDER BY score DESC, created_at DESC
+           AND score = (
+             SELECT MAX(score) FROM agent_evaluations
+             WHERE agent_name = ?1 AND desired_output != ''
+           )
+         ORDER BY LENGTH(desired_output) ASC, created_at DESC
          LIMIT 1",
         params![canonical],
         |row| row.get(0),
@@ -167,6 +173,23 @@ pub fn load_best_desired_output_exemplar(
             Err(format!("failed to load desired_output exemplar: {err}"))
         }
     })
+}
+
+/// Cap injected exemplars so bloated historical rows cannot dominate prompts.
+pub const EXEMPLAR_PROMPT_CHAR_CAP: usize = 2_000;
+const EXEMPLAR_TRUNCATE_SUFFIX: &str = "…\n(truncated exemplar; match the dense shape above)";
+
+pub fn truncate_exemplar_for_prompt(exemplar: &str) -> String {
+    if exemplar.len() <= EXEMPLAR_PROMPT_CHAR_CAP {
+        return exemplar.to_string();
+    }
+    let keep = EXEMPLAR_PROMPT_CHAR_CAP.saturating_sub(EXEMPLAR_TRUNCATE_SUFFIX.len());
+    // Char-boundary safe: walk back if we split a multibyte char.
+    let mut end = keep.min(exemplar.len());
+    while end > 0 && !exemplar.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{EXEMPLAR_TRUNCATE_SUFFIX}", &exemplar[..end])
 }
 
 pub fn list_evaluations(conn: &Connection) -> Result<Vec<AgentEvaluationRow>, String> {

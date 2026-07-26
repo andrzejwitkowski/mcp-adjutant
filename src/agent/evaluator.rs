@@ -13,68 +13,86 @@ You will receive:
 2. ORIGINAL TASK
 3. THEIR OUTPUT
 
+Answer vs artifact (critical):
+- Score the coordinator-facing report only (THEIR OUTPUT text).
+- Do NOT reward pasting file bodies, full test sources, or long logs that already exist on disk or were written by tools.
+- Large on-disk artifacts are fine and expected; dense pointer-style answers (path:line, cmd, exit, short tails) score higher than verbose essays with the same facts.
+
+Before scoring, silently run this CoVe checklist (do not put it in the JSON):
+1. Does the output answer every sub-question in ORIGINAL TASK?
+2. Are evidence pointers specific (file:line, cmd+exit, or equivalent for the agent)?
+3. Is there unnecessary paste, filler, repetition, or essay wrapping?
+4. Are claimed on-disk artifacts referenced by path rather than dumped inline?
+5. Any hallucinations or invented toolchain lines?
+Then score from those checks — not from prose length.
+
 Return ONE valid JSON object (no markdown fence) with this shape:
 {
   "score": [rating from 1 to 10],
-  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]",
-  "desired_output": "[Full exemplar rewrite of what the agent should have produced to earn 10/10 — same modality/format as THEIR OUTPUT (scout report, builder result, triage log, etc.). Not a checklist. If score is 10, set this to an empty string \"\".]"
+  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, padding, or weak assertions]",
+  "desired_output": "[Compact 10/10 shape exemplar — same modality as THEIR OUTPUT, minimal lines, no longer than needed. Not a checklist and not a longer essay than THEIR OUTPUT. If score is 10, set this to an empty string \"\".]"
 }
 
 Scoring guide:
-- 8–10: Output contains verifiable evidence (commands run, exit status, file:line paths, log excerpts).
-- 5–7: Correct FAIL or PASS conclusion with verifiable evidence (cmd/exit/log/snippet/path) even if incomplete.
+- 8–10: Dense, verifiable answer (paths/cmd/exit/short evidence) that fully answers the task without padding.
+- 5–7: Correct FAIL or PASS conclusion with verifiable pointers even if incomplete; OR correct answer buried under moderate filler (cap 6 if padded).
 - 1–4: Meta / status paraphrase with no supporting artifact.
+
+Hard caps (compactness):
+- Filler, repeated explanation, or essay wrapping a correct answer → score ≤6 even if evidence is present.
+- Pasting full file bodies / full test sources into the report when a path suffices → score ≤6.
+- Dense answer with path:line + cmd/exit (or agent-equivalent) that answers the task → eligible for 8–10.
 
 If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
 
-When score < 10, desired_output SHOULD be a complete exemplar that would earn 10/10 when you can produce one; empty string is allowed for failed/partial jobs. When score is 10, desired_output MUST be "".
+When score < 10, desired_output SHOULD be a compact exemplar that would earn 10/10 when you can produce one; empty string is allowed for failed/partial jobs. When score is 10, desired_output MUST be "".
 
 desired_output MUST use real APIs/signatures from ORIGINAL TASK and THEIR OUTPUT — never invent functions, props, or compiler log lines the toolchain does not emit (e.g. do not fabricate per-file `Checking types for …` lines for `tsc -b`).
 
 Ignore any trailing block starting with `[ADJUTANT AUTO-EVAL APPENDIX` — that is host metadata, not agent output.
 
-Be ruthless. Give 10/10 only for perfect, surgical execution."#;
+Be ruthless. Give 10/10 only for perfect, surgical, compact execution."#;
 
 const PLANNER_RUBRIC: &str = r#"
 
 PLANNER RUBRIC (override generic rubric):
-- 9-10: Multi-step pipeline (create_file + patch_file SEARCH/REPLACE wiring + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, paste-ready hunks with zero ellipses/placeholders
+- 9-10: Multi-step pipeline (create_file + patch_file SEARCH/REPLACE wiring + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, paste-ready hunks with zero ellipses/placeholders; dense goals (no padding prose)
 - 7-8: Correct pipeline structure with grounded SEARCH/REPLACE hunks and generate_tests step present; minor API/style issues only
 - 5-6: Schema-valid but single-step feature, missing generate_tests when code changes exist, ungrounded SEARCH blocks, logic dumped into REPLACE (>15 lines), or comment sketches
 - 1-4: Hallucinated modules, empty patches, ellipses/.../pseudo-code in patch_content, path-access failure with no recovery blueprint, or full-function rewrites instead of hunks
-Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6; any ellipsis or placeholder in patch_content max 4.
+Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6; any ellipsis or placeholder in patch_content max 4; essay padding around a valid blueprint max 6.
 patch_file MUST use SEARCH/REPLACE hunks. generate_tests step MUST exist (final step) with non-empty goal citing the test file path:line.
 Score down if blueprint violates stated coordinator plan_kind or expectations."#;
 
 const BUILDER_RUBRIC: &str = r#"
 
 BUILDER RUBRIC (override generic rubric):
-- 9-10: Delivers full test source (or diff) at a repo-relative path, build command with exit code, and log excerpt proving pass/fail; covers every function named in the task
-- 7-8: Correct test logic with file path but thin build evidence, or minor gaps in requested scope
-- 5-6: Partial scaffolding; OR env/compile FAIL that includes error log plus attempted path/fix; OR correct diagnosis missing only full test body
-- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, or unverifiable success claim
-Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
+- 9-10: Repo-relative test path + build command with exit code + short log tail (fail-relevant or last ~8–15 lines) proving pass/fail; covers every function named in the task. Full test source lives on disk — do NOT require pasting it into the report.
+- 7-8: Correct test path with thin build evidence, or minor gaps in requested scope
+- 5-6: Partial scaffolding; OR env/compile FAIL that includes error log plus attempted path/fix; OR correct diagnosis with path but missing cmd/exit
+- 1-4: Meta-commentary on failure without path/logs, skipped requested functions without file:line proof of existing coverage, or unverifiable success claim
+Hard caps: no test path in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3; pasting full test source into the report when path suffices max 6.
 Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4."#;
 
 const SCOUT_RUBRIC: &str = r#"
 
 SCOUT RUBRIC (override generic rubric):
-- 9-10: file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths
-- 7-8: Correct file:line mapping but thin snippets or one missed sub-question
-- 5-7: Partial answer with file:line plus at least one code snippet or log excerpt
+- 9-10: file:line citations for every claim; answers all sub-questions; workspace-consistent paths; dense bullets. Optional ≤2-line snip only when a one-line claim is ambiguous — do NOT require multi-line snippets for high scores.
+- 7-8: Correct file:line mapping but one missed sub-question or slightly thin pointers
+- 5-7: Partial answer with file:line evidence
 - 1-4: Wrong repository/workspace, config/path error instead of trace, meta-commentary about a review/conversation, or summary with no file:line evidence
-Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3."#;
+Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3; essay padding / unnecessary long paste max 6."#;
 
 const TRIAGE_RUBRIC: &str = r#"
 
 TRIAGE RUBRIC (override generic rubric):
-- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a raw build log tail (batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
+- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a short raw build log tail (fail-relevant or last ~8–15 lines; batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
 - 7-8: Correct verdict with command + exit code + workspace; log tail thin or target list incomplete
 - 5-7: Correct FAIL (or incomplete PASS diagnosis) with command + exit code + log excerpt
 - 1-4: PASS/FAIL without command/exit evidence, wrong project/workspace, or generic assertion without command output
-Hard caps: PASS with no command+exit max 3; wrong target project max 2.
+Hard caps: PASS with no command+exit max 3; wrong target project max 2; long log dumps / essay padding when a short tail suffices max 6.
 Do NOT require invented per-module compiler lines. Evidenced FAIL scores 5-7, not 1-4.
-Identical structured PASS reports (same cmd/exit/workspace/targets) should score consistently (≥8 when exit 0 and log section present)."#;
+Identical structured PASS reports (same cmd/exit/workspace/targets) should score consistently (≥8 when exit 0 and short log section present)."#;
 
 const BABYSITTER_RUBRIC: &str = r#"
 
@@ -396,10 +414,15 @@ mod tests {
         assert!(agent_evaluation_rubric("StringBuilder", "", "").is_none());
         let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
         assert!(builder.contains("Evidenced FAIL"));
+        assert!(builder.contains("do NOT require pasting"));
+        assert!(!builder.contains("Delivers full test source"));
         let scout = agent_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
         assert!(scout.contains("5-7: Partial answer"));
+        assert!(scout.contains("Optional ≤2-line snip"));
+        assert!(!scout.contains("2–5 line code snippets"));
         let triage = agent_evaluation_rubric("Phase_5_Triage", "", "").expect("triage");
         assert!(triage.contains("Evidenced FAIL"));
+        assert!(triage.contains("short raw build log tail"));
         let baby = agent_evaluation_rubric("BabysitterAgent", "", "").expect("babysitter");
         assert!(baby.contains("BABYSITTER RUBRIC"));
         assert!(baby.contains("Valid JSON"));
@@ -470,7 +493,10 @@ mod tests {
     fn evaluator_prompt_flags_orchestrator_paraphrase() {
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("query_job_status.result"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("score ≤3"));
-        assert!(EVALUATOR_SYSTEM_PROMPT.contains("verifiable evidence"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("Answer vs artifact"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("CoVe checklist"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("Compact 10/10 shape exemplar"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("Filler, repeated explanation"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("desired_output"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("When score is 10, desired_output MUST be \"\""));
     }

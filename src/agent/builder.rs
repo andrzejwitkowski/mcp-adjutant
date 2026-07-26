@@ -34,8 +34,8 @@ Selection rule: unit tests -> write_test_suite directly (skip gather_integration
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED. Never claim GREEN yourself — only the host marks [BUILDER GREEN OK] after triage.
 
 Deliverable requirements (mandatory — MCP output is a structured report, not a tool transcript):
-- Repo-relative test file path and the full test source you wrote (or a diff)
-- Build command run, exit code, and a log excerpt (last ~40 lines) proving pass/fail
+- Repo-relative test file path (full test source lives on disk via write_test_suite — do NOT paste the whole file into the report)
+- Build command run, exit code, and a short log tail (fail-relevant or last ~8–15 lines) proving pass/fail
 - Test file extension must match source language (tsx source -> .test.tsx, rust -> .rs, etc.)
 - Cover every function/symbol named in the task — never skip scope without file:line proof that existing tests already cover it
 - On env/compile errors: include the error output and attempt pathing/fix before giving up
