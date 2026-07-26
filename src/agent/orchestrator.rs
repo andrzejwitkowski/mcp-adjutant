@@ -133,7 +133,7 @@ fn strip_prior_iteration_cap(data: &str) -> &str {
     tail[blank + 2..].trim_start()
 }
 
-/// Dense soft-finalize: touched paths + citation highlights (no file-body dumps).
+/// Dense soft-finalize: touched paths + truncated observation tail (keeps markers like [RED OK]).
 fn soft_finalize_evidence(observations: &str, touched: &[PathBuf], root: &Path) -> String {
     let mut out = String::new();
     if !touched.is_empty() {
@@ -147,31 +147,10 @@ fn soft_finalize_evidence(observations: &str, touched: &[PathBuf], root: &Path) 
                 .replace('\\', "/");
             out.push_str(&format!("- `{rel}`\n"));
         }
+        out.push('\n');
     }
-    // Keep a short tail of observations that already look like citations / errors.
-    let cite_tail = observations
-        .lines()
-        .filter(|line| {
-            let t = line.trim();
-            t.contains(".rs:")
-                || t.contains(".ts:")
-                || t.contains(".tsx:")
-                || t.contains("error[")
-                || (t.starts_with("Observation:") && t.len() < 240)
-        })
-        .rev()
-        .take(16)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !cite_tail.is_empty() {
-        out.push_str("\nObservation highlights:\n");
-        out.push_str(last_evidence_chunk(&cite_tail));
-    } else if out.is_empty() {
-        out.push_str(last_evidence_chunk(observations));
-    }
+    // ponytail: truncate only — line filters dropped [RED OK] / Scout launch logs
+    out.push_str(last_evidence_chunk(observations));
     out
 }
 
