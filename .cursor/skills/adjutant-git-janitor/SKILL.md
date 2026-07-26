@@ -20,7 +20,7 @@ Coordinate GitJanitorAgent through MCP. Do **not** invent commit/PR/changelog te
 3. If `action_required` is `create_branch` or `commit_allowed` is `false` → **STOP**. Call `create_git_branch` with `suggested_branch_name` (or a better name). Poll. Then **ALWAYS** `evaluate_agent_performance` (`target_agent`: `GitJanitorAgent`). Re-run `prepare_git_copy` until `commit_allowed: true`.
 4. Use returned `commit_message` / `pr_title` / `pr_body` / `changelog_entry`.
 5. On pre-commit / commit-msg / commitlint failure → re-call `prepare_git_copy` with `mode=refine_from_hooks` and `hook_failure_output` (set `persist_conventions=true` when rules should stick).
-6. **ALWAYS** after every `prepare_git_copy` and every `create_git_branch` → `evaluate_agent_performance` with `target_agent: GitJanitorAgent` and the **full** `query_job_status.result` verbatim. Score &lt; 7 → refine and retry. Evaluator uses a **create_git_branch** rubric for branch JSON (`branch`/`status`/`previous`) and a **prepare** rubric for commit/PR JSON — do not expect prepare fields from `create_git_branch`.
+6. **ALWAYS** after every `prepare_git_copy` and every `create_git_branch` → `evaluate_agent_performance` with `target_agent: GitJanitorAgent` and the **full** `query_job_status.result` verbatim. Score &lt; 7 → refine and retry (for missing fields / wrong shape — not to inflate prose). ≥7 = correct + dense JSON. Evaluator uses a **create_git_branch** rubric for branch JSON (`branch`/`status`/`previous`) and a **prepare** rubric for commit/PR JSON — do not expect prepare fields from `create_git_branch`.
 
 ## Tool args (quick)
 

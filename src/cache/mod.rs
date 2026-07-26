@@ -9,9 +9,10 @@ pub use agent_names::{backfill_evaluation_agent_names, normalize_agent_name};
 pub use embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 pub use inspect::{
     list_evaluations, list_evaluations_page, load_best_desired_output_exemplar,
-    load_cache_snapshot, load_scout_cache_page, load_web_cache_page, AgentEvaluationRow,
-    CacheSnapshot, EvaluationsPage, ScoutCachePage, WebCachePage, WebFetchDependencyRow,
-    WebQueryRow, WebReportRow, WebSourceRow, EVALUATIONS_PAGE_SIZE,
+    load_cache_snapshot, load_scout_cache_page, load_web_cache_page, truncate_exemplar_for_prompt,
+    AgentEvaluationRow, CacheSnapshot, EvaluationsPage, ScoutCachePage, WebCachePage,
+    WebFetchDependencyRow, WebQueryRow, WebReportRow, WebSourceRow, EVALUATIONS_PAGE_SIZE,
+    EXEMPLAR_PROMPT_CHAR_CAP,
 };
 pub use manager::{
     ProjectCacheManager, WebReportCacheLookup, WebReportRevalidation, WebSourceSnapshot,

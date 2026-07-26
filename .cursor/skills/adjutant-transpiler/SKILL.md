@@ -46,11 +46,11 @@ You are the **coordinator** (premium agent). TranspilerAgent is the worker. Your
 Strict order — do not skip scout when layout or patterns are unknown:
 
 1. **`scout_context`** — map source types, existing target bindings, naming conventions, call sites (`file:line`).
-2. **`evaluate_agent_performance`** — on scout output (`target_agent`: `Phase_1_Scout`, score ≥ 7).
+2. **`evaluate_agent_performance`** — on scout output (`target_agent`: `Phase_1_Scout`, score ≥ 7 = correct + dense; do not retry to add prose).
 3. **`web_fetch`** — when `architecture_layout` depends on external library/API idioms (optional).
 4. Draft **`architecture_layout`** from scout (+ web) evidence — field naming, enums, Option/null, collections, validation, re-exports.
 5. **`transpile_types`** — one async job per sync target file; poll `query_job_status` until `terminal=true`.
-6. **`evaluate_agent_performance`** — on transpiler report (`target_agent`: `TranspilerAgent`, score ≥ 7).
+6. **`evaluate_agent_performance`** — on transpiler report (`target_agent`: `TranspilerAgent`, score ≥ 7 = correct + dense).
 7. **`verify_and_triage`** — `target_paths`: `[target_path]` (and verify workspace paths if needed).
 8. Premium integrates — fix only what triage/transpiler missed; do not rewrite the whole binding by hand.
 

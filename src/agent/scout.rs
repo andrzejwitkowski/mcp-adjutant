@@ -30,7 +30,7 @@ Workspace: Search ONLY under the workspace root stated in your prompt. If ripgre
 
 Mandatory finalize format:
 - file:line citations (e.g. src/metrics/store.rs:42) for every claim
-- 2–5 line code snippets or log excerpts for each major finding (not just file names)
+- Dense bullets — no essay intros. Optional ≤2-line snip only when a one-line claim is ambiguous; do not paste long code blocks
 - Answer every sub-question in the original task explicitly
 - Never output meta-commentary about reviews, conversations, or prior agent runs — deliver a technical trace only
 
@@ -121,7 +121,7 @@ impl<C: LlmClient> AutonomousAgent for ScoutAgent<C> {
     async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
         if context.iterations >= context.max_iterations.saturating_sub(1) {
             context.input_prompt.push_str(
-                "\nFinal turn: call finalize(report) with file:line citations and 2-5 line snippets for each major finding — not file names alone.",
+                "\nFinal turn: call finalize(report) with dense file:line citations for each claim — optional ≤2-line snip only if ambiguous; no essay padding.",
             );
         } else {
             context.input_prompt.push_str(
