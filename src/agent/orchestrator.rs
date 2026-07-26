@@ -168,7 +168,7 @@ fn soft_finalize_evidence(observations: &str, touched: &[PathBuf], root: &Path) 
         .join("\n");
     if !cite_tail.is_empty() {
         out.push_str("\nObservation highlights:\n");
-        out.push_str(&last_evidence_chunk(&cite_tail));
+        out.push_str(last_evidence_chunk(&cite_tail));
     } else if out.is_empty() {
         out.push_str(last_evidence_chunk(observations));
     }
