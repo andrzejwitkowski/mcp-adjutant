@@ -210,7 +210,9 @@ mod tests {
         let parts = rust_parts("unit", "src/metrics/estimate.rs", &root);
         assert!(parts.workflow.contains("#[cfg(test)]"));
         assert!(parts.workflow.contains("src/metrics/estimate.rs"));
-        assert!(!parts.workflow.contains("tests/estimate_integration_test.rs"));
+        assert!(!parts
+            .workflow
+            .contains("tests/estimate_integration_test.rs"));
         assert!(parts.workflow.contains("cargo test --lib"));
     }
 
@@ -218,7 +220,9 @@ mod tests {
     fn rust_integration_parts_use_tests_dir() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let parts = rust_parts("integration", "src/metrics/estimate.rs", &root);
-        assert!(parts.workflow.contains("tests/estimate_integration_test.rs"));
+        assert!(parts
+            .workflow
+            .contains("tests/estimate_integration_test.rs"));
         assert!(parts.workflow.contains("public API only"));
     }
 }

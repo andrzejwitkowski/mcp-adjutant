@@ -388,7 +388,8 @@ impl<
 
                     let path_buf = resolve_test_output_path(&project_root, &path)?;
                     crate::mutation_journal::assert_path_under_root(&path_buf, &project_root)?;
-                    let bytes = merge_rust_unit_test_content(&path_buf, &self.source_file, &content)?;
+                    let bytes =
+                        merge_rust_unit_test_content(&path_buf, &self.source_file, &content)?;
                     crate::mutation_journal::journaled_write(&path_buf, bytes.as_bytes())?;
 
                     let triage_directive = Self::triage_directive(&tdd_phase);

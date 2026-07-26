@@ -271,7 +271,8 @@ fn extract_test_scenario_names(source: &str) -> Vec<String> {
 fn rust_fn_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let after_fn = trimmed.strip_prefix("fn ")?;
-    let name = after_fn.split(|c: char| c == '(' || c == '<' || c.is_whitespace())
+    let name = after_fn
+        .split(|c: char| c == '(' || c == '<' || c.is_whitespace())
         .next()?
         .trim();
     if name.is_empty() {

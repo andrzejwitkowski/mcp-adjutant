@@ -486,7 +486,8 @@ mod tests {
         let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
         assert!(builder.contains("[SCENARIOS]"));
         assert!(builder.contains("named scenarios"));
-        assert!(builder.contains("full test or production source body or large code dump in report max 4"));
+        assert!(builder
+            .contains("full test or production source body or large code dump in report max 4"));
         assert!(builder.contains("Do NOT require full test source"));
         assert!(!builder.contains("Delivers full test source"));
     }

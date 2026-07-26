@@ -482,8 +482,7 @@ mod tests {
 
     #[test]
     fn summary_includes_premium_bridge_tokens() {
-        let dir =
-            std::env::temp_dir().join(format!("metrics-summary-prem-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("metrics-summary-prem-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
         let db_path = dir.join("metrics.db");

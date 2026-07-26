@@ -333,9 +333,12 @@ pub fn record_premium_bridge(
     let Ok(guard) = store.lock() else {
         return;
     };
-    if let Err(err) =
-        guard.record_premium_bridge(mcp_tool, request_uuid, premium_in_tokens, premium_out_tokens)
-    {
+    if let Err(err) = guard.record_premium_bridge(
+        mcp_tool,
+        request_uuid,
+        premium_in_tokens,
+        premium_out_tokens,
+    ) {
         tracing::warn!("metrics premium bridge not recorded: {err}");
     }
 }
@@ -583,12 +586,7 @@ mod tests {
         {
             let store = store.lock().expect("lock");
             store
-                .record_premium_bridge(
-                    "plan_blueprint",
-                    Some("req-prem-1".to_string()),
-                    40,
-                    80,
-                )
+                .record_premium_bridge("plan_blueprint", Some("req-prem-1".to_string()), 40, 80)
                 .expect("record");
             let conn = store.connection();
             let rows: i64 = conn
@@ -596,7 +594,9 @@ mod tests {
                 .expect("count");
             assert_eq!(rows, 1);
             let phase: String = conn
-                .query_row("SELECT agent_phase FROM premium_bridge", [], |row| row.get(0))
+                .query_row("SELECT agent_phase FROM premium_bridge", [], |row| {
+                    row.get(0)
+                })
                 .expect("phase");
             assert_eq!(phase, "planner");
             let (inn, out): (i64, i64) = conn
