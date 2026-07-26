@@ -29,9 +29,8 @@ use crate::agent::{
 };
 use crate::cache::{
     load_best_builder_dense_exemplar, load_best_desired_output_exemplar, mcp_workspace_root,
-    open_cache_connection,
-    require_workspace_root_arg, resolve_workspace_path, with_thread_workspace_root,
-    ProjectCacheManager,
+    open_cache_connection, require_workspace_root_arg, resolve_workspace_path,
+    with_thread_workspace_root, ProjectCacheManager,
 };
 use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};

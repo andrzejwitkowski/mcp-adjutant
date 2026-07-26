@@ -223,7 +223,9 @@ fn load_best_builder_dense_exemplar_skips_legacy_source_dumps() {
         .expect("dense");
     assert_eq!(got, dense);
     assert!(mcp_adjutant::cache::is_dense_builder_report_exemplar(dense));
-    assert!(!mcp_adjutant::cache::is_dense_builder_report_exemplar(&bloated));
+    assert!(!mcp_adjutant::cache::is_dense_builder_report_exemplar(
+        &bloated
+    ));
 
     fs::remove_dir_all(&project_root).ok();
 }
