@@ -288,6 +288,8 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 6. Integrate verified results into your response; cite what the sub-agent found/changed.
 7. Fill the [session checklist](#session-checklist-hard--medium) before handoff.
 
+**Dense results (token goal):** Sub-agent `result` must maximize information per token for the premium model. Expect path + diffstat + scenario names + pass/fail (Builder), file:line + short snippets (Scout), cmd/exit + log **tail** (Triage) — **not** whole-file dumps. Full file bodies live on disk via tools; the coordinator reads the dense report. Treat a high-score-looking dump of full source as an eval failure (score will be ≤4 under the density rubric) and retry asking for the dense shape.
+
 ### Hard exceptions (still do yourself)
 
 - Direct user chat, clarifying questions, and final summaries

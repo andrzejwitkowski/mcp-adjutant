@@ -28,9 +28,9 @@ use crate::agent::{
     TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
-    load_best_desired_output_exemplar, mcp_workspace_root, open_cache_connection,
-    require_workspace_root_arg, resolve_workspace_path, with_thread_workspace_root,
-    ProjectCacheManager,
+    load_best_builder_dense_exemplar, load_best_desired_output_exemplar, mcp_workspace_root,
+    open_cache_connection, require_workspace_root_arg, resolve_workspace_path,
+    with_thread_workspace_root, ProjectCacheManager,
 };
 use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
@@ -479,10 +479,10 @@ pub async fn handle_generate_tests_and_scaffolding(
                 parts.workflow
             );
             if let Ok((_, conn)) = open_cache_connection(&project_root) {
-                if let Ok(Some(exemplar)) =
-                    load_best_desired_output_exemplar(&conn, "Phase_4_Builder")
-                {
-                    prompt.push_str("\n\n## 10/10 output exemplar (match this report shape)\n");
+                if let Ok(Some(exemplar)) = load_best_builder_dense_exemplar(&conn) {
+                    prompt.push_str(
+                        "\n\n## 10/10 dense report exemplar (path + diffstat + scenarios + pass/fail — no source bodies)\n",
+                    );
                     prompt.push_str(&exemplar);
                 }
             }
