@@ -270,7 +270,10 @@ fn extract_test_scenario_names(source: &str) -> Vec<String> {
 
 fn rust_fn_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    let after_fn = trimmed.strip_prefix("fn ")?;
+    let after_fn = trimmed
+        .strip_prefix("async ")
+        .unwrap_or(trimmed)
+        .strip_prefix("fn ")?;
     let name = after_fn
         .split(|c: char| c == '(' || c == '<' || c.is_whitespace())
         .next()?
@@ -415,6 +418,18 @@ mod tests {\n\
         assert!(!report.contains("assert_eq!(1, 1)"));
         assert!(!report.contains("Estimate tokens for premium"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn extract_test_scenario_names_includes_async_tokio() {
+        let body = "\
+#[tokio::test]\n\
+async fn loads_user() {}\n\
+#[test]\n\
+fn sync_case() {}\n";
+        let names = extract_test_scenario_names(body);
+        assert!(names.iter().any(|n| n == "loads_user"));
+        assert!(names.iter().any(|n| n == "sync_case"));
     }
 
     #[test]

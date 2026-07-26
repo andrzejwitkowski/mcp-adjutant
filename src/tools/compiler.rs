@@ -54,8 +54,19 @@ pub fn truncate_build_log(output: &str, max_lines: usize, max_bytes: usize) -> (
 }
 
 fn filter_cargo_json_noise(output: &str) -> String {
+    let has_noise = output.lines().any(|line| {
+        let t = line.trim_start();
+        t.starts_with('{')
+            && (t.contains("\"reason\":\"compiler-artifact\"")
+                || t.contains("\"reason\":\"build-finished\"")
+                || t.contains("\"reason\":\"build-script-executed\"")
+                || t.contains("\"reason\":\"timing-info\""))
+    });
+    if !has_noise {
+        return output.to_string();
+    }
     output
-        .lines()
+        .split_inclusive('\n')
         .filter(|line| {
             let t = line.trim_start();
             if !t.starts_with('{') {
@@ -67,8 +78,7 @@ fn filter_cargo_json_noise(output: &str) -> String {
                 || t.contains("\"reason\":\"build-script-executed\"")
                 || t.contains("\"reason\":\"timing-info\""))
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Result<(), String> {
@@ -239,5 +249,14 @@ error[E0603]: module `estimate` is private
         assert!(truncated.contains("E0603"));
         assert!(!truncated.contains("compiler-artifact"));
         assert!(!truncated.contains("build-finished"));
+        assert!(truncated.ends_with('\n'));
+    }
+
+    #[test]
+    fn truncate_build_log_preserves_trailing_newline_when_no_json_noise() {
+        let log = "error: one failure\n";
+        let (truncated, was_truncated) = truncate_build_log(log, 120, 16_384);
+        assert!(!was_truncated);
+        assert_eq!(truncated, log);
     }
 }

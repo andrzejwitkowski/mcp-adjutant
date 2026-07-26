@@ -86,8 +86,15 @@ fn merge_rust_unit_test_content(
             .ok()
             .zip(source_file.canonicalize().ok())
             .is_some_and(|(a, b)| a == b);
-    if !same_source || !trimmed.starts_with("#[cfg(test)]") {
+    if !same_source {
         return Ok(content.to_string());
+    }
+    // Never overwrite production with a non-test payload when path == source file.
+    if !trimmed.starts_with("#[cfg(test)]") {
+        return Err(
+            "Rust unit-test content must be a #[cfg(test)] mod tests { ... } block when path is the source file"
+                .into(),
+        );
     }
     let existing = std::fs::read_to_string(path_buf).unwrap_or_default();
     let without = strip_trailing_cfg_test_mod(&existing);
@@ -95,7 +102,7 @@ fn merge_rust_unit_test_content(
 }
 
 fn strip_trailing_cfg_test_mod(source: &str) -> String {
-    // ponytail: drop last #[cfg(test)] … EOF so RED/GREEN rewrites replace the block
+    // ponytail: drop last #[cfg(test)] … EOF; balanced AST parse if nested cfg(test) in prod appears
     if let Some(idx) = source.rfind("\n#[cfg(test)]") {
         source[..idx].to_string()
     } else if let Some(idx) = source.rfind("#[cfg(test)]") {
@@ -314,7 +321,9 @@ impl<
 
             match tool_call.name.as_str() {
                 "gather_integration_context" => {
-                    if context.input_prompt.contains("`unit` test") {
+                    let is_rust_unit = context.input_prompt.contains("`unit` test")
+                        && self.source_file.extension().and_then(|ext| ext.to_str()) == Some("rs");
+                    if is_rust_unit {
                         context.accumulated_data.push_str(
                             "Observation:\nFor Rust unit tests, call write_test_suite with path = source file and content = #[cfg(test)] mod tests { ... }. Do not use gather_integration_context.\n",
                         );
@@ -482,6 +491,18 @@ pub fn default_builder_agent<C: LlmClient, SC: LlmClient, TC: LlmClient>(
 mod tests {
     use super::*;
     use crate::agent::validate_test_path_for_source;
+
+    #[test]
+    fn merge_rust_unit_rejects_non_cfg_test_payload_on_source() {
+        let dir = std::env::temp_dir().join(format!("builder-merge-{}", std::process::id()));
+        let source = dir.join("src/lib.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).expect("mkdir");
+        std::fs::write(&source, "pub fn f() {}\n").expect("write");
+        let err = merge_rust_unit_test_content(&source, &source, "pub fn wipe() {}")
+            .expect_err("must reject");
+        assert!(err.contains("#[cfg(test)]"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn validate_test_path_rejects_rust_for_tsx_source() {

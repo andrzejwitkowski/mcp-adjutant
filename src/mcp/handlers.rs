@@ -288,9 +288,9 @@ fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
         command.args(["test", "--test", stem]);
         format!("cargo test --test {stem}")
     } else {
-        // Unit tests live in src/ via #[cfg(test)]; filter by module stem when possible.
-        command.args(["test", "--lib", stem]);
-        format!("cargo test --lib {stem}")
+        // In-source #[cfg(test)] — do not filter by filename stem (test fns need not contain it).
+        command.args(["test", "--lib"]);
+        "cargo test --lib".to_string()
     };
 
     let output = command

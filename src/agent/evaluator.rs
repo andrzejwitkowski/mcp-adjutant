@@ -61,7 +61,7 @@ Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4. Do NOT require f
 const SCOUT_RUBRIC: &str = r#"
 
 SCOUT RUBRIC (override generic rubric):
-- Health-check tasks only (original task is exactly ping / pong / ok / health / hi, case-insensitive): a single-line `Pong` (or equivalent) scores 9–10. Do NOT require file:line or snippets for these. Repo inventories / language counts for health checks score ≤3.
+- Health-check tasks only (original task is exactly ping / pong / ok / health / hi, case-insensitive): a single-line `Pong` scores 9–10. Do NOT require file:line or snippets for these. Repo inventories / language counts for health checks score ≤3.
 - 9-10 (all other tasks): file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths; dense — no whole-file pastes
 - 7-8: Correct file:line mapping but thin snippets or one missed sub-question
 - 5-7: Partial answer with file:line plus at least one code snippet or log excerpt
