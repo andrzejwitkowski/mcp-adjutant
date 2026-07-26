@@ -33,8 +33,9 @@ Mandatory finalize format:
 - 2–5 line code snippets or log excerpts for each major finding (not just file names)
 - Answer every sub-question in the original task explicitly
 - Never output meta-commentary about reviews, conversations, or prior agent runs — deliver a technical trace only
+- Trivial health checks (query is only ping / pong / ok / health / hi): finalize immediately with exactly `Pong` — no repo inventory, language counts, or file lists
 
-Efficiency: Finalize within 6 tool turns once you can answer. Do not repeat the same tool with identical arguments.
+Efficiency: Finalize within 6 tool turns once you can answer. Prefer finalize as soon as you have file:line + short snippets — do not burn the iteration budget on extra searches. Do not repeat the same tool with identical arguments.
 
 Reply with a short rationale (Thought), then call exactly one tool."#;
 

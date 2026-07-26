@@ -12,6 +12,8 @@ pub struct MetricsSummary {
     pub utc_date: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub premium_in_tokens: u64,
+    pub premium_out_tokens: u64,
     pub cache_hits: CacheHitSummary,
     pub by_phase: Vec<PhaseTokenSummary>,
 }
@@ -27,6 +29,8 @@ pub struct PhaseTokenSummary {
     pub agent_phase: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub premium_in_tokens: u64,
+    pub premium_out_tokens: u64,
     pub cache_hits: u64,
     pub job_runs: u64,
 }
@@ -37,6 +41,8 @@ pub struct DailyMetricsRow {
     pub agent_phase: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub premium_in_tokens: u64,
+    pub premium_out_tokens: u64,
     pub cache_hits: u64,
     pub job_runs: u64,
 }
@@ -70,6 +76,22 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
         )
         .map_err(|err| format!("summary completion tokens: {err}"))?;
 
+    let premium_in_tokens: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(premium_in_tokens), 0) FROM premium_bridge WHERE utc_date = ?1",
+            params![utc_date],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("summary premium in tokens: {err}"))?;
+
+    let premium_out_tokens: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(premium_out_tokens), 0) FROM premium_bridge WHERE utc_date = ?1",
+            params![utc_date],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("summary premium out tokens: {err}"))?;
+
     let scout_hits: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM cache_hits WHERE utc_date = ?1 AND agent_phase = ?2",
@@ -94,10 +116,20 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
                 SELECT DISTINCT agent_phase FROM cache_hits WHERE utc_date = ?1
                 UNION
                 SELECT DISTINCT agent_phase FROM agent_runs WHERE utc_date = ?1
+                UNION
+                SELECT DISTINCT agent_phase FROM premium_bridge WHERE utc_date = ?1
              )
              SELECT p.agent_phase,
                     COALESCE(SUM(l.prompt_tokens), 0),
                     COALESCE(SUM(l.completion_tokens), 0),
+                    COALESCE((
+                        SELECT SUM(b.premium_in_tokens) FROM premium_bridge b
+                        WHERE b.utc_date = ?1 AND b.agent_phase = p.agent_phase
+                    ), 0),
+                    COALESCE((
+                        SELECT SUM(b.premium_out_tokens) FROM premium_bridge b
+                        WHERE b.utc_date = ?1 AND b.agent_phase = p.agent_phase
+                    ), 0),
                     COALESCE((
                         SELECT COUNT(*) FROM cache_hits c
                         WHERE c.utc_date = ?1 AND c.agent_phase = p.agent_phase
@@ -128,8 +160,10 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
                 agent_phase: row.get(0)?,
                 prompt_tokens: row.get::<_, i64>(1)? as u64,
                 completion_tokens: row.get::<_, i64>(2)? as u64,
-                cache_hits: row.get::<_, i64>(3)? as u64,
-                job_runs: row.get::<_, i64>(4)? as u64,
+                premium_in_tokens: row.get::<_, i64>(3)? as u64,
+                premium_out_tokens: row.get::<_, i64>(4)? as u64,
+                cache_hits: row.get::<_, i64>(5)? as u64,
+                job_runs: row.get::<_, i64>(6)? as u64,
             })
         })
         .map_err(|err| format!("summary by phase query: {err}"))?
@@ -141,6 +175,8 @@ pub fn query_summary(conn: &Connection, session_id: &str) -> Result<MetricsSumma
         utc_date,
         prompt_tokens: prompt_tokens as u64,
         completion_tokens: completion_tokens as u64,
+        premium_in_tokens: premium_in_tokens as u64,
+        premium_out_tokens: premium_out_tokens as u64,
         cache_hits: CacheHitSummary {
             scout: scout_hits as u64,
             web_fetcher: web_hits as u64,
@@ -165,11 +201,22 @@ pub fn query_daily(
                 UNION
                 SELECT DISTINCT agent_phase, utc_date FROM agent_runs
                 WHERE utc_date BETWEEN ?1 AND ?2
+                UNION
+                SELECT DISTINCT agent_phase, utc_date FROM premium_bridge
+                WHERE utc_date BETWEEN ?1 AND ?2
              )
              SELECT d.date,
                     d.agent_phase,
                     COALESCE(SUM(l.prompt_tokens), 0) AS prompt_tokens,
                     COALESCE(SUM(l.completion_tokens), 0) AS completion_tokens,
+                    COALESCE((
+                        SELECT SUM(b.premium_in_tokens) FROM premium_bridge b
+                        WHERE b.utc_date = d.date AND b.agent_phase = d.agent_phase
+                    ), 0) AS premium_in_tokens,
+                    COALESCE((
+                        SELECT SUM(b.premium_out_tokens) FROM premium_bridge b
+                        WHERE b.utc_date = d.date AND b.agent_phase = d.agent_phase
+                    ), 0) AS premium_out_tokens,
                     COALESCE((
                         SELECT COUNT(*) FROM cache_hits c
                         WHERE c.utc_date = d.date AND c.agent_phase = d.agent_phase
@@ -201,8 +248,10 @@ pub fn query_daily(
                 agent_phase: row.get(1)?,
                 prompt_tokens: row.get::<_, i64>(2)? as u64,
                 completion_tokens: row.get::<_, i64>(3)? as u64,
-                cache_hits: row.get::<_, i64>(4)? as u64,
-                job_runs: row.get::<_, i64>(5)? as u64,
+                premium_in_tokens: row.get::<_, i64>(4)? as u64,
+                premium_out_tokens: row.get::<_, i64>(5)? as u64,
+                cache_hits: row.get::<_, i64>(6)? as u64,
+                job_runs: row.get::<_, i64>(7)? as u64,
             })
         })
         .map_err(|err| format!("daily query: {err}"))?
@@ -426,6 +475,37 @@ mod tests {
         assert!(summary.by_phase.iter().any(|row| row.agent_phase == "scout"
             && row.cache_hits == 1
             && row.prompt_tokens == 10));
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn summary_includes_premium_bridge_tokens() {
+        let dir =
+            std::env::temp_dir().join(format!("metrics-summary-prem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let db_path = dir.join("metrics.db");
+        let store = Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")));
+        init("session-prem-summary".to_string(), Arc::clone(&store));
+
+        {
+            let store = store.lock().expect("lock");
+            store
+                .record_premium_bridge("scout_context", Some("req-s".to_string()), 12, 48)
+                .expect("bridge");
+        }
+
+        let store = store.lock().expect("lock");
+        let summary = query_summary(store.connection(), "session-prem-summary").expect("summary");
+        assert_eq!(summary.premium_in_tokens, 12);
+        assert_eq!(summary.premium_out_tokens, 48);
+        assert!(summary.by_phase.iter().any(|row| {
+            row.agent_phase == "scout"
+                && row.premium_in_tokens == 12
+                && row.premium_out_tokens == 48
+        }));
 
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);

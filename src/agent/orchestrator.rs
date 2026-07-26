@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use super::traits::{AgentContext, AutonomousAgent};
 use crate::cache::mcp_workspace_root;
 use crate::llm::{LlmClient, LlmRequest};
@@ -76,33 +78,40 @@ impl AgentLoopOrchestrator {
     }
 
     fn apply_iteration_cap(agent: &impl AutonomousAgent, context: &mut AgentContext) {
-        // ponytail: hard stop — treat accumulated observations as the final report when capped
+        // ponytail: hard stop — densify observations into a soft-finalize report when capped
         if context.is_finished {
             return;
         }
 
         let agent_name = agent.name();
         let workspace = mcp_workspace_root().display().to_string();
+        let root = mcp_workspace_root();
         let touched = if context.touched_files.is_empty() {
             "(none)".to_string()
         } else {
             context
                 .touched_files
                 .iter()
-                .map(|path| path.display().to_string())
+                .map(|path| {
+                    path.strip_prefix(&root)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string()
+                })
                 .collect::<Vec<_>>()
                 .join("\n- ")
         };
         let observations = strip_prior_iteration_cap(&context.accumulated_data);
-        let observations = last_evidence_chunk(observations);
+        let dense = soft_finalize_evidence(observations, &context.touched_files, &root);
         let header = format!(
-            "## {agent_name} report (iteration limit after {} of {} turns)\n\n{agent_name} did not finalize; partial evidence only.\nWorkspace: {workspace}\nTouched files:\n- {touched}",
+            "## {agent_name} soft-finalize (iteration limit after {} of {} turns)\n\n\
+             Workspace: {workspace}\nTouched files:\n- {touched}",
             context.iterations, context.max_iterations
         );
-        context.accumulated_data = if observations.is_empty() {
-            format!("{header}\n")
+        context.accumulated_data = if dense.is_empty() {
+            format!("{header}\n\n(no extractable evidence)\n")
         } else {
-            format!("{header}\n\n{observations}")
+            format!("{header}\n\n### Evidence\n{dense}\n")
         };
         context.is_finished = true;
     }
@@ -122,6 +131,48 @@ fn strip_prior_iteration_cap(data: &str) -> &str {
         return data;
     };
     tail[blank + 2..].trim_start()
+}
+
+/// Dense soft-finalize: touched paths + citation highlights (no file-body dumps).
+fn soft_finalize_evidence(observations: &str, touched: &[PathBuf], root: &Path) -> String {
+    let mut out = String::new();
+    if !touched.is_empty() {
+        out.push_str("Touched (repo-relative):\n");
+        for path in touched.iter().take(12) {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+                .replace('\\', "/");
+            out.push_str(&format!("- `{rel}`\n"));
+        }
+    }
+    // Keep a short tail of observations that already look like citations / errors.
+    let cite_tail = observations
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            t.contains(".rs:")
+                || t.contains(".ts:")
+                || t.contains(".tsx:")
+                || t.contains("error[")
+                || (t.starts_with("Observation:") && t.len() < 240)
+        })
+        .rev()
+        .take(16)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !cite_tail.is_empty() {
+        out.push_str("\nObservation highlights:\n");
+        out.push_str(&last_evidence_chunk(&cite_tail));
+    } else if out.is_empty() {
+        out.push_str(last_evidence_chunk(observations));
+    }
+    out
 }
 
 /// ponytail: keep densest recent evidence when the dump is huge

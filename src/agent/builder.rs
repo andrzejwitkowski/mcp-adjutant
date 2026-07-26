@@ -1,6 +1,6 @@
 mod tools;
 
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -29,7 +29,7 @@ Available tools (tool calls):
 - generate_test_factory — runs Scout to produce an idiomatic factory/fixture for a type (language agnostic)
 - write_test_suite — writes a test file with a TDD phase (red|green|refactor). Pass ONLY valid source code in tool argument `content` — never markdown, rationale, Thought text, or status prose. Cap ~24k chars.
 
-Selection rule: unit tests -> write_test_suite directly (skip gather_integration_context). Write to a new test file matching the source language — never overwrite the source file. integration tests -> gather_integration_context then write_test_suite. factories -> generate_test_factory.
+Selection rule: Rust unit -> write_test_suite path = source file, content = ONLY `#[cfg(test)] mod tests { ... }` (host appends). Other-language unit -> co-located new test file (never wipe production). integration -> gather_integration_context then write_test_suite under tests/ with public API only. factories -> generate_test_factory.
 
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED. Never claim GREEN yourself — only the host marks [BUILDER GREEN OK] after triage.
 
@@ -71,6 +71,42 @@ fn resolve_test_output_path(project_root: &std::path::Path, path: &str) -> Resul
     }
 
     Ok(project_root.join(candidate))
+}
+
+/// When writing a Rust unit `#[cfg(test)]` block to the source file, append (replace prior block).
+fn merge_rust_unit_test_content(
+    path_buf: &Path,
+    source_file: &Path,
+    content: &str,
+) -> Result<String, String> {
+    let trimmed = content.trim();
+    let same_source = path_buf == source_file
+        || path_buf
+            .canonicalize()
+            .ok()
+            .zip(source_file.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b);
+    if !same_source || !trimmed.starts_with("#[cfg(test)]") {
+        return Ok(content.to_string());
+    }
+    let existing = std::fs::read_to_string(path_buf).unwrap_or_default();
+    let without = strip_trailing_cfg_test_mod(&existing);
+    Ok(format!("{}\n\n{}\n", without.trim_end(), trimmed))
+}
+
+fn strip_trailing_cfg_test_mod(source: &str) -> String {
+    // ponytail: drop last #[cfg(test)] … EOF so RED/GREEN rewrites replace the block
+    if let Some(idx) = source.rfind("\n#[cfg(test)]") {
+        source[..idx].to_string()
+    } else if let Some(idx) = source.rfind("#[cfg(test)]") {
+        if idx == 0 || source[..idx].chars().all(|c| c.is_whitespace()) {
+            String::new()
+        } else {
+            source[..idx].trim_end().to_string()
+        }
+    } else {
+        source.to_string()
+    }
 }
 
 /// Returns true when blank-cap reached (caller should finish).
@@ -280,7 +316,7 @@ impl<
                 "gather_integration_context" => {
                     if context.input_prompt.contains("`unit` test") {
                         context.accumulated_data.push_str(
-                            "Observation:\nFor unit tests, call write_test_suite directly with path under tests/ and content. Do not use gather_integration_context.\n",
+                            "Observation:\nFor Rust unit tests, call write_test_suite with path = source file and content = #[cfg(test)] mod tests { ... }. Do not use gather_integration_context.\n",
                         );
                         return Ok(());
                     }
@@ -352,7 +388,8 @@ impl<
 
                     let path_buf = resolve_test_output_path(&project_root, &path)?;
                     crate::mutation_journal::assert_path_under_root(&path_buf, &project_root)?;
-                    crate::mutation_journal::journaled_write(&path_buf, content.as_bytes())?;
+                    let bytes = merge_rust_unit_test_content(&path_buf, &self.source_file, &content)?;
+                    crate::mutation_journal::journaled_write(&path_buf, bytes.as_bytes())?;
 
                     let triage_directive = Self::triage_directive(&tdd_phase);
                     context.accumulated_data.push_str(&format!(

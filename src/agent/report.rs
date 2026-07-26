@@ -56,18 +56,28 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         ));
     }
 
-    report.push_str("[TEST SOURCE]\n");
+    report.push_str("[TEST PATH]\n");
     if let Some(path) = &rel_path {
         report.push_str(path);
         report.push('\n');
-        if let Some(source) = &test_source {
-            report.push_str(source.trim());
-            report.push('\n');
-        } else {
-            report.push_str("(test file not readable on disk)\n");
-        }
     } else {
         report.push_str("(no test file path in builder log)\n");
+    }
+
+    report.push_str("\n[SCENARIOS]\n");
+    if let Some(source) = &test_source {
+        let names = extract_test_scenario_names(source);
+        if names.is_empty() {
+            report.push_str("(no named test scenarios found)\n");
+        } else {
+            for name in names {
+                report.push_str(&format!("- {name}\n"));
+            }
+        }
+    } else if rel_path.is_some() {
+        report.push_str("(test file not readable on disk)\n");
+    } else {
+        report.push_str("(none)\n");
     }
 
     report.push_str("\n[BUILD COMMAND & EXIT CODE]\n");
@@ -80,7 +90,7 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
             report.push_str(&format!("exit {code}\n"));
         }
         if !build_log.is_empty() {
-            report.push_str(&build_log);
+            report.push_str(&tail_lines(&build_log, LOG_EXCERPT_LINES));
             report.push('\n');
         }
     } else {
@@ -90,11 +100,18 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
     report.push_str("\n[LOG EXCERPT]\n");
     let excerpt = if !build_log.is_empty() {
         tail_lines(&build_log, LOG_EXCERPT_LINES)
+    } else if input.green_ok {
+        // ponytail: never dump tool transcript into GREEN reports (density hard-cap)
+        String::new()
     } else {
         tail_lines(input.accumulated_data, LOG_EXCERPT_LINES)
     };
     if excerpt.trim().is_empty() {
-        report.push_str("(no log excerpt)\n");
+        if input.green_ok {
+            report.push_str("(see build command above)\n");
+        } else {
+            report.push_str("(no log excerpt)\n");
+        }
     } else {
         report.push_str(excerpt.trim());
         report.push('\n');
@@ -117,11 +134,14 @@ pub fn format_builder_report(input: &BuilderReportInput<'_>) -> String {
         report.push_str("\n(no GREEN — see debug trace)\n");
     }
 
-    report.push_str("\n## Debug trace\n");
-    report.push_str(&truncate_debug_trace(
-        input.accumulated_data,
-        DEBUG_TRACE_MAX,
-    ));
+    // ponytail: omit dump on GREEN — full tool transcript tanks evaluator density scores
+    if !input.green_ok {
+        report.push_str("\n## Debug trace\n");
+        report.push_str(&truncate_debug_trace(
+            input.accumulated_data,
+            DEBUG_TRACE_MAX,
+        ));
+    }
     report
 }
 
@@ -204,6 +224,60 @@ fn tail_lines(text: &str, max_lines: usize) -> String {
         text.to_string()
     } else {
         lines[lines.len() - max_lines..].join("\n")
+    }
+}
+
+/// Named tests only — never paste bodies (evaluator density hard-cap).
+fn extract_test_scenario_names(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut lines = source.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        // Rust #[test] fn name / Python def test_ / JS it('…') / test('…')
+        if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
+            if let Some(next) = lines.peek() {
+                if let Some(name) = rust_fn_name(next) {
+                    names.push(name);
+                    lines.next();
+                }
+            }
+            continue;
+        }
+        if let Some(name) = rust_fn_name(trimmed).filter(|n| n.starts_with("test_")) {
+            names.push(name);
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("def test_") {
+            let name = rest.split('(').next().unwrap_or("").trim();
+            if !name.is_empty() {
+                names.push(format!("test_{name}"));
+            }
+            continue;
+        }
+        for prefix in ["it(", "test("] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                if let Some(q) = rest.chars().next().filter(|c| *c == '\'' || *c == '"') {
+                    if let Some(end) = rest[1..].find(q) {
+                        names.push(rest[1..1 + end].to_string());
+                    }
+                }
+                break;
+            }
+        }
+    }
+    names
+}
+
+fn rust_fn_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let after_fn = trimmed.strip_prefix("fn ")?;
+    let name = after_fn.split(|c: char| c == '(' || c == '<' || c.is_whitespace())
+        .next()?
+        .trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
     }
 }
 
@@ -295,13 +369,79 @@ Tool: write_test_suite({\"path\":\"tests/foo_integration_test.rs\"})\n\
             verify_summary: Some("cargo test --test foo_integration_test: all tests passed"),
             config: &config,
         });
-        assert!(report.contains("[TEST SOURCE]"));
+        assert!(report.contains("[TEST PATH]"));
         assert!(report.contains("tests/foo_integration_test.rs"));
-        assert!(report.contains("fn test_x()"));
+        assert!(report.contains("[SCENARIOS]"));
+        assert!(report.contains("- test_x"));
+        assert!(!report.contains("fn test_x() {}"));
         assert!(report.contains("[BUILD COMMAND & EXIT CODE]"));
         assert!(report.contains("cargo test --test foo_integration_test"));
         assert!(report.contains("[BUILDER GREEN OK]"));
+        assert!(!report.contains("## Debug trace"));
         assert!(!report.starts_with("Tool: write_test_suite"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn format_builder_report_lists_scenarios_not_bodies() {
+        let body = "\
+#[cfg(test)]\n\
+mod tests {\n\
+    #[test]\n\
+    fn empty_is_zero() { assert_eq!(1, 1); }\n\
+    #[test]\n\
+    fn four_chars_is_one_token() { assert_eq!(1, 1); }\n\
+}\n";
+        let fixture = "\
+\n[SYSTEM]: Launching Triage (green) for src/metrics/estimate.rs\n\
+\n[TRIAGE RESULT]: Workspace: /repo\nCommand: `cargo test --lib`\nExit code: 0\nBuild output:\nok\n\n\
+[BUILDER GREEN OK]\n";
+        let dir = std::env::temp_dir().join(format!("builder-report-scen-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src/metrics")).expect("mkdir");
+        std::fs::write(dir.join("src/metrics/estimate.rs"), body).expect("write");
+        let config = crate::domain::AdjutantConfig::default();
+        let report = format_builder_report(&BuilderReportInput {
+            accumulated_data: fixture,
+            project_root: &dir,
+            source_file_path: "src/metrics/estimate.rs",
+            test_type: "unit",
+            green_ok: true,
+            verify_summary: Some("cargo test --lib estimate: all tests passed"),
+            config: &config,
+        });
+        assert!(report.contains("- empty_is_zero"));
+        assert!(report.contains("- four_chars_is_one_token"));
+        assert!(!report.contains("assert_eq!(1, 1)"));
+        assert!(!report.contains("Estimate tokens for premium"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn format_builder_report_truncates_long_test_source() {
+        let long_body = (0..40)
+            .map(|i| format!("#[test]\nfn test_{i}() {{}}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fixture = "\
+\n[SYSTEM]: Launching Triage (green) for tests/long_integration_test.rs\n\
+\n[TRIAGE RESULT]: Workspace: /repo\nCommand: `cargo test --test long_integration_test`\nExit code: 0\nBuild output:\nok\n\n\
+[BUILDER GREEN OK]\n";
+        let dir = std::env::temp_dir().join(format!("builder-report-long-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("tests")).expect("mkdir");
+        std::fs::write(dir.join("tests/long_integration_test.rs"), &long_body).expect("write");
+        let config = crate::domain::AdjutantConfig::default();
+        let report = format_builder_report(&BuilderReportInput {
+            accumulated_data: fixture,
+            project_root: &dir,
+            source_file_path: "src/foo.rs",
+            test_type: "integration",
+            green_ok: true,
+            verify_summary: Some("ok"),
+            config: &config,
+        });
+        assert!(report.contains("- test_0"));
+        assert!(report.contains("- test_39"));
+        assert!(!report.contains("fn test_39() {}"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

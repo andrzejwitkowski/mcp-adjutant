@@ -344,6 +344,7 @@ pub async fn run_tracked_job<F, Fut>(
     request_uuid: String,
     tool_name: String,
     workspace_root: Option<std::path::PathBuf>,
+    premium_in: String,
     work: F,
 ) where
     F: FnOnce() -> Fut + Send + 'static,
@@ -378,6 +379,12 @@ pub async fn run_tracked_job<F, Fut>(
             if mutating {
                 let _ = crate::mutation_journal::end_job_journal(&request_uuid, true);
             }
+            crate::metrics::record_premium_bridge(
+                &tool_name,
+                Some(request_uuid.clone()),
+                crate::metrics::estimate_tokens(&premium_in),
+                crate::metrics::estimate_tokens(&result),
+            );
             crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.complete(&request_uuid, result)
         }
@@ -387,6 +394,12 @@ pub async fn run_tracked_job<F, Fut>(
                     tracing::warn!("mutation rollback: {rb}");
                 }
             }
+            crate::metrics::record_premium_bridge(
+                &tool_name,
+                Some(request_uuid.clone()),
+                crate::metrics::estimate_tokens(&premium_in),
+                crate::metrics::estimate_tokens(&error),
+            );
             crate::metrics::record_agent_run(&tool_name, Some(request_uuid.clone()));
             registry.fail(&request_uuid, error)
         }
@@ -507,6 +520,7 @@ mod tests {
             "job-1".to_string(),
             "scout_context".to_string(),
             None,
+            String::new(),
             || async {
                 panic!("boom");
             },

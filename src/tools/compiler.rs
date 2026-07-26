@@ -30,15 +30,15 @@ pub fn run_build_command(dir: &Path, command: &str) -> Result<BuildResult, Strin
 }
 
 /// Truncates long build logs by keeping the tail (errors usually appear at the end).
-/// No language- or compiler-specific filtering — avoids dropping relevant lines for
-/// Java, Python, nvcc, etc.
+/// Strips cargo `--message-format=json` noise (`compiler-artifact` / `build-finished`) first.
 pub fn truncate_build_log(output: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
-    let lines: Vec<&str> = output.lines().collect();
+    let filtered = filter_cargo_json_noise(output);
+    let lines: Vec<&str> = filtered.lines().collect();
     let line_truncated = lines.len() > max_lines;
     let mut tail = if line_truncated {
         lines[lines.len() - max_lines..].join("\n")
     } else {
-        output.to_string()
+        filtered
     };
 
     let byte_truncated = tail.len() > max_bytes;
@@ -51,6 +51,24 @@ pub fn truncate_build_log(output: &str, max_lines: usize, max_bytes: usize) -> (
     }
 
     (tail, line_truncated || byte_truncated)
+}
+
+fn filter_cargo_json_noise(output: &str) -> String {
+    output
+        .lines()
+        .filter(|line| {
+            let t = line.trim_start();
+            if !t.starts_with('{') {
+                return true;
+            }
+            // Drop cargo JSON chatter that drowns real errors in triage/eval reports.
+            !(t.contains("\"reason\":\"compiler-artifact\"")
+                || t.contains("\"reason\":\"build-finished\"")
+                || t.contains("\"reason\":\"build-script-executed\"")
+                || t.contains("\"reason\":\"timing-info\""))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn edit_file_line(path: &Path, line_number: usize, new_content: &str) -> Result<(), String> {
@@ -209,5 +227,17 @@ mod tests {
         let (truncated, was_truncated) = truncate_build_log(log, 120, 16_384);
         assert!(!was_truncated);
         assert_eq!(truncated, log);
+    }
+
+    #[test]
+    fn truncate_build_log_strips_cargo_json_artifacts() {
+        let log = r#"{"reason":"compiler-artifact","package_id":"foo"}
+error[E0603]: module `estimate` is private
+{"reason":"build-finished","success":false}
+"#;
+        let (truncated, _) = truncate_build_log(log, 120, 16_384);
+        assert!(truncated.contains("E0603"));
+        assert!(!truncated.contains("compiler-artifact"));
+        assert!(!truncated.contains("build-finished"));
     }
 }

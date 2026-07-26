@@ -188,6 +188,8 @@ export interface PhaseTokenSummary {
   agent_phase: string
   prompt_tokens: number
   completion_tokens: number
+  premium_in_tokens: number
+  premium_out_tokens: number
   cache_hits: number
   job_runs: number
 }
@@ -197,6 +199,8 @@ export interface MetricsSummary {
   utc_date: string
   prompt_tokens: number
   completion_tokens: number
+  premium_in_tokens: number
+  premium_out_tokens: number
   cache_hits: CacheHitSummary
   by_phase: PhaseTokenSummary[]
 }
@@ -206,6 +210,8 @@ export interface DailyMetricsRow {
   agent_phase: string
   prompt_tokens: number
   completion_tokens: number
+  premium_in_tokens: number
+  premium_out_tokens: number
   cache_hits: number
   job_runs: number
 }
