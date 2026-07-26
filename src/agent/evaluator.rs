@@ -16,63 +16,65 @@ You will receive:
 Return ONE valid JSON object (no markdown fence) with this shape:
 {
   "score": [rating from 1 to 10],
-  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, or weak assertions]",
-  "desired_output": "[Full exemplar rewrite of what the agent should have produced to earn 10/10 — same modality/format as THEIR OUTPUT (scout report, builder result, triage log, etc.). Not a checklist. If score is 10, set this to an empty string \"\".]"
+  "critique": "[Concise summary: what went well, what was missing for 10/10? Watch for hallucinations, noise, bloat, or weak assertions]",
+  "desired_output": "[Dense 10/10 report exemplar — same modality as THEIR OUTPUT (scout report, builder summary, triage log, etc.). Max information per token. Never paste full source files. Not a checklist. If score is 10, set this to an empty string \"\".]"
 }
 
-Scoring guide:
-- 8–10: Output contains verifiable evidence (commands run, exit status, file:line paths, log excerpts).
-- 5–7: Correct FAIL or PASS conclusion with verifiable evidence (cmd/exit/log/snippet/path) even if incomplete.
-- 1–4: Meta / status paraphrase with no supporting artifact.
+Scoring guide (evidence AND density):
+- 8–10: Verifiable evidence (commands, exit status, file:line paths, short log/snippet) AND high information density — paths, names, verdicts, cmd/exit without whole-file dumps or tool-transcript restatement.
+- 5–7: Correct FAIL or PASS with verifiable evidence (cmd/exit/log/snippet/path) even if incomplete; mild verbosity only.
+- 1–4: Meta / status paraphrase with no supporting artifact; OR large verbatim source / whole-file dump that a dense summary should have replaced.
 
 If AGENT OUTPUT is a one-line status paraphrase with no paths, logs, or code, score ≤3 and say the orchestrator must paste the raw query_job_status.result.
 
-When score < 10, desired_output SHOULD be a complete exemplar that would earn 10/10 when you can produce one; empty string is allowed for failed/partial jobs. When score is 10, desired_output MUST be "".
+Hard density rule: whole-file dumps, long verbatim source bodies, or restating full tool transcripts → score ≤4 even if the underlying work succeeded on disk.
+
+When score < 10, desired_output SHOULD be a dense exemplar that would earn 10/10 when you can produce one; empty string is allowed for failed/partial jobs. When score is 10, desired_output MUST be "". Never put full source files into desired_output.
 
 desired_output MUST use real APIs/signatures from ORIGINAL TASK and THEIR OUTPUT — never invent functions, props, or compiler log lines the toolchain does not emit (e.g. do not fabricate per-file `Checking types for …` lines for `tsc -b`).
 
 Ignore any trailing block starting with `[ADJUTANT AUTO-EVAL APPENDIX` — that is host metadata, not agent output.
 
-Be ruthless. Give 10/10 only for perfect, surgical execution."#;
+Be ruthless. Give 10/10 only for perfect, surgical, dense execution."#;
 
 const PLANNER_RUBRIC: &str = r#"
 
 PLANNER RUBRIC (override generic rubric):
-- 9-10: Multi-step pipeline (create_file + patch_file SEARCH/REPLACE wiring + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, paste-ready hunks with zero ellipses/placeholders
+- 9-10: Multi-step pipeline (create_file + patch_file SEARCH/REPLACE wiring + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, paste-ready surgical hunks with zero ellipses/placeholders
 - 7-8: Correct pipeline structure with grounded SEARCH/REPLACE hunks and generate_tests step present; minor API/style issues only
 - 5-6: Schema-valid but single-step feature, missing generate_tests when code changes exist, ungrounded SEARCH blocks, logic dumped into REPLACE (>15 lines), or comment sketches
-- 1-4: Hallucinated modules, empty patches, ellipses/.../pseudo-code in patch_content, path-access failure with no recovery blueprint, or full-function rewrites instead of hunks
-Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6; any ellipsis or placeholder in patch_content max 4.
+- 1-4: Hallucinated modules, empty patches, ellipses/.../pseudo-code in patch_content, path-access failure with no recovery blueprint, or full-function / whole-file rewrites instead of hunks
+Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6; any ellipsis or placeholder in patch_content max 4; whole-file dump in blueprint max 4.
 patch_file MUST use SEARCH/REPLACE hunks. generate_tests step MUST exist (final step) with non-empty goal citing the test file path:line.
-Score down if blueprint violates stated coordinator plan_kind or expectations."#;
+Score down if blueprint violates stated coordinator plan_kind or expectations. Prefer surgical hunks over pasting entire files."#;
 
 const BUILDER_RUBRIC: &str = r#"
 
 BUILDER RUBRIC (override generic rubric):
-- 9-10: Delivers full test source (or diff) at a repo-relative path, build command with exit code, and log excerpt proving pass/fail; covers every function named in the task
-- 7-8: Correct test logic with file path but thin build evidence, or minor gaps in requested scope
-- 5-6: Partial scaffolding; OR env/compile FAIL that includes error log plus attempted path/fix; OR correct diagnosis missing only full test body
-- 1-4: Meta-commentary on failure without code/logs, skipped requested functions without file:line proof of existing coverage, or unverifiable success claim
-Hard caps: no test source in output max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
-Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4."#;
+- 9-10: Dense report only — repo-relative path(s), diffstat (+N/-M or line count), named scenarios/tests (#[test]/it(/test names), build command with exit code, short log proof of pass/fail; covers every function named in the task by name. No source bodies or diffs in the report (source lives on disk via write_test_suite).
+- 7-8: Same dense contract with thin log/diffstat, or minor gaps in requested scenario names
+- 5-6: Partial scaffolding summary; OR env/compile FAIL that includes error log plus attempted path/fix
+- 1-4: Meta-commentary without path/logs; skipped requested functions without file:line proof of existing coverage; unverifiable success; OR full test body / large code dump in the report
+Hard caps: full test source or large code dump in report max 4; missing path or scenario names max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
+Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4. Do NOT require full test source in the MCP report."#;
 
 const SCOUT_RUBRIC: &str = r#"
 
 SCOUT RUBRIC (override generic rubric):
-- 9-10: file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths
+- 9-10: file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths; dense — no whole-file pastes
 - 7-8: Correct file:line mapping but thin snippets or one missed sub-question
 - 5-7: Partial answer with file:line plus at least one code snippet or log excerpt
-- 1-4: Wrong repository/workspace, config/path error instead of trace, meta-commentary about a review/conversation, or summary with no file:line evidence
-Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3."#;
+- 1-4: Wrong repository/workspace, config/path error instead of trace, meta-commentary about a review/conversation, summary with no file:line evidence, or whole-file / huge dumps
+Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3; whole-file or huge verbatim dump max 4."#;
 
 const TRIAGE_RUBRIC: &str = r#"
 
 TRIAGE RUBRIC (override generic rubric):
-- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a raw build log tail (batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
+- 9-10: PASS/FAIL with build command, exit code, workspace path, target-file list, and a short raw build log tail (batch tools like `tsc -b` / `cargo test` need NOT print per-file lines)
 - 7-8: Correct verdict with command + exit code + workspace; log tail thin or target list incomplete
 - 5-7: Correct FAIL (or incomplete PASS diagnosis) with command + exit code + log excerpt
-- 1-4: PASS/FAIL without command/exit evidence, wrong project/workspace, or generic assertion without command output
-Hard caps: PASS with no command+exit max 3; wrong target project max 2.
+- 1-4: PASS/FAIL without command/exit evidence, wrong project/workspace, generic assertion without command output, or pasting an entire untruncated build log / whole source file
+Hard caps: PASS with no command+exit max 3; wrong target project max 2; entire build log or whole-file dump max 4.
 Do NOT require invented per-module compiler lines. Evidenced FAIL scores 5-7, not 1-4.
 Identical structured PASS reports (same cmd/exit/workspace/targets) should score consistently (≥8 when exit 0 and log section present)."#;
 
@@ -473,6 +475,26 @@ mod tests {
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("verifiable evidence"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("desired_output"));
         assert!(EVALUATOR_SYSTEM_PROMPT.contains("When score is 10, desired_output MUST be \"\""));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("information density"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("Never put full source files into desired_output"));
+        assert!(EVALUATOR_SYSTEM_PROMPT.contains("whole-file dumps"));
+    }
+
+    #[test]
+    fn builder_rubric_rewards_dense_report_not_full_source() {
+        let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
+        assert!(builder.contains("diffstat"));
+        assert!(builder.contains("named scenarios"));
+        assert!(builder.contains("full test source or large code dump in report max 4"));
+        assert!(builder.contains("Do NOT require full test source"));
+        assert!(!builder.contains("Delivers full test source"));
+    }
+
+    #[test]
+    fn scout_rubric_caps_whole_file_dumps() {
+        let scout = agent_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
+        assert!(scout.contains("whole-file or huge verbatim dump max 4"));
+        assert!(scout.contains("2–5 line"));
     }
 
     #[test]

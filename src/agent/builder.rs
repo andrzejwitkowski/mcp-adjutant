@@ -33,12 +33,15 @@ Selection rule: unit tests -> write_test_suite directly (skip gather_integration
 
 TDD workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). RED only proves compile + failing assertions. The job is NOT done until GREEN triage passes (all tests pass). Do not stop after RED. Never claim GREEN yourself — only the host marks [BUILDER GREEN OK] after triage.
 
-Deliverable requirements (mandatory — MCP output is a structured report, not a tool transcript):
-- Repo-relative test file path and the full test source you wrote (or a diff)
-- Build command run, exit code, and a log excerpt (last ~40 lines) proving pass/fail
+Deliverable requirements (mandatory — dense MCP report, not a tool transcript or source dump):
+- Repo-relative test file path(s) written
+- Diffstat for each path (e.g. +N/-M or line count) — never paste test source or diffs into the report
+- Named scenarios / tests covered (#[test], it(, test(, def test_ names)
+- Build command run, exit code, and a short log excerpt (last ~40 lines) proving pass/fail
 - Test file extension must match source language (tsx source -> .test.tsx, rust -> .rs, etc.)
 - Cover every function/symbol named in the task — never skip scope without file:line proof that existing tests already cover it
 - On env/compile errors: include the error output and attempt pathing/fix before giving up
+- Full source belongs ONLY in write_test_suite tool argument `content` (on disk). Coordinator reads the dense report, not the file body.
 
 Reply with a short rationale (Thought — not the test body), then call tools with source in `content`."#;
 
@@ -452,6 +455,15 @@ mod tests {
             .expect_err("cross-language");
         assert!(err.contains("tsx") || err.contains("extension"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn builder_prompt_requires_dense_report_not_full_source() {
+        assert!(BUILDER_SYSTEM_PROMPT.contains("dense MCP report"));
+        assert!(BUILDER_SYSTEM_PROMPT.contains("Diffstat"));
+        assert!(BUILDER_SYSTEM_PROMPT.contains("Named scenarios"));
+        assert!(BUILDER_SYSTEM_PROMPT.contains("Full source belongs ONLY in write_test_suite"));
+        assert!(!BUILDER_SYSTEM_PROMPT.contains("full test source you wrote"));
     }
 
     #[test]

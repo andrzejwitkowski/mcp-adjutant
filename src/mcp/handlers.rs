@@ -482,7 +482,9 @@ pub async fn handle_generate_tests_and_scaffolding(
                 if let Ok(Some(exemplar)) =
                     load_best_desired_output_exemplar(&conn, "Phase_4_Builder")
                 {
-                    prompt.push_str("\n\n## 10/10 output exemplar (match this report shape)\n");
+                    prompt.push_str(
+                        "\n\n## 10/10 dense report exemplar (path + diffstat + scenarios + pass/fail — no source bodies)\n",
+                    );
                     prompt.push_str(&exemplar);
                 }
             }
