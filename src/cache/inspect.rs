@@ -153,7 +153,7 @@ pub fn load_best_desired_output_exemplar(
     let canonical = super::agent_names::normalize_agent_name(agent_name);
     conn.query_row(
         "SELECT desired_output FROM agent_evaluations
-         WHERE agent_name = ?1 AND desired_output != ''
+         WHERE agent_name = ?1 AND desired_output != '' AND score >= 7
          ORDER BY score DESC, created_at DESC
          LIMIT 1",
         params![canonical],
@@ -167,6 +167,53 @@ pub fn load_best_desired_output_exemplar(
             Err(format!("failed to load desired_output exemplar: {err}"))
         }
     })
+}
+
+/// Builder exemplars must match the dense report contract (path/diffstat/scenarios),
+/// not legacy full-source dumps that older rubrics scored 9–10.
+pub fn load_best_builder_dense_exemplar(conn: &Connection) -> Result<Option<String>, String> {
+    let canonical = super::agent_names::normalize_agent_name("Phase_4_Builder");
+    let mut statement = conn
+        .prepare(
+            "SELECT desired_output FROM agent_evaluations
+             WHERE agent_name = ?1 AND desired_output != '' AND score >= 7
+             ORDER BY score DESC, created_at DESC
+             LIMIT 20",
+        )
+        .map_err(|err| format!("failed to prepare builder exemplar query: {err}"))?;
+    let rows = statement
+        .query_map(params![canonical], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query builder exemplars: {err}"))?;
+    for row in rows {
+        let text = row.map_err(|err| format!("failed to read builder exemplar: {err}"))?;
+        if is_dense_builder_report_exemplar(&text) {
+            return Ok(Some(text));
+        }
+    }
+    Ok(None)
+}
+
+/// True when `desired_output` looks like a dense Builder MCP report, not a source dump.
+pub fn is_dense_builder_report_exemplar(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() || t.len() > 2_500 {
+        return false;
+    }
+    // Large fenced blocks ≈ pasted file bodies from the old 9–10 rubric.
+    if let Some(after_open) = t.find("```").map(|i| i + 3) {
+        if let Some(fence_len) = t[after_open..].find("```") {
+            if fence_len > 400 {
+                return false;
+            }
+        }
+    }
+    let test_markers = t.matches("#[test]").count()
+        + t.matches("fn test_").count()
+        + t.matches("describe(").count();
+    if test_markers >= 2 && t.lines().count() > 40 {
+        return false;
+    }
+    true
 }
 
 pub fn list_evaluations(conn: &Connection) -> Result<Vec<AgentEvaluationRow>, String> {

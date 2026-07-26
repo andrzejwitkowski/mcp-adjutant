@@ -179,6 +179,56 @@ fn load_best_desired_output_exemplar_picks_highest_score() {
 }
 
 #[test]
+fn load_best_desired_output_exemplar_skips_below_seven() {
+    let project_root = unique_temp_project("inspect-exemplar-floor");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let mut cache = open_cache_manager(&project_root);
+    cache
+        .store_evaluation("BabysitterAgent", "t1", "o1", 6, "ok", "six exemplar")
+        .expect("store");
+
+    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
+    let got = load_best_desired_output_exemplar(&conn, "BabysitterAgent").expect("load");
+    assert!(got.is_none());
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
+fn load_best_builder_dense_exemplar_skips_legacy_source_dumps() {
+    let project_root = unique_temp_project("inspect-builder-dense");
+    fs::create_dir_all(&project_root).expect("create project root");
+    write_demo_cargo_manifest(&project_root);
+
+    let bloated = format!(
+        "path: tests/foo.rs\n```rust\n{}\n```\n",
+        "#[test]\nfn t() {}\n".repeat(80)
+    );
+    let dense = "path: tests/foo.rs\ndiffstat: +12/-0\nscenarios: foo_ok, foo_err\ncmd: cargo test --test foo\nexit: 0\npass";
+
+    let mut cache = open_cache_manager(&project_root);
+    cache
+        .store_evaluation("Phase_4_Builder", "t1", "o1", 10, "old", &bloated)
+        .expect("store bloated");
+    thread::sleep(Duration::from_millis(10));
+    cache
+        .store_evaluation("Phase_4_Builder", "t2", "o2", 9, "dense", dense)
+        .expect("store dense");
+
+    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
+    let got = mcp_adjutant::cache::load_best_builder_dense_exemplar(&conn)
+        .expect("load")
+        .expect("dense");
+    assert_eq!(got, dense);
+    assert!(mcp_adjutant::cache::is_dense_builder_report_exemplar(dense));
+    assert!(!mcp_adjutant::cache::is_dense_builder_report_exemplar(&bloated));
+
+    fs::remove_dir_all(&project_root).ok();
+}
+
+#[test]
 fn scout_cache_page_limits_rows() {
     let project_root = unique_temp_project("inspect-scout-page");
     fs::create_dir_all(project_root.join("src")).expect("create src");
