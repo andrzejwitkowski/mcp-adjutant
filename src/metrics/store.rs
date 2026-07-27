@@ -48,6 +48,18 @@ const MIGRATIONS: &[&str] = &[
         utc_date TEXT NOT NULL
     );",
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_utc_date ON agent_runs(utc_date);",
+    "CREATE TABLE IF NOT EXISTS premium_bridge (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        request_uuid TEXT,
+        mcp_tool TEXT,
+        agent_phase TEXT NOT NULL,
+        premium_in_tokens INTEGER NOT NULL,
+        premium_out_tokens INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        utc_date TEXT NOT NULL
+    );",
+    "CREATE INDEX IF NOT EXISTS idx_premium_bridge_utc_date ON premium_bridge(utc_date);",
 ];
 
 pub fn resolve_metrics_db_path(config_path: &Path) -> PathBuf {
@@ -230,6 +242,47 @@ impl MetricsStore {
             .map_err(|err| format!("metered cache check: {err}"))?;
         Ok(cache > 0)
     }
+
+    /// One row per job on `phases[0]` only — avoids double-count for multi-phase tools.
+    pub fn record_premium_bridge(
+        &self,
+        mcp_tool: &str,
+        request_uuid: Option<String>,
+        premium_in_tokens: u64,
+        premium_out_tokens: u64,
+    ) -> Result<(), String> {
+        if premium_in_tokens == 0 && premium_out_tokens == 0 {
+            return Ok(());
+        }
+        let Some(phase) = phases_for_mcp_tool(mcp_tool).into_iter().next() else {
+            return Ok(());
+        };
+        let created_at = current_unix_timestamp()?;
+        let utc_date = utc_date_from_secs(created_at);
+        let request_uuid =
+            request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
+
+        self.conn
+            .execute(
+                "INSERT INTO premium_bridge (
+                    id, session_id, request_uuid, mcp_tool, agent_phase,
+                    premium_in_tokens, premium_out_tokens, created_at, utc_date
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    new_event_id(),
+                    session_id(),
+                    request_uuid,
+                    mcp_tool,
+                    phase_label(phase),
+                    premium_in_tokens as i64,
+                    premium_out_tokens as i64,
+                    created_at,
+                    utc_date,
+                ],
+            )
+            .map_err(|err| format!("record premium bridge: {err}"))?;
+        Ok(())
+    }
 }
 
 pub fn record_llm_call(phase: AgentPhase, model_name: &str, usage: LlmUsage) {
@@ -268,6 +321,28 @@ pub fn record_agent_run(mcp_tool: &str, request_uuid: Option<String>) {
     }
 }
 
+pub fn record_premium_bridge(
+    mcp_tool: &str,
+    request_uuid: Option<String>,
+    premium_in_tokens: u64,
+    premium_out_tokens: u64,
+) {
+    let Some(store) = metrics_store() else {
+        return;
+    };
+    let Ok(guard) = store.lock() else {
+        return;
+    };
+    if let Err(err) = guard.record_premium_bridge(
+        mcp_tool,
+        request_uuid,
+        premium_in_tokens,
+        premium_out_tokens,
+    ) {
+        tracing::warn!("metrics premium bridge not recorded: {err}");
+    }
+}
+
 fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
     match mcp_tool {
         "scout_context" => vec![AgentPhase::Scout],
@@ -280,6 +355,7 @@ fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
         "babysit_pr" => vec![AgentPhase::Babysitter],
         "plan_blueprint" => vec![AgentPhase::Planner, AgentPhase::PlannerEmit],
         "prepare_git_copy" | "create_git_branch" => vec![AgentPhase::GitJanitor],
+        "transpile_types" => vec![AgentPhase::Builder],
         _ => vec![],
     }
 }
@@ -492,6 +568,45 @@ mod tests {
                 phases.push(row.expect("row"));
             }
             assert_eq!(phases, vec!["planner", "planner_emit"]);
+        }
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn record_premium_bridge_one_row_for_multi_phase_tool() {
+        let dir = std::env::temp_dir().join(format!("metrics-premium-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let db_path = dir.join("metrics.db");
+        let store = Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")));
+        init("session-premium".to_string(), Arc::clone(&store));
+
+        {
+            let store = store.lock().expect("lock");
+            store
+                .record_premium_bridge("plan_blueprint", Some("req-prem-1".to_string()), 40, 80)
+                .expect("record");
+            let conn = store.connection();
+            let rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM premium_bridge", [], |row| row.get(0))
+                .expect("count");
+            assert_eq!(rows, 1);
+            let phase: String = conn
+                .query_row("SELECT agent_phase FROM premium_bridge", [], |row| {
+                    row.get(0)
+                })
+                .expect("phase");
+            assert_eq!(phase, "planner");
+            let (inn, out): (i64, i64) = conn
+                .query_row(
+                    "SELECT premium_in_tokens, premium_out_tokens FROM premium_bridge",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("tokens");
+            assert_eq!((inn, out), (40, 80));
         }
 
         drop(store);

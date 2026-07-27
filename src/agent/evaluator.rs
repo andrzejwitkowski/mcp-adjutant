@@ -51,21 +51,22 @@ Score down if blueprint violates stated coordinator plan_kind or expectations. P
 const BUILDER_RUBRIC: &str = r#"
 
 BUILDER RUBRIC (override generic rubric):
-- 9-10: Dense report only — repo-relative path(s), diffstat (+N/-M or line count), named scenarios/tests (#[test]/it(/test names), build command with exit code, short log proof of pass/fail; covers every function named in the task by name. No source bodies or diffs in the report (source lives on disk via write_test_suite).
-- 7-8: Same dense contract with thin log/diffstat, or minor gaps in requested scenario names
+- 9-10: Dense report only — repo-relative test path, named scenarios/tests (list under [SCENARIOS] / #[test]/it(/test names), build command with exit code (or verify summary), short log proof of pass/fail. No source bodies or diffs in the report (source lives on disk via write_test_suite).
+- 7-8: Same dense contract with thin log, or minor gaps in requested scenario names
 - 5-6: Partial scaffolding summary; OR env/compile FAIL that includes error log plus attempted path/fix
-- 1-4: Meta-commentary without path/logs; skipped requested functions without file:line proof of existing coverage; unverifiable success; OR full test body / large code dump in the report
-Hard caps: full test source or large code dump in report max 4; missing path or scenario names max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
-Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4. Do NOT require full test source in the MCP report."#;
+- 1-4: Meta-commentary without path/logs; skipped requested functions without file:line proof of existing coverage; unverifiable success; OR full test/production source body / large code dump in the report
+Hard caps: full test or production source body or large code dump in report max 4; missing path or scenario names max 4; skipped primary task objective max 3; failure narrative without error logs max 3.
+Evidenced FAIL (error log + attempted fix) scores 5-6, not 1-4. Do NOT require full test source in the MCP report — scenario names + path + cmd/exit are enough for 9–10."#;
 
 const SCOUT_RUBRIC: &str = r#"
 
 SCOUT RUBRIC (override generic rubric):
-- 9-10: file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths; dense — no whole-file pastes
+- Health-check tasks only (original task is exactly ping / pong / ok / health / hi, case-insensitive): a single-line `Pong` scores 9–10. Do NOT require file:line or snippets for these. Repo inventories / language counts for health checks score ≤3.
+- 9-10 (all other tasks): file:line citations for every claim plus 2–5 line code snippets or log excerpts; answers all sub-questions in the task; workspace-consistent paths; dense — no whole-file pastes
 - 7-8: Correct file:line mapping but thin snippets or one missed sub-question
 - 5-7: Partial answer with file:line plus at least one code snippet or log excerpt
 - 1-4: Wrong repository/workspace, config/path error instead of trace, meta-commentary about a review/conversation, summary with no file:line evidence, or whole-file / huge dumps
-Hard caps: wrong repo or no file paths max 2; meta-commentary instead of technical trace max 3; whole-file or huge verbatim dump max 4."#;
+Hard caps: wrong repo or no file paths max 2 (N/A for health-check tasks); meta-commentary instead of technical trace max 3; whole-file or huge verbatim dump max 4."#;
 
 const TRIAGE_RUBRIC: &str = r#"
 
@@ -483,9 +484,10 @@ mod tests {
     #[test]
     fn builder_rubric_rewards_dense_report_not_full_source() {
         let builder = agent_evaluation_rubric("Phase_4_Builder", "", "").expect("builder");
-        assert!(builder.contains("diffstat"));
+        assert!(builder.contains("[SCENARIOS]"));
         assert!(builder.contains("named scenarios"));
-        assert!(builder.contains("full test source or large code dump in report max 4"));
+        assert!(builder
+            .contains("full test or production source body or large code dump in report max 4"));
         assert!(builder.contains("Do NOT require full test source"));
         assert!(!builder.contains("Delivers full test source"));
     }
@@ -495,6 +497,8 @@ mod tests {
         let scout = agent_evaluation_rubric("Phase_1_Scout", "", "").expect("scout");
         assert!(scout.contains("whole-file or huge verbatim dump max 4"));
         assert!(scout.contains("2–5 line"));
+        assert!(scout.contains("Health-check"));
+        assert!(scout.contains("Pong"));
     }
 
     #[test]

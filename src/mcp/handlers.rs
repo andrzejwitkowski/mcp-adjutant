@@ -49,6 +49,39 @@ const TRIAGE_MAX_ITERATIONS: u32 = 3;
 const BUILDER_MAX_ITERATIONS: u32 = 8;
 const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 
+const AUTO_EVAL_APPENDIX_MARKER: &str = "[ADJUTANT AUTO-EVAL APPENDIX";
+
+fn strip_auto_eval_appendix(output: &str) -> &str {
+    output
+        .split(AUTO_EVAL_APPENDIX_MARKER)
+        .next()
+        .unwrap_or(output)
+        .trim_end()
+}
+
+/// Reject coordinator paraphrases that would pollute Evaluations UI with junk ≤3 scores.
+fn reject_thin_eval_input(target_agent: &str, received_output: &str) -> Result<(), String> {
+    let normalized = crate::cache::normalize_agent_name(target_agent);
+    let is_triage =
+        normalized == "Phase_5_Triage" || target_agent.to_ascii_lowercase().contains("triage");
+    if !is_triage {
+        return Ok(());
+    }
+    let out = received_output.trim();
+    let claims_pass = out.contains("[TRIAGE PASS]")
+        || out.contains("## Triage: PASS")
+        || out.contains("Triage: PASS");
+    let has_evidence = out.contains("Command:") || out.contains("Exit code");
+    if claims_pass && !has_evidence {
+        return Err(
+            "received_output looks like a Triage PASS paraphrase without Command/Exit evidence. \
+             Paste the full verify_and_triage job result (`query_job_status.result`), not a summary."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn ensure_mutating_preflight(config: &AdjutantConfig, phases: &[AgentPhase]) -> Result<(), String> {
     if crate::llm::skip_preflight() {
         return Ok(());
@@ -94,6 +127,7 @@ async fn eval_after_agent_job(
     original_task: &str,
     received_output: &str,
 ) -> Option<AgentEvalSummary> {
+    let received_output = strip_auto_eval_appendix(received_output);
     if normalize_eval_target(target_agent).as_deref() == Some("EvaluatorAgent")
         || received_output.trim().is_empty()
     {
@@ -144,6 +178,7 @@ async fn dispatch_async_job<F, Fut>(
     tool_name: &str,
     await_timeout_secs: u64,
     workspace_root: PathBuf,
+    premium_in: String,
     work: F,
 ) -> Result<String, String>
 where
@@ -155,7 +190,15 @@ where
     let accepted_uuid = request_uuid.clone();
     let tool = tool_name.to_string();
     let handle = tokio::spawn(async move {
-        run_tracked_job(job_registry, request_uuid, tool, Some(workspace_root), work).await;
+        run_tracked_job(
+            job_registry,
+            request_uuid,
+            tool,
+            Some(workspace_root),
+            premium_in,
+            work,
+        )
+        .await;
     });
 
     let timeout = Duration::from_secs(await_timeout_secs);
@@ -236,14 +279,27 @@ fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .ok_or_else(|| format!("invalid test path: {}", test_path.display()))?;
 
-    let output = Command::new("cargo")
-        .args(["test", "--test", stem])
+    let in_tests_dir = test_path
+        .components()
+        .any(|component| component.as_os_str() == "tests");
+
+    let mut command = Command::new("cargo");
+    let label = if in_tests_dir {
+        command.args(["test", "--test", stem]);
+        format!("cargo test --test {stem}")
+    } else {
+        // In-source #[cfg(test)] — do not filter by filename stem (test fns need not contain it).
+        command.args(["test", "--lib"]);
+        "cargo test --lib".to_string()
+    };
+
+    let output = command
         .current_dir(&project_root)
         .output()
-        .map_err(|err| format!("failed to run cargo test --test {stem}: {err}"))?;
+        .map_err(|err| format!("failed to run {label}: {err}"))?;
 
     if output.status.success() {
-        return Ok(format!("cargo test --test {stem}: all tests passed"));
+        return Ok(format!("{label}: all tests passed"));
     }
 
     let combined = format!(
@@ -251,7 +307,7 @@ fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Err(format!("cargo test --test {stem} failed:\n{combined}"))
+    Err(format!("{label} failed:\n{combined}"))
 }
 
 pub async fn handle_scout_context(
@@ -279,6 +335,7 @@ pub async fn handle_scout_context(
         SCOUT_CONTEXT_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let cache_manager =
                 Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
@@ -331,6 +388,7 @@ pub async fn handle_verify_and_triage(
         VERIFY_AND_TRIAGE_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             ensure_mutating_preflight(&config, &[AgentPhase::Triage])?;
             let target_paths: Vec<PathBuf> = target_path_raws
@@ -439,6 +497,7 @@ pub async fn handle_generate_tests_and_scaffolding(
         GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             ensure_mutating_preflight(
                 &config,
@@ -524,14 +583,7 @@ pub async fn handle_generate_tests_and_scaffolding(
                 verify_summary: (!verify_summary.is_empty()).then_some(verify_summary.as_str()),
                 config: &config,
             });
-            // Fail closed: do not leave intentional RED tests in the workspace.
-            if !green_ok {
-                return Err(format!(
-                    "Builder did not complete GREEN verification (rolling back writes).\n{output}"
-                ));
-            }
-            let journal_note = crate::mutation_journal::with_active_journal(|j| j.diff_summary())
-                .unwrap_or_default();
+            // Always auto-eval (incl. RED/fail) so Evaluations UI gets Phase_4_Builder rows.
             let mut final_out = finish_agent_job_with_eval(
                 &config,
                 GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
@@ -539,6 +591,14 @@ pub async fn handle_generate_tests_and_scaffolding(
                 output,
             )
             .await;
+            // Fail closed: do not leave intentional RED tests in the workspace.
+            if !green_ok {
+                return Err(format!(
+                    "Builder did not complete GREEN verification (rolling back writes).\n{final_out}"
+                ));
+            }
+            let journal_note = crate::mutation_journal::with_active_journal(|j| j.diff_summary())
+                .unwrap_or_default();
             if !journal_note.is_empty() {
                 final_out.push_str(&format!("\n\n## Diff summary\n{journal_note}\n"));
             }
@@ -582,6 +642,7 @@ pub async fn handle_execute_global_refactor(
         EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             ensure_mutating_preflight(
                 &config,
@@ -675,6 +736,8 @@ pub async fn handle_evaluate_agent_performance(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "received_output is required".to_string())?
         .to_string();
+    let received_output = strip_auto_eval_appendix(&received_output).to_string();
+    reject_thin_eval_input(&target_agent, &received_output)?;
 
     dispatch_async_job(
         registry,
@@ -682,6 +745,7 @@ pub async fn handle_evaluate_agent_performance(
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let cache_start = mcp_workspace_root();
             let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
@@ -739,6 +803,7 @@ pub async fn handle_web_fetch(
         WEB_FETCH_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let web_profile = config.web_fetcher.clone().unwrap_or_default();
             let cache_manager =
@@ -793,6 +858,7 @@ pub async fn handle_analyze_log(
         ANALYZE_LOG_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let root = mcp_workspace_root();
             let config_for_eval = Arc::clone(&config);
@@ -835,6 +901,7 @@ pub async fn handle_babysit_pr(
         BABYSIT_PR_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let pr_state = gh_pr_state(pr_number)?;
             assert_on_pr_head_branch(&pr_state.head_ref_name)?;
@@ -911,6 +978,7 @@ pub async fn handle_transpile_types(
         TRANSPILE_TYPES_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             ensure_mutating_preflight(
                 &config,
@@ -1033,6 +1101,7 @@ pub async fn handle_plan_blueprint(
         PLAN_BLUEPRINT_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let coordinator = CoordinatorConstraints::from_args(&parsed);
             let scout_client = create_planner_llm_client(&config)?;
@@ -1099,6 +1168,7 @@ pub async fn handle_prepare_git_copy(
         PREPARE_GIT_COPY_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let root = mcp_workspace_root();
             let inputs = ScoutInputs {
@@ -1172,6 +1242,7 @@ pub async fn handle_create_git_branch(
         CREATE_GIT_BRANCH_TOOL_NAME,
         config.job_await_timeout_secs,
         workspace_root,
+        args.to_string(),
         move || async move {
             let root = mcp_workspace_root();
             let output = create_git_branch(&root, &branch_name).await?;
@@ -1221,6 +1292,14 @@ fn final_blueprint_or_report(
 #[cfg(test)]
 mod eval_hook_tests {
     use super::*;
+
+    #[test]
+    fn tool_eval_maps_builder() {
+        assert_eq!(
+            tool_eval_target_agent(GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME),
+            Some("Phase_4_Builder")
+        );
+    }
 
     #[test]
     fn tool_eval_skips_evaluator_tool() {
@@ -1317,6 +1396,39 @@ mod boundary_validator_tests {
 }
 
 #[cfg(test)]
+mod eval_input_guard_tests {
+    use super::*;
+
+    #[test]
+    fn strip_auto_eval_appendix_drops_tail() {
+        let raw = "## Triage: PASS\nCommand: `cargo check`\nExit code: 0\n\n[ADJUTANT AUTO-EVAL APPENDIX — not part of agent output]\nQA score: 10/10\n";
+        assert_eq!(
+            strip_auto_eval_appendix(raw),
+            "## Triage: PASS\nCommand: `cargo check`\nExit code: 0"
+        );
+    }
+
+    #[test]
+    fn reject_thin_triage_pass_paraphrase() {
+        let err = reject_thin_eval_input(
+            "Phase_5_Triage",
+            "## Triage: PASS\n[TRIAGE PASS]\ncargo check exit 0",
+        )
+        .expect_err("thin");
+        assert!(err.contains("paraphrase"));
+    }
+
+    #[test]
+    fn accept_triage_pass_with_command_evidence() {
+        reject_thin_eval_input(
+            "Phase_5_Triage",
+            "## Triage: PASS\n[TRIAGE PASS]\nCommand: `cargo check`\nExit code: 0\n",
+        )
+        .expect("ok");
+    }
+}
+
+#[cfg(test)]
 mod dispatch_async_job_tests {
     use super::*;
     use crate::jobs::JobRegistry;
@@ -1334,6 +1446,7 @@ mod dispatch_async_job_tests {
             "scout_context",
             30,
             workspace(),
+            String::new(),
             || async { Ok("the answer".to_string()) },
         )
         .await
@@ -1355,6 +1468,7 @@ mod dispatch_async_job_tests {
             "scout_context",
             30,
             workspace(),
+            String::new(),
             || async { Err("agent blew up".to_string()) },
         )
         .await
@@ -1372,6 +1486,7 @@ mod dispatch_async_job_tests {
             "scout_context",
             0,
             workspace(),
+            String::new(),
             || async {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 Ok("late result".to_string())

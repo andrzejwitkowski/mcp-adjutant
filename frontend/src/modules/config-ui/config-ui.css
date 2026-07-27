@@ -455,6 +455,8 @@
   border-radius: 0.5rem;
   padding: 1rem;
   background: #181b22;
+  min-height: 280px;
+  position: relative;
 }
 
 .metrics-phase-table {

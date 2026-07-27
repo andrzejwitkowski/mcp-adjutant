@@ -32,6 +32,23 @@ fn rust_parts(test_type: &str, source_file_path: &str, project_root: &Path) -> B
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("module");
+    let is_unit = test_type.eq_ignore_ascii_case("unit");
+    if is_unit {
+        return BuilderPromptParts {
+            workflow: format!(
+                "Generate a `unit` test for file: {source_file_path}\n\n\
+                 Source language: rust\n\
+                 write_test_suite `path` MUST be `{source_file_path}` (the source file itself).\n\
+                 `content` MUST be ONLY a `#[cfg(test)] mod tests {{ ... }}` block (imports via `super::` / `crate::`).\n\
+                 Host appends that block to the source file — do NOT rewrite production code, do NOT write `tests/*_integration_test.rs`.\n\
+                 Workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). Job succeeds only when GREEN passes.\n\
+                 Verify with `cargo test --lib`."
+            ),
+            exemplar: String::from(
+                "Unit test content shape (path = source file):\n```rust\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn example_works() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n```",
+            ),
+        };
+    }
     let test_path = format!("tests/{stem}_integration_test.rs");
     BuilderPromptParts {
         workflow: format!(
@@ -41,7 +58,7 @@ fn rust_parts(test_type: &str, source_file_path: &str, project_root: &Path) -> B
              Workflow: write_test_suite(tdd_phase=red) then write_test_suite(tdd_phase=green). Job succeeds only when GREEN passes.\n\
              Use `mod common;` and helpers from `tests/common/mod.rs` — do not add new dev-dependencies.\n\
              Direct SQLite checks use `project_root.join(\".adjutant/cache.db\")` — never `cache.sqlite`.\n\
-             Integration test crates cannot use `crate::` — import via `mcp_adjutant::...`.\n\
+             Integration test crates cannot use `crate::` — import via `mcp_adjutant::...` (public API only; never private modules).\n\
              Verify with `cargo test --test {stem}_integration_test`."
         ),
         exemplar: rust_integration_exemplar(project_root),
@@ -185,5 +202,27 @@ mod tests {
         assert!(parts.workflow.contains("do NOT write Rust"));
         assert!(parts.workflow.contains("afterEach(cleanup)"));
         assert!(parts.exemplar.contains("vitest"));
+    }
+
+    #[test]
+    fn rust_unit_parts_use_cfg_test_in_source() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let parts = rust_parts("unit", "src/metrics/estimate.rs", &root);
+        assert!(parts.workflow.contains("#[cfg(test)]"));
+        assert!(parts.workflow.contains("src/metrics/estimate.rs"));
+        assert!(!parts
+            .workflow
+            .contains("tests/estimate_integration_test.rs"));
+        assert!(parts.workflow.contains("cargo test --lib"));
+    }
+
+    #[test]
+    fn rust_integration_parts_use_tests_dir() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let parts = rust_parts("integration", "src/metrics/estimate.rs", &root);
+        assert!(parts
+            .workflow
+            .contains("tests/estimate_integration_test.rs"));
+        assert!(parts.workflow.contains("public API only"));
     }
 }

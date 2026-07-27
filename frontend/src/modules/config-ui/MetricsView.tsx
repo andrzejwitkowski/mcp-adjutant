@@ -60,6 +60,11 @@ function formatPhase(label: string) {
   return label.replace(/_/g, ' ')
 }
 
+/** Safe for older API payloads missing premium_* fields. */
+function tok(n: number | undefined | null) {
+  return (n ?? 0).toLocaleString()
+}
+
 export function MetricsView() {
   const [fromDate, setFromDate] = useState(utcDaysAgo(7))
   const [toDate, setToDate] = useState(utcToday())
@@ -114,36 +119,52 @@ export function MetricsView() {
 
   useEffect(() => {
     if (status !== 'ready' || !barRef.current) return
+    if (daily.length === 0) {
+      barChart.current?.destroy()
+      barChart.current = null
+      return
+    }
 
-    const dates = [...new Set(daily.map((row) => row.date))].sort()
-    const phases = [...new Set(daily.map((row) => row.agent_phase))].sort()
+    try {
+      const dates = [...new Set(daily.map((row) => row.date))].sort()
+      const phases = [...new Set(daily.map((row) => row.agent_phase))].sort()
 
-    const datasets = phases.map((phase) => ({
-      label: formatPhase(phase),
-      data: dates.map((date) => {
-        const row = daily.find((r) => r.date === date && r.agent_phase === phase)
-        return (row?.prompt_tokens ?? 0) + (row?.completion_tokens ?? 0)
-      }),
-      backgroundColor: phaseColor(phase),
-      stack: 'tokens',
-    }))
+      const datasets = phases.map((phase) => ({
+        label: formatPhase(phase),
+        data: dates.map((date) => {
+          const row = daily.find((r) => r.date === date && r.agent_phase === phase)
+          return (row?.prompt_tokens ?? 0) + (row?.completion_tokens ?? 0)
+        }),
+        backgroundColor: phaseColor(phase),
+        stack: 'tokens',
+      }))
 
-    barChart.current?.destroy()
-    barChart.current = new Chart(barRef.current, {
-      type: 'bar',
-      data: { labels: dates, datasets },
-      options: {
-        responsive: true,
-        plugins: {
-          title: { display: true, text: 'Daily token usage by agent (UTC)' },
-          legend: { position: 'bottom' },
+      barChart.current?.destroy()
+      barChart.current = new Chart(barRef.current, {
+        type: 'bar',
+        data: { labels: dates, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: { display: true, text: 'Daily token usage by agent (UTC)' },
+            legend: { position: 'bottom' },
+          },
+          scales: {
+            x: { stacked: true },
+            y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Tokens' } },
+          },
         },
-        scales: {
-          x: { stacked: true },
-          y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Tokens' } },
+      })
+    } catch (error) {
+      emitUiNotify({
+        subject: {
+          component: 'metrics',
+          summary: `bar chart failed: ${error instanceof Error ? error.message : String(error)}`,
         },
-      },
-    })
+        meta: { sourceModule: 'config-ui/MetricsView', correlationId: null },
+      })
+    }
 
     return () => {
       barChart.current?.destroy()
@@ -153,44 +174,60 @@ export function MetricsView() {
 
   useEffect(() => {
     if (status !== 'ready' || !lineRef.current) return
+    if (timeline.length === 0) {
+      lineChart.current?.destroy()
+      lineChart.current = null
+      return
+    }
 
-    const phases = [...new Set(timeline.map((row) => row.agent_phase))].sort()
-    const hours = [...new Set(timeline.map((row) => row.hour))].sort((a, b) => a - b)
-    const labels = hours.map((h) => `${String(h).padStart(2, '0')}:00`)
+    try {
+      const phases = [...new Set(timeline.map((row) => row.agent_phase))].sort()
+      const hours = [...new Set(timeline.map((row) => row.hour))].sort((a, b) => a - b)
+      const labels = hours.map((h) => `${String(h).padStart(2, '0')}:00`)
 
-    const datasets = phases.map((phase) => ({
-      label: formatPhase(phase),
-      data: hours.map((hour) => {
-        const rows = timeline.filter((r) => r.agent_phase === phase && r.hour <= hour)
-        const last = rows.sort((a, b) => a.hour - b.hour).at(-1)
-        return last
-          ? last.cumulative_prompt_tokens + last.cumulative_completion_tokens
-          : 0
-      }),
-      borderColor: phaseColor(phase),
-      backgroundColor: phaseColor(phase),
-      tension: 0.2,
-      fill: false,
-    }))
+      const datasets = phases.map((phase) => ({
+        label: formatPhase(phase),
+        data: hours.map((hour) => {
+          const rows = timeline.filter((r) => r.agent_phase === phase && r.hour <= hour)
+          const last = rows.sort((a, b) => a.hour - b.hour).at(-1)
+          return last
+            ? last.cumulative_prompt_tokens + last.cumulative_completion_tokens
+            : 0
+        }),
+        borderColor: phaseColor(phase),
+        backgroundColor: phaseColor(phase),
+        tension: 0.2,
+        fill: false,
+      }))
 
-    lineChart.current?.destroy()
-    lineChart.current = new Chart(lineRef.current, {
-      type: 'line',
-      data: { labels, datasets },
-      options: {
-        responsive: true,
-        plugins: {
-          title: {
-            display: true,
-            text: `Cumulative tokens on ${timelineDate} (UTC)`,
+      lineChart.current?.destroy()
+      lineChart.current = new Chart(lineRef.current, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Cumulative tokens on ${timelineDate} (UTC)`,
+            },
+            legend: { position: 'bottom' },
           },
-          legend: { position: 'bottom' },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'Cumulative tokens' } },
+          },
         },
-        scales: {
-          y: { beginAtZero: true, title: { display: true, text: 'Cumulative tokens' } },
+      })
+    } catch (error) {
+      emitUiNotify({
+        subject: {
+          component: 'metrics',
+          summary: `line chart failed: ${error instanceof Error ? error.message : String(error)}`,
         },
-      },
-    })
+        meta: { sourceModule: 'config-ui/MetricsView', correlationId: null },
+      })
+    }
 
     return () => {
       lineChart.current?.destroy()
@@ -200,11 +237,13 @@ export function MetricsView() {
 
   const totalInput = summary?.prompt_tokens ?? 0
   const totalOutput = summary?.completion_tokens ?? 0
+  const totalPremiumIn = summary?.premium_in_tokens ?? 0
+  const totalPremiumOut = summary?.premium_out_tokens ?? 0
 
   return (
     <PageShell
       title="Token usage"
-      subtitle="LLM input/output tokens and cache hits — global metrics (UTC days)"
+      subtitle="Cheap LLM I/O + Cursor↔MCP bridge estimates (chars/4 of tool args/results) — UTC days"
       actions={
         <button type="button" className="config-btn" onClick={load} disabled={status === 'loading'}>
           {status === 'loading' ? 'Loading…' : 'Refresh'}
@@ -213,12 +252,20 @@ export function MetricsView() {
     >
       <section className="stats-row">
         <div className="stat-card">
-          <span className="stat-card__label">Today input</span>
-          <span className="stat-card__value">{totalInput.toLocaleString()}</span>
+          <span className="stat-card__label">Today cheap input</span>
+          <span className="stat-card__value">{tok(totalInput)}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-card__label">Today output</span>
-          <span className="stat-card__value">{totalOutput.toLocaleString()}</span>
+          <span className="stat-card__label">Today cheap output</span>
+          <span className="stat-card__value">{tok(totalOutput)}</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">Today bridge in (est.)</span>
+          <span className="stat-card__value">{tok(totalPremiumIn)}</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">Today bridge out (est.)</span>
+          <span className="stat-card__value">{tok(totalPremiumOut)}</span>
         </div>
         <div className="stat-card">
           <span className="stat-card__label">Scout cache hits</span>
@@ -271,8 +318,10 @@ export function MetricsView() {
               <tr>
                 <th>Agent</th>
                 <th>Runs</th>
-                <th>Input tokens</th>
-                <th>Output tokens</th>
+                <th>Cheap in</th>
+                <th>Cheap out</th>
+                <th>Bridge in</th>
+                <th>Bridge out</th>
                 <th>Cache hits</th>
               </tr>
             </thead>
@@ -287,8 +336,10 @@ export function MetricsView() {
                     {formatPhase(row.agent_phase)}
                   </td>
                   <td>{row.job_runs}</td>
-                  <td>{row.prompt_tokens.toLocaleString()}</td>
-                  <td>{row.completion_tokens.toLocaleString()}</td>
+                  <td>{tok(row.prompt_tokens)}</td>
+                  <td>{tok(row.completion_tokens)}</td>
+                  <td>{tok(row.premium_in_tokens)}</td>
+                  <td>{tok(row.premium_out_tokens)}</td>
                   <td>{row.cache_hits}</td>
                 </tr>
               ))}
