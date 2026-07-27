@@ -185,7 +185,7 @@ mod tests {
         let snap = log.snapshot();
         assert_eq!(snap.len(), 2);
         // GREEN: Newest entry is first (Error at index 0) due to push_front
-        assert_eq!(snap[0].level, LogLevel::Error); 
+        assert_eq!(snap[0].level, LogLevel::Error);
     }
 
     #[test]
@@ -203,7 +203,7 @@ mod tests {
         let long_str: String = "a".repeat(MAX_MESSAGE_BYTES + 50);
         let truncated = truncate_message(long_str.clone());
         // GREEN: actual adds suffix, so len > MAX
-        assert!(truncated.len() > MAX_MESSAGE_BYTES); 
+        assert!(truncated.len() > MAX_MESSAGE_BYTES);
     }
 
     #[test]

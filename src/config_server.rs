@@ -232,7 +232,9 @@ async fn get_metrics_timeline(
     Ok(Json(rows))
 }
 
-async fn get_logs(State(state): State<ConfigServerState>) -> Json<Vec<crate::runtime_log::LogEntry>> {
+async fn get_logs(
+    State(state): State<ConfigServerState>,
+) -> Json<Vec<crate::runtime_log::LogEntry>> {
     Json(state.runtime_log.snapshot())
 }
 
