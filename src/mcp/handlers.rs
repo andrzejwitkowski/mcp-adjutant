@@ -1331,7 +1331,8 @@ mod eval_hook_tests {
 mod boundary_validator_tests {
     use super::final_blueprint_or_report;
     use crate::agent::{AgentContext, CoordinatorConstraints, PlanBlueprintArgs, PlanKind};
-    use crate::cache::resolve_workspace_path;
+    use crate::cache::{resolve_workspace_path, with_thread_workspace_root};
+    use std::path::PathBuf;
 
     fn ctx(data: &str) -> AgentContext {
         AgentContext {
@@ -1357,17 +1358,19 @@ mod boundary_validator_tests {
     #[test]
     fn boundary_returns_validated_json_when_completed() {
         let golden = include_str!("../../tests/fixtures/golden-rate-limit-blueprint.json");
-        let mut c = ctx(golden);
-        c.agent_completed = true;
-        c.is_finished = true;
-        c.touched_files = vec![
-            resolve_workspace_path("src/lib.rs"),
-            resolve_workspace_path("src/config_server.rs"),
-            resolve_workspace_path("Cargo.toml"),
-        ];
-        let out = final_blueprint_or_report(&c, &CoordinatorConstraints::none());
-        assert!(out.contains("\"task_id\""), "{out}");
-        assert!(!out.contains("VALIDATION FAILED"), "{out}");
+        with_thread_workspace_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")), || {
+            let mut c = ctx(golden);
+            c.agent_completed = true;
+            c.is_finished = true;
+            c.touched_files = vec![
+                resolve_workspace_path("src/lib.rs"),
+                resolve_workspace_path("src/config_server.rs"),
+                resolve_workspace_path("Cargo.toml"),
+            ];
+            let out = final_blueprint_or_report(&c, &CoordinatorConstraints::none());
+            assert!(out.contains("\"task_id\""), "{out}");
+            assert!(!out.contains("VALIDATION FAILED"), "{out}");
+        });
     }
 
     #[test]

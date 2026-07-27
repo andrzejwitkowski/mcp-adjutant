@@ -277,6 +277,50 @@
   font-size: 0.85rem;
 }
 
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.log-row {
+  border: 1px solid #2d3139;
+  border-radius: 0.5rem;
+  background: #181b22;
+  padding: 0.75rem 1rem;
+}
+
+.log-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.log-row__source {
+  font-weight: 600;
+  flex: 1;
+}
+
+.log-row__time {
+  color: #9aa0a6;
+  font-size: 0.8rem;
+}
+
+.log-row__msg {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  background: #0f1115;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  color: #c8cdd5;
+}
+
 .score-badge {
   display: inline-block;
   padding: 0.2rem 0.5rem;

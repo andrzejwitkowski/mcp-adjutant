@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ConfigApp } from './modules/config-ui'
 import { EvaluationsView } from './modules/config-ui/EvaluationsView'
+import { LogsView } from './modules/config-ui/LogsView'
 import { MetricsView } from './modules/config-ui/MetricsView'
 import { ScoutCacheView } from './modules/config-ui/ScoutCacheView'
 import { WebCacheView } from './modules/config-ui/WebCacheView'
@@ -48,18 +49,12 @@ export default function App() {
   if (view === 'cache') return <ScoutCacheView />
   if (view === 'web-cache') return <WebCacheView />
   if (view === 'usage') return <MetricsView />
+  if (view === 'logs') return <LogsView />
   if (view === 'overview')
     return (
       <StubView
         title="Overview"
         body="ponytail: status overview stub — use Usage for token metrics."
-      />
-    )
-  if (view === 'logs')
-    return (
-      <StubView
-        title="Logs"
-        body="ponytail: logs stub — UI notify stream lives in the MCP host for now."
       />
     )
   return <ConfigApp />

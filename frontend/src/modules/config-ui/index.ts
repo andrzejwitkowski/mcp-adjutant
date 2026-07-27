@@ -1,5 +1,6 @@
 export { ConfigApp } from './ConfigApp'
 export { EvaluationsView } from './EvaluationsView'
+export { LogsView } from './LogsView'
 export { NavBar, PageShell } from './NavBar'
 export { AppShell } from './AppShell'
 export { MetricsView } from './MetricsView'
@@ -13,6 +14,8 @@ export type {
   CacheOverview,
   CacheSnapshot,
   EvaluationsPage,
+  LogEntry,
+  LogLevel,
   PhaseBinding,
   PhaseProfile,
   Provider,

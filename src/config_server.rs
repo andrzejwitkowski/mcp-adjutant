@@ -27,6 +27,7 @@ pub struct ConfigServerState {
     pub static_root: PathBuf,
     pub cache_project_root: PathBuf,
     pub metrics: Arc<std::sync::Mutex<MetricsStore>>,
+    pub runtime_log: crate::runtime_log::RuntimeLog,
 }
 
 pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
@@ -42,6 +43,7 @@ pub async fn run(state: ConfigServerState, port: u16) -> Result<(), String> {
         .route("/api/metrics/summary", get(get_metrics_summary))
         .route("/api/metrics/daily", get(get_metrics_daily))
         .route("/api/metrics/timeline", get(get_metrics_timeline))
+        .route("/api/logs", get(get_logs))
         .fallback_service(serve_dir)
         .with_state(state);
 
@@ -228,6 +230,12 @@ async fn get_metrics_timeline(
     let rows = query_metrics(&state, |conn| query_timeline(conn, &query.date))
         .map_err(CacheApiError::from)?;
     Ok(Json(rows))
+}
+
+async fn get_logs(
+    State(state): State<ConfigServerState>,
+) -> Json<Vec<crate::runtime_log::LogEntry>> {
+    Json(state.runtime_log.snapshot())
 }
 
 #[derive(Debug)]

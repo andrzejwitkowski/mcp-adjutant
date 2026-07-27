@@ -116,15 +116,26 @@ impl Drop for HeartbeatHandle {
     }
 }
 
+type FailHook = Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct JobRegistry {
     inner: Arc<Mutex<HashMap<String, JobRecord>>>,
+    on_fail: Option<FailHook>,
 }
 
 impl JobRegistry {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            on_fail: None,
+        }
+    }
+
+    pub fn with_on_fail(on_fail: FailHook) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            on_fail: Some(on_fail),
         }
     }
 
@@ -208,11 +219,16 @@ impl JobRegistry {
     }
 
     pub fn fail(&self, request_uuid: &str, error: String) {
+        let mut tool = None;
         self.mutate_if_active(request_uuid, |job| {
+            tool = Some(job.tool_name.clone());
             job.status = JobStatus::Failed;
-            job.error = Some(error);
+            job.error = Some(error.clone());
             job.result = None;
         });
+        if let (Some(tool), Some(hook)) = (tool, &self.on_fail) {
+            hook(&tool, request_uuid, &error);
+        }
     }
 
     /// Terminal outcome once the job has finished. `None` while still queued/running.

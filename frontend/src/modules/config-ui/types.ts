@@ -247,3 +247,12 @@ export interface UiNotifyEvent {
   subject: UiNotifyHeadline
   meta: UiNotifyMeta
 }
+
+export type LogLevel = 'error' | 'warn' | 'panic'
+
+export interface LogEntry {
+  ts_unix_ms: number
+  level: LogLevel
+  source: string
+  message: string
+}

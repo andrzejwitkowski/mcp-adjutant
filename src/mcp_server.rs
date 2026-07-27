@@ -50,13 +50,12 @@ enum StdioFraming {
 }
 
 // ponytail: minimal MCP stdio loop; rmcp needs edition2024 / newer rustc
-pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>) -> Result<(), String> {
+pub fn run_stdio(config: Arc<RwLock<AdjutantConfig>>, jobs: JobRegistry) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("failed to start tokio runtime: {err}"))?;
 
-    let jobs = JobRegistry::new();
     crate::jobs::install_active_registry(jobs.clone());
     let stdin = io::stdin();
     let mut stdout = io::stdout();

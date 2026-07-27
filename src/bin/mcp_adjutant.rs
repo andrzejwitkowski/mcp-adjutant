@@ -2,22 +2,35 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use mcp_adjutant::cache::resolve_config_cache_root;
 use mcp_adjutant::config_server::{
     load_or_default, resolve_config_path, run as run_config_server, static_root, ConfigServerState,
 };
+use mcp_adjutant::jobs::JobRegistry;
 use mcp_adjutant::mcp_server;
 use mcp_adjutant::metrics::{self, MetricsStore};
+use mcp_adjutant::runtime_log::{self, LogLevel, RuntimeLog, RuntimeLogLayer};
 use mcp_adjutant::AdjutantConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("mcp_adjutant=info".parse()?))
-        .with_writer(std::io::stderr)
-        // ponytail: ANSI stderr looks like protocol noise to Cursor's MCP client
-        .with_ansi(false)
+    let runtime_log = RuntimeLog::new();
+    runtime_log::install_panic_hook(runtime_log.clone());
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive("mcp_adjutant=info".parse()?))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                // ponytail: ANSI stderr looks like protocol noise to Cursor's MCP client
+                .with_ansi(false),
+        )
+        .with(RuntimeLogLayer {
+            log: runtime_log.clone(),
+        })
         .init();
 
     let config_path = std::env::var("MCP_ADJUTANT_CONFIG")
@@ -57,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         static_root: static_root(),
         cache_project_root,
         metrics: metrics_store,
+        runtime_log: runtime_log.clone(),
     };
 
     std::thread::spawn(move || {
@@ -71,6 +85,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
 
-    mcp_server::run_stdio(shared)?;
+    let jobs = JobRegistry::with_on_fail(Arc::new(move |tool, uuid, error| {
+        runtime_log.push(LogLevel::Error, "job", format!("{tool} {uuid}: {error}"));
+    }));
+    mcp_server::run_stdio(shared, jobs)?;
     Ok(())
 }

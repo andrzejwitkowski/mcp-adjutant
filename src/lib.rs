@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod mcp_server;
 pub mod metrics;
 pub mod mutation_journal;
+pub mod runtime_log;
 pub mod storage;
 pub mod tools;
 
