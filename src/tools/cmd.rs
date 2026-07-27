@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::cache::mcp_workspace_root;
+
 pub fn run_ripgrep(pattern: &str, root: &Path) -> Result<String, String> {
     const MAX_OUTPUT_BYTES: usize = 8 * 1024;
 
@@ -70,12 +72,15 @@ pub fn run_ripgrep_matching_files(pattern: &str, root: &Path) -> Result<Vec<Stri
 }
 
 pub fn run_fd(pattern: &str) -> Result<Vec<String>, String> {
+    // ponytail: pin cwd — fd defaults to process cwd; parallel tests + multi-workspace MCP
+    let root = mcp_workspace_root();
     // ponytail: Debian ships `fdfind`; try fd then fdfind before giving up
     let candidates = ["fd", "fdfind"];
     let mut last_err = String::from("no fd binary found");
 
     for binary in candidates {
         let output = match Command::new(binary)
+            .current_dir(&root)
             .arg(pattern)
             .arg("-t")
             .arg("f")
