@@ -49,9 +49,7 @@ impl RuntimeLog {
             source: source.into(),
             message: truncate_message(message.into()),
         };
-        let Ok(mut buf) = self.inner.lock() else {
-            return;
-        };
+        let mut buf = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if buf.len() >= CAPACITY {
             buf.pop_back();
         }
@@ -62,8 +60,10 @@ impl RuntimeLog {
     pub fn snapshot(&self) -> Vec<LogEntry> {
         self.inner
             .lock()
-            .map(|buf| buf.iter().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
     }
 }
 

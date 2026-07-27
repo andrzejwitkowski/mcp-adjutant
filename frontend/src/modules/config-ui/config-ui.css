@@ -316,7 +316,7 @@
   border-radius: 0.375rem;
   background: #0f1115;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 0.85rem;
   color: #c8cdd5;
 }
