@@ -19,8 +19,8 @@ pub use manager::{
     SEMANTIC_SIMILARITY_THRESHOLD,
 };
 pub use project::{
-    current_unix_timestamp, hash_query_text, mcp_workspace_root, open_cache_connection,
-    parse_workspace_root_arg, project_cache_db_path, require_workspace_root_arg,
-    resolve_config_cache_root, resolve_workspace_path, resolve_workspace_path_bounded,
-    with_thread_workspace_root, workspace_root_schema_property,
+    current_unix_timestamp, display_rel, hash_query_text, mcp_workspace_root,
+    open_cache_connection, parse_workspace_root_arg, project_cache_db_path,
+    require_workspace_root_arg, resolve_config_cache_root, resolve_workspace_path,
+    resolve_workspace_path_bounded, with_thread_workspace_root, workspace_root_schema_property,
 };

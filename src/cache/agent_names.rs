@@ -18,6 +18,9 @@ const ALIASES: &[(&str, &str)] = &[
     ("planner", "PlannerAgent"),
     ("planneragent", "PlannerAgent"),
     ("Planner", "PlannerAgent"),
+    ("blueprintexecutor", "BlueprintExecutor"),
+    ("blueprint_executor", "BlueprintExecutor"),
+    ("BlueprintExecutor", "BlueprintExecutor"),
     ("transpiler", "TranspilerAgent"),
     ("transpileragent", "TranspilerAgent"),
     ("phase_3_transformer", "TranspilerAgent"),
@@ -83,6 +86,18 @@ mod tests {
     fn normalize_maps_legacy_builder_aliases() {
         assert_eq!(normalize_agent_name("builder"), "Phase_4_Builder");
         assert_eq!(normalize_agent_name("BuilderAgent"), "Phase_4_Builder");
+    }
+
+    #[test]
+    fn normalize_maps_blueprint_executor() {
+        assert_eq!(
+            normalize_agent_name("blueprintexecutor"),
+            "BlueprintExecutor"
+        );
+        assert_eq!(
+            normalize_agent_name("BlueprintExecutor"),
+            "BlueprintExecutor"
+        );
     }
 
     #[test]

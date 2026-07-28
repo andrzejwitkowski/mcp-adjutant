@@ -354,6 +354,8 @@ fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
         "execute_global_refactor" => vec![AgentPhase::Transformer],
         "babysit_pr" => vec![AgentPhase::Babysitter],
         "plan_blueprint" => vec![AgentPhase::Planner, AgentPhase::PlannerEmit],
+        // triage + builder (and builder may scout); premium bridge uses first phase only
+        "execute_blueprint" => vec![AgentPhase::Triage, AgentPhase::Builder],
         "prepare_git_copy" | "create_git_branch" => vec![AgentPhase::GitJanitor],
         "transpile_types" => vec![AgentPhase::Builder],
         _ => vec![],
@@ -607,6 +609,22 @@ mod tests {
                 )
                 .expect("tokens");
             assert_eq!((inn, out), (40, 80));
+
+            store
+                .record_premium_bridge("execute_blueprint", Some("req-prem-2".to_string()), 10, 20)
+                .expect("record execute");
+            let exec_phase: String = conn
+                .query_row(
+                    "SELECT agent_phase FROM premium_bridge WHERE request_uuid = 'req-prem-2'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("exec phase");
+            assert_eq!(exec_phase, "triage");
+            assert_eq!(
+                phases_for_mcp_tool("execute_blueprint"),
+                vec![AgentPhase::Triage, AgentPhase::Builder]
+            );
         }
 
         drop(store);

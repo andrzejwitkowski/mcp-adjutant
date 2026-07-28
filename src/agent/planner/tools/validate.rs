@@ -200,13 +200,13 @@ pub fn validate_patch_hunks(pipeline: &[Value]) -> Result<(), String> {
 
 /// A single SEARCH/REPLACE hunk parsed from `patch_content`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Hunk {
+pub struct Hunk {
     pub search: String,
     pub replace: String,
 }
 
 /// ponytail: line-based hunk parser — no AST, markers must sit at line start.
-pub(crate) fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
+pub fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     let mut hunks = Vec::new();
     let mut lines = patch.lines().peekable();
     while let Some(line) = lines.next() {
@@ -288,7 +288,7 @@ fn validate_hunk_grounding(
 
 fn grounding_fix_hint(step: &Value, target: &str) -> String {
     let goal = step.get("goal").and_then(Value::as_str).unwrap_or_default();
-    if let Some(line) = goal_line_number(goal) {
+    if let Some((_, line)) = path_line_from_goal(goal) {
         return format!(
             " Fix: call extract_search_anchor(file={target:?}, start={line}, end={line}) during scout and paste the returned SEARCH block."
         );
@@ -296,11 +296,66 @@ fn grounding_fix_hint(step: &Value, target: &str) -> String {
     format!(" Fix: call extract_search_anchor on {target} with the line range from your goal.")
 }
 
-fn goal_line_number(goal: &str) -> Option<usize> {
-    let idx = goal.find(':')?;
-    let after = &goal[idx + 1..];
-    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse().ok().filter(|n: &usize| *n >= 1)
+/// First `path:line` citation in a goal string (e.g. `src/foo.rs:35`).
+pub fn path_line_from_goal(goal: &str) -> Option<(String, usize)> {
+    for token in goal.split_whitespace() {
+        let t = token.trim_matches(|c: char| {
+            !(c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '.' | '-' | ':'))
+        });
+        let t = t.trim_end_matches(['.', ',', ';', ')']);
+        let Some((path, line)) = t.rsplit_once(':') else {
+            continue;
+        };
+        let line_digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let Ok(n) = line_digits.parse::<usize>() else {
+            continue;
+        };
+        if n < 1 || !path.contains('.') {
+            continue;
+        }
+        return Some((path.to_string(), n));
+    }
+    None
+}
+
+/// First non-test `path:line` citation in a generate_tests goal.
+pub fn source_under_test_from_goal(goal: &str) -> Option<String> {
+    for token in goal.split_whitespace() {
+        let t = token.trim_matches(|c: char| {
+            !(c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '.' | '-' | ':'))
+        });
+        let t = t.trim_end_matches(['.', ',', ';', ')']);
+        let Some((path, line)) = t.rsplit_once(':') else {
+            continue;
+        };
+        let line_digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if line_digits.is_empty() || !path.contains('.') {
+            continue;
+        }
+        if is_testish_path(path) {
+            continue;
+        }
+        return Some(path.to_string());
+    }
+    None
+}
+
+pub fn test_type_for_target(target_file: &str) -> &'static str {
+    if is_testish_path(target_file) {
+        "integration"
+    } else {
+        "unit"
+    }
+}
+
+fn is_testish_path(path: &str) -> bool {
+    let n = path.replace('\\', "/");
+    n.contains("/tests/")
+        || n.starts_with("tests/")
+        || n.contains("/test/")
+        || n.starts_with("test/")
+        || n.contains("/__tests__/")
+        || n.contains("/spec/")
 }
 
 /// REPLACE must differ from SEARCH and must not dump large new logic blocks.
@@ -718,6 +773,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn source_under_test_skips_test_paths() {
+        let goal = "Integration test at tests/foo_test.rs:1 covering src/config_server.rs:35.";
+        assert_eq!(
+            source_under_test_from_goal(goal).as_deref(),
+            Some("src/config_server.rs")
+        );
+        assert_eq!(
+            path_line_from_goal("Wire at src/lib.rs:12."),
+            Some(("src/lib.rs".into(), 12))
+        );
+    }
 
     #[test]
     fn is_ellipsis_sketch_line_allows_spread_syntax() {

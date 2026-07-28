@@ -48,6 +48,16 @@ Hard caps: single-step feature blueprint max 6; no generate_tests on code change
 patch_file MUST use SEARCH/REPLACE hunks. generate_tests step MUST exist (final step) with non-empty goal citing the test file path:line.
 Score down if blueprint violates stated coordinator plan_kind or expectations. Prefer surgical hunks over pasting entire files."#;
 
+const BLUEPRINT_EXECUTOR_RUBRIC: &str = r#"
+
+BLUEPRINT EXECUTOR RUBRIC (override generic rubric):
+- 9-10: Dense report with task_id, applied paths, triage PASS (cmd/exit), generate_tests GREEN (scenarios + path + verify) — no full source dumps
+- 7-8: Same contract with thin triage/builder log tails
+- 5-6: Evidenced FAIL (triage or builder) with path + error excerpt
+- 1-4: Meta status only, or whole-file / large code dump in report
+Hard caps: full source body in report max 4; PASS without triage/builder evidence max 3.
+Do NOT require re-pasting SEARCH/REPLACE hunks — paths + verdicts are enough."#;
+
 const BUILDER_RUBRIC: &str = r#"
 
 BUILDER RUBRIC (override generic rubric):
@@ -294,6 +304,7 @@ fn agent_evaluation_rubric(
 ) -> Option<&'static str> {
     match target_agent {
         "PlannerAgent" => Some(PLANNER_RUBRIC),
+        "BlueprintExecutor" => Some(BLUEPRINT_EXECUTOR_RUBRIC),
         "Phase_1_Scout" => Some(SCOUT_RUBRIC),
         "Phase_5_Triage" => Some(TRIAGE_RUBRIC),
         "BabysitterAgent" => Some(BABYSITTER_RUBRIC),
@@ -390,6 +401,14 @@ mod tests {
         assert!(rubric.contains("PLANNER RUBRIC"));
         assert!(rubric.contains("ellipsis"));
         assert!(rubric.contains("generate_tests"));
+    }
+
+    #[test]
+    fn blueprint_executor_rubric_appended() {
+        let rubric = agent_evaluation_rubric("BlueprintExecutor", "", "").expect("rubric");
+        assert!(rubric.contains("BLUEPRINT EXECUTOR RUBRIC"));
+        assert!(rubric.contains("task_id"));
+        assert!(rubric.contains("whole-file"));
     }
 
     #[test]

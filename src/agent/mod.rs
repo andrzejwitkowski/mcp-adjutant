@@ -42,12 +42,14 @@ pub use log_analyzer::{
 };
 pub use orchestrator::{build_tool_loop_message, run_single_tool_turn, AgentLoopOrchestrator};
 pub use planner::{
-    extract_json_object, format_emit_prompt, format_scout_prompt, parse_plan_blueprint_args,
-    planner_emit_tool_set, planner_scout_tool_set, run_planner_hybrid, validate_blueprint,
-    validate_blueprint_coordinator, validate_blueprint_grounding, CoordinatorConstraints,
-    PlanBlueprintArgs, PlanKind, PlannerAgent, PlannerHybridAgent, PLANNER_EMIT_MAX_ITERATIONS,
-    PLANNER_EMIT_SYSTEM_PROMPT, PLANNER_MAX_ITERATIONS, PLANNER_SCOUT_MAX_ITERATIONS,
-    PLANNER_SCOUT_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
+    apply_blueprint_file_steps, apply_hunks_to_body, display_rel, extract_json_object,
+    format_emit_prompt, format_scout_prompt, parse_plan_blueprint_args, path_line_from_goal,
+    planner_emit_tool_set, planner_scout_tool_set, run_planner_hybrid, source_under_test_from_goal,
+    test_type_for_target, validate_blueprint, validate_blueprint_coordinator,
+    validate_blueprint_grounding, CoordinatorConstraints, PlanBlueprintArgs, PlanKind,
+    PlannerAgent, PlannerHybridAgent, PLANNER_EMIT_MAX_ITERATIONS, PLANNER_EMIT_SYSTEM_PROMPT,
+    PLANNER_MAX_ITERATIONS, PLANNER_SCOUT_MAX_ITERATIONS, PLANNER_SCOUT_SYSTEM_PROMPT,
+    PLANNER_SYSTEM_PROMPT,
 };
 pub use report::{
     format_builder_report, format_triage_success, triage_passed, BuilderReportInput,

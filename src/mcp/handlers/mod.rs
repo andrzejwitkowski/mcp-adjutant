@@ -1,57 +1,59 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
 
+mod babysit_pr;
+mod builder_job;
+mod execute_blueprint;
+mod transpile_types;
+
+pub use babysit_pr::handle_babysit_pr;
+pub use execute_blueprint::handle_execute_blueprint;
+pub use transpile_types::handle_transpile_types;
+
 use super::schemas::{
     ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, CREATE_GIT_BRANCH_TOOL_NAME,
-    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
-    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME,
-    SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
-    WEB_FETCH_TOOL_NAME,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_BLUEPRINT_TOOL_NAME,
+    EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+    PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME,
+    TRANSPILE_TYPES_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
 };
 use crate::agent::{
-    analyze_log_at_path, builder_task_parts, create_git_branch, default_builder_agent,
-    default_transformer_agent, default_verify_workspace, embed_source_files, extract_json_object,
-    format_babysitter_result, format_builder_report, format_eval_job_appendix, format_scout_block,
-    format_triage_success, gather_conventions_and_diff, parse_plan_blueprint_args,
-    parse_transpile_types_args, run_git_janitor, run_planner_hybrid, run_scout_with_cache,
-    run_web_fetch_with_cache, triage_passed, validate_blueprint, validate_blueprint_coordinator,
-    validate_blueprint_grounding, AgentContext, AgentEvalSummary, AgentLoopOrchestrator,
-    BabysitterAgent, BuilderReportInput, CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent,
-    ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TranspilerAgent, TriageAgent,
-    WebCacheOutcome, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
-    BUILDER_GREEN_MARKER, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
-    TRANSPILER_MAX_ITERATIONS, TRANSPILER_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT,
+    analyze_log_at_path, create_git_branch, default_transformer_agent, extract_json_object,
+    format_eval_job_appendix, format_scout_block, format_triage_success,
+    gather_conventions_and_diff, parse_plan_blueprint_args, run_git_janitor, run_planner_hybrid,
+    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
+    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext, AgentEvalSummary,
+    AgentLoopOrchestrator, CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent,
+    ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TriageAgent, WebCacheOutcome,
+    WebFetcherAgent, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
-    load_best_builder_dense_exemplar, load_best_desired_output_exemplar, mcp_workspace_root,
-    open_cache_connection, require_workspace_root_arg, resolve_workspace_path,
+    mcp_workspace_root, require_workspace_root_arg, resolve_workspace_path,
     with_thread_workspace_root, ProjectCacheManager,
 };
 use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
 use crate::llm::{
-    create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
-    create_git_janitor_llm_client, create_planner_emit_llm_client, create_planner_llm_client,
-    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
-    create_web_fetcher_llm_client, preflight_phase,
+    create_evaluator_llm_client, create_git_janitor_llm_client, create_planner_emit_llm_client,
+    create_planner_llm_client, create_scout_llm_client, create_transformer_llm_client,
+    create_triage_llm_client, create_web_fetcher_llm_client, preflight_phase,
 };
-use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
+use crate::tools::LlmBuildDiscoverer;
 
-const SOURCE_EMBED_MAX_BYTES: usize = 64 * 1024;
+use builder_job::run_builder_green;
 
 const SCOUT_MAX_ITERATIONS: u32 = 10;
-const TRIAGE_MAX_ITERATIONS: u32 = 3;
-const BUILDER_MAX_ITERATIONS: u32 = 8;
+pub(crate) const TRIAGE_MAX_ITERATIONS: u32 = 3;
+pub(crate) const BUILDER_MAX_ITERATIONS: u32 = 8;
 const EVALUATOR_MAX_ITERATIONS: u32 = 1;
 
 const AUTO_EVAL_APPENDIX_MARKER: &str = "[ADJUTANT AUTO-EVAL APPENDIX";
 
-fn strip_auto_eval_appendix(output: &str) -> &str {
+pub(crate) fn strip_auto_eval_appendix(output: &str) -> &str {
     output
         .split(AUTO_EVAL_APPENDIX_MARKER)
         .next()
@@ -82,7 +84,10 @@ fn reject_thin_eval_input(target_agent: &str, received_output: &str) -> Result<(
     Ok(())
 }
 
-fn ensure_mutating_preflight(config: &AdjutantConfig, phases: &[AgentPhase]) -> Result<(), String> {
+pub(crate) fn ensure_mutating_preflight(
+    config: &AdjutantConfig,
+    phases: &[AgentPhase],
+) -> Result<(), String> {
     if crate::llm::skip_preflight() {
         return Ok(());
     }
@@ -113,6 +118,7 @@ fn tool_eval_target_agent(tool_name: &str) -> Option<&'static str> {
         BABYSIT_PR_TOOL_NAME => Some("BabysitterAgent"),
         WEB_FETCH_TOOL_NAME => Some("WebFetcherAgent"),
         PLAN_BLUEPRINT_TOOL_NAME => Some("PlannerAgent"),
+        EXECUTE_BLUEPRINT_TOOL_NAME => Some("BlueprintExecutor"),
         ANALYZE_LOG_TOOL_NAME => Some("LogAnalyzerAgent"),
         PREPARE_GIT_COPY_TOOL_NAME | CREATE_GIT_BRANCH_TOOL_NAME => Some("GitJanitorAgent"),
         EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => None,
@@ -156,7 +162,7 @@ fn normalize_eval_target(target_agent: &str) -> Option<String> {
     }
 }
 
-async fn finish_agent_job_with_eval(
+pub(crate) async fn finish_agent_job_with_eval(
     config: &AdjutantConfig,
     tool_name: &str,
     original_task: &str,
@@ -172,7 +178,7 @@ async fn finish_agent_job_with_eval(
     }
 }
 
-async fn dispatch_async_job<F, Fut>(
+pub(crate) async fn dispatch_async_job<F, Fut>(
     registry: &JobRegistry,
     request_uuid: String,
     tool_name: &str,
@@ -227,87 +233,6 @@ pub async fn handle_query_job_status(
     }
     let status = registry.query(&request_uuid)?;
     serde_json::to_string_pretty(&status).map_err(|err| format!("serialize status: {err}"))
-}
-
-fn verify_npm_test_passes(test_path: &Path, project_root: &Path) -> Result<String, String> {
-    let frontend = project_root.join("frontend");
-    let rel = test_path
-        .strip_prefix(&frontend)
-        .or_else(|_| test_path.strip_prefix(project_root))
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| test_path.to_string_lossy().into_owned());
-
-    let output = Command::new("npm")
-        .args(["test", "--", &rel])
-        .current_dir(&frontend)
-        .output()
-        .map_err(|err| format!("failed to run npm test in frontend: {err}"))?;
-
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() {
-        Ok(format!("npm test -- {rel}: passed\n{combined}"))
-    } else {
-        Err(format!("npm test -- {rel} failed:\n{combined}"))
-    }
-}
-
-fn verify_test_passes(test_path: &Path, project_root: &Path) -> Result<String, String> {
-    match test_path.extension().and_then(|ext| ext.to_str()) {
-        Some("rs") => verify_cargo_test_passes(test_path),
-        Some("ts" | "tsx") => verify_npm_test_passes(test_path, project_root),
-        _ => Ok(String::new()),
-    }
-}
-
-fn extract_green_test_path(log: &str) -> Option<PathBuf> {
-    log.lines()
-        .filter(|line| line.contains("[SYSTEM]: Launching Triage (green)"))
-        .filter_map(|line| line.split(" for ").nth(1))
-        .map(str::trim)
-        .map(PathBuf::from)
-        .next_back()
-}
-
-fn verify_cargo_test_passes(test_path: &Path) -> Result<String, String> {
-    let project_root = mcp_workspace_root();
-    let stem = test_path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("invalid test path: {}", test_path.display()))?;
-
-    let in_tests_dir = test_path
-        .components()
-        .any(|component| component.as_os_str() == "tests");
-
-    let mut command = Command::new("cargo");
-    let label = if in_tests_dir {
-        command.args(["test", "--test", stem]);
-        format!("cargo test --test {stem}")
-    } else {
-        // In-source #[cfg(test)] — do not filter by filename stem (test fns need not contain it).
-        command.args(["test", "--lib"]);
-        "cargo test --lib".to_string()
-    };
-
-    let output = command
-        .current_dir(&project_root)
-        .output()
-        .map_err(|err| format!("failed to run {label}: {err}"))?;
-
-    if output.status.success() {
-        return Ok(format!("{label}: all tests passed"));
-    }
-
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Err(format!("{label} failed:\n{combined}"))
 }
 
 pub async fn handle_scout_context(
@@ -453,7 +378,7 @@ fn embedding_fixture_paths() -> (PathBuf, PathBuf) {
     (fixtures.join("model.onnx"), fixtures.join("tokenizer.json"))
 }
 
-fn open_cache_manager_near(source_path: &Path) -> Result<ProjectCacheManager, String> {
+pub(crate) fn open_cache_manager_near(source_path: &Path) -> Result<ProjectCacheManager, String> {
     let start_dir = if source_path.is_file() {
         source_path.parent().unwrap_or(source_path)
     } else {
@@ -504,95 +429,19 @@ pub async fn handle_generate_tests_and_scaffolding(
                 &[AgentPhase::Builder, AgentPhase::Scout, AgentPhase::Triage],
             )?;
             let source_path = resolve_workspace_path(&source_file_path);
-            let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&source_path)?));
+            let built =
+                run_builder_green(&config, &source_path, &source_file_path, &test_type).await?;
 
-            let builder_client = create_builder_llm_client(&config)?;
-            let scout_client = create_scout_llm_client(&config)?;
-            let triage_client = create_triage_llm_client(&config)?;
-            let agent = default_builder_agent(
-                builder_client,
-                cache_manager,
-                scout_client,
-                triage_client,
-                Arc::clone(&config),
-                vec![source_path.clone()],
-            );
-
-            let source_excerpt = std::fs::read_to_string(&source_path)
-                .map(|contents| {
-                    const MAX: usize = 8_000;
-                    if contents.len() > MAX {
-                        format!("{}...\n(truncated)", &contents[..MAX])
-                    } else {
-                        contents
-                    }
-                })
-                .unwrap_or_else(|err| format!("(could not read source file: {err})"));
-
-            let project_root = mcp_workspace_root();
-            let parts =
-                builder_task_parts(&source_path, &test_type, &source_file_path, &project_root);
-
-            let mut prompt = format!(
-                "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n{}",
-                parts.workflow
-            );
-            if let Ok((_, conn)) = open_cache_connection(&project_root) {
-                if let Ok(Some(exemplar)) = load_best_builder_dense_exemplar(&conn) {
-                    prompt.push_str(
-                        "\n\n## 10/10 dense report exemplar (path + diffstat + scenarios + pass/fail — no source bodies)\n",
-                    );
-                    prompt.push_str(&exemplar);
-                }
-            }
-            if !parts.exemplar.is_empty() {
-                prompt.push_str("\n\n");
-                prompt.push_str(&parts.exemplar);
-            }
-            prompt.push_str(&format!("\n\nSource excerpt:\n```\n{source_excerpt}\n```"));
-
-            let original_task = prompt.clone();
-            let result = AgentLoopOrchestrator::run(&agent, prompt, BUILDER_MAX_ITERATIONS).await?;
-
-            let green_marker = result.accumulated_data.contains(BUILDER_GREEN_MARKER);
-            let builder_hard_stopped = result.iterations >= BUILDER_MAX_ITERATIONS
-                && result.accumulated_data.contains("iteration limit after");
-
-            let (green_ok, verify_summary) =
-                if result.is_finished && green_marker && !builder_hard_stopped {
-                    match extract_green_test_path(&result.accumulated_data) {
-                        None => (
-                            false,
-                            "builder GREEN but no test path found in log".to_string(),
-                        ),
-                        Some(test_path) => match verify_test_passes(&test_path, &project_root) {
-                            Ok(summary) => (true, summary),
-                            Err(err) => (false, format!("post-GREEN verify failed: {err}")),
-                        },
-                    }
-                } else {
-                    (false, String::new())
-                };
-
-            let output = format_builder_report(&BuilderReportInput {
-                accumulated_data: &result.accumulated_data,
-                project_root: &project_root,
-                source_file_path: &source_file_path,
-                test_type: &test_type,
-                green_ok,
-                verify_summary: (!verify_summary.is_empty()).then_some(verify_summary.as_str()),
-                config: &config,
-            });
             // Always auto-eval (incl. RED/fail) so Evaluations UI gets Phase_4_Builder rows.
             let mut final_out = finish_agent_job_with_eval(
                 &config,
                 GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-                &original_task,
-                output,
+                &built.original_task,
+                built.output,
             )
             .await;
             // Fail closed: do not leave intentional RED tests in the workspace.
-            if !green_ok {
+            if !built.green_ok {
                 return Err(format!(
                     "Builder did not complete GREEN verification (rolling back writes).\n{final_out}"
                 ));
@@ -883,209 +732,6 @@ pub async fn handle_analyze_log(
     .await
 }
 
-pub async fn handle_babysit_pr(
-    args: Value,
-    config: Arc<AdjutantConfig>,
-    registry: &JobRegistry,
-) -> Result<String, String> {
-    let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = require_workspace_root_arg(&args)?;
-    let pr_number = args
-        .get("pr_number")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "pr_number is required".to_string())?;
-
-    dispatch_async_job(
-        registry,
-        request_uuid,
-        BABYSIT_PR_TOOL_NAME,
-        config.job_await_timeout_secs,
-        workspace_root,
-        args.to_string(),
-        move || async move {
-            let pr_state = gh_pr_state(pr_number)?;
-            assert_on_pr_head_branch(&pr_state.head_ref_name)?;
-
-            let babysitter_client = create_babysitter_llm_client(&config)?;
-            let triage_client = create_triage_llm_client(&config)?;
-            let discoverer = LlmBuildDiscoverer::new(create_triage_llm_client(&config)?);
-            let triage_agent = TriageAgent::with_build_runner_and_discoverer(
-                triage_client,
-                Vec::new(),
-                Arc::clone(&config),
-                SystemBuildRunner,
-                discoverer,
-            );
-            let agent = BabysitterAgent::new(
-                babysitter_client,
-                Arc::clone(&config),
-                triage_agent,
-                pr_number,
-            );
-
-            let original_task = format!("{BABYSIT_PR_TOOL_NAME} PR #{pr_number}");
-            let mut prompt =
-                format!("{BABYSIT_PR_TOOL_NAME}\nPR #{pr_number}\n\n{BABYSITTER_SYSTEM_PROMPT}");
-            if let Ok((_, conn)) = open_cache_connection(&mcp_workspace_root()) {
-                if let Ok(Some(exemplar)) =
-                    load_best_desired_output_exemplar(&conn, "BabysitterAgent")
-                {
-                    prompt.push_str("\n\n## 10/10 output exemplar (match this JSON shape)\n");
-                    prompt.push_str(&exemplar);
-                }
-            }
-            let result =
-                AgentLoopOrchestrator::run(&agent, prompt, BABYSITTER_MAX_ITERATIONS).await?;
-
-            let output = if result.is_finished && result.agent_completed {
-                result.accumulated_data
-            } else {
-                let state = gh_pr_state(pr_number)?;
-                let (report_posted, paths_seen, paths_handled) = agent.session_snapshot();
-                format_babysitter_result(
-                    &state,
-                    report_posted,
-                    &paths_seen,
-                    &paths_handled,
-                    &[],
-                    pr_number,
-                    result.iterations,
-                    Some(&result.accumulated_data),
-                    Some("session incomplete"),
-                )?
-            };
-            Ok(
-                finish_agent_job_with_eval(&config, BABYSIT_PR_TOOL_NAME, &original_task, output)
-                    .await,
-            )
-        },
-    )
-    .await
-}
-
-pub async fn handle_transpile_types(
-    args: Value,
-    config: Arc<AdjutantConfig>,
-    registry: &JobRegistry,
-) -> Result<String, String> {
-    let request_uuid = parse_request_uuid(&args)?;
-    let workspace_root = require_workspace_root_arg(&args)?;
-    let parsed = parse_transpile_types_args(&args)?;
-
-    dispatch_async_job(
-        registry,
-        request_uuid,
-        TRANSPILE_TYPES_TOOL_NAME,
-        config.job_await_timeout_secs,
-        workspace_root,
-        args.to_string(),
-        move || async move {
-            ensure_mutating_preflight(
-                &config,
-                &[AgentPhase::Builder, AgentPhase::Triage],
-            )?;
-            let resolved_sources: Vec<PathBuf> = parsed
-                .source_paths
-                .iter()
-                .map(resolve_workspace_path)
-                .collect();
-            // ponytail: transpile LLM uses builder phase profile
-            let resolved_target = resolve_workspace_path(&parsed.target_path);
-            let resolved_preserve: Vec<PathBuf> = parsed
-                .preserve_paths
-                .iter()
-                .map(resolve_workspace_path)
-                .collect();
-
-            let verify_ws = parsed
-                .verify_workspace
-                .map(resolve_workspace_path)
-                .unwrap_or_else(|| default_verify_workspace(&resolved_target));
-            let verify_command = parsed.verify_command;
-
-            let sources_block = embed_source_files(&resolved_sources, SOURCE_EMBED_MAX_BYTES)?;
-            let preserve_list = resolved_preserve
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let verify_line = verify_command
-                .as_deref()
-                .map(|cmd| format!("cd {} && {cmd}", verify_ws.display()))
-                .unwrap_or_else(|| "auto (child triage discovers)".to_string());
-
-            let prompt = format!(
-                "{TRANSPILE_TYPES_TOOL_NAME}\n\n\
-                 ## Architecture layout (coordinator)\n\n{architecture_layout}\n\n\
-                 {sources_block}\
-                 ## Targets\n\n- target_path: {target}\n- preserve_paths: {preserve_list}\n- verify: {verify_line}\n\n\
-                 {TRANSPILER_SYSTEM_PROMPT}",
-                architecture_layout = parsed.architecture_layout,
-                target = resolved_target.display(),
-            );
-
-            let transpiler_client = create_builder_llm_client(&config)?;
-            let triage_client = create_triage_llm_client(&config)?;
-
-            let original_task = prompt.clone();
-            let result = if verify_command.is_some() {
-                let triage_agent = TriageAgent::with_build_runner(
-                    triage_client,
-                    vec![resolved_target.clone()],
-                    Arc::clone(&config),
-                    SystemBuildRunner,
-                );
-                let agent = TranspilerAgent::new(
-                    transpiler_client,
-                    triage_agent,
-                    resolved_target,
-                    resolved_preserve,
-                    verify_ws,
-                    verify_command,
-                );
-                AgentLoopOrchestrator::run(&agent, prompt, TRANSPILER_MAX_ITERATIONS).await
-            } else {
-                let discoverer = LlmBuildDiscoverer::new(create_triage_llm_client(&config)?);
-                let triage_agent = TriageAgent::with_build_runner_and_discoverer(
-                    triage_client,
-                    vec![resolved_target.clone()],
-                    Arc::clone(&config),
-                    SystemBuildRunner,
-                    discoverer,
-                );
-                let agent = TranspilerAgent::new(
-                    transpiler_client,
-                    triage_agent,
-                    resolved_target,
-                    resolved_preserve,
-                    verify_ws,
-                    verify_command,
-                );
-                AgentLoopOrchestrator::run(&agent, prompt, TRANSPILER_MAX_ITERATIONS).await
-            }?;
-
-            let output = if result.is_finished && result.agent_completed {
-                result.accumulated_data
-            } else {
-                format!(
-                    "Transpiler report (finished={}, iterations={}):\n{}",
-                    result.is_finished, result.iterations, result.accumulated_data
-                )
-            };
-            Ok(
-                finish_agent_job_with_eval(
-                    &config,
-                    TRANSPILE_TYPES_TOOL_NAME,
-                    &original_task,
-                    output,
-                )
-                .await,
-            )
-        },
-    )
-    .await
-}
-
 pub async fn handle_plan_blueprint(
     args: Value,
     config: Arc<AdjutantConfig>,
@@ -1357,7 +1003,7 @@ mod boundary_validator_tests {
 
     #[test]
     fn boundary_returns_validated_json_when_completed() {
-        let golden = include_str!("../../tests/fixtures/golden-rate-limit-blueprint.json");
+        let golden = include_str!("../../../tests/fixtures/golden-rate-limit-blueprint.json");
         with_thread_workspace_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")), || {
             let mut c = ctx(golden);
             c.agent_completed = true;

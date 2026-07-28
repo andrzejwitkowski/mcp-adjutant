@@ -212,6 +212,14 @@ pub fn resolve_workspace_path(path: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+/// Relativize under workspace when possible (dense reports).
+pub fn display_rel(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 /// Opens (or creates) the per-project SQLite cache without loading the embedding engine.
 pub fn open_cache_connection(start_dir: &Path) -> Result<(PathBuf, Connection), String> {
     prepare_project_cache(start_dir)

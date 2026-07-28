@@ -4,17 +4,21 @@ An advanced [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ser
 
 ## What it does
 
-mcp-adjutant exposes seven MCP tools. Six run long-lived agent jobs asynchronously; the seventh polls job status.
+mcp-adjutant exposes async MCP tools (heavy jobs) plus `query_job_status` to poll them.
 
 | Tool | Purpose |
 | --- | --- |
-| `scout_context` | Autonomous code scouting — returns condensed markdown context for a query |
-| `verify_and_triage` | Compile/type-check changed code and auto-fix trivial issues |
-| `generate_tests_and_scaffolding` | Generate unit, integration, or factory tests for a source file |
-| `web_fetch` | Fetch and condense authoritative web content for a search phrase |
-| `execute_global_refactor` | Propagate rename/signature changes across files (scout + codemod + triage) |
+| `scout_context` | Autonomous code scouting — condensed markdown context |
+| `verify_and_triage` | Compile/type-check changed code; auto-fix trivial issues |
+| `generate_tests_and_scaffolding` | Unit/integration/factory tests for a source file |
+| `web_fetch` | Fetch and condense authoritative web content |
+| `execute_global_refactor` | Propagate rename/signature changes (scout + codemod + triage) |
+| `plan_blueprint` | Emit grounded Blueprint JSON (SEARCH/REPLACE pipeline) |
+| `execute_blueprint` | Apply blueprint: patch/create → triage → generate_tests |
 | `evaluate_agent_performance` | QA another agent's output against the original task |
 | `query_job_status` | Poll async jobs by `request_uuid` until `terminal=true` |
+
+Also: `analyze_log`, `babysit_pr`, `transpile_types`, `prepare_git_copy`, `create_git_branch`. Skills under `.cursor/skills/` (e.g. [adjutant-blueprint](.cursor/skills/adjutant-blueprint/SKILL.md)).
 
 Heavy tools return immediately with a `request_uuid`. Your client (or you) must call `query_job_status` with that UUID until the job finishes. Do not guess timeouts — keep polling until `terminal=true`.
 

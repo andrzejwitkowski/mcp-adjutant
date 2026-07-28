@@ -22,7 +22,8 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | `execute_global_refactor` | Transformer | Rename method/struct; propagate signature changes |
 | `evaluate_agent_performance` | Evaluator | QA a sub-agent result before trusting or re-delegating |
 | `transpile_types` | Transpiler | Cross-language API type / DTO sync (coordinator sets `architecture_layout`) |
-| `plan_blueprint` | Planner | Feature/bugfix/refactor blueprint JSON before Builder/Transpiler execution |
+| `plan_blueprint` | Planner | Feature/bugfix/refactor blueprint JSON before execute |
+| `execute_blueprint` | BlueprintExecutor | Deterministic apply of blueprint (patch/create → triage → tests) |
 | `prepare_git_copy` / `create_git_branch` | GitJanitor | Commit/PR/changelog copy; branch gate before commit/push |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
 
@@ -114,7 +115,7 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
 | Cross-language API type / DTO sync | `transpile_types` (after `scout_context`) | Hand-written bindings, copy-paste structs |
 | Commit message, PR title/body, changelog, before git commit/push | `prepare_git_copy` (+ `create_git_branch` if `commit_allowed=false`) | Inventing commit/PR text; Shell `git checkout -b` |
-| Implementation blueprint before multi-step build | `plan_blueprint` (after `scout_context` when repo context needed) | Premium agent drafting full patch pipelines from scratch |
+| Implementation blueprint before multi-step build | `plan_blueprint` then `execute_blueprint` (after scout when needed; see [adjutant-blueprint](../adjutant-blueprint/SKILL.md)) | Premium hand-applying SEARCH/REPLACE; drafting patches from scratch |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
 | Poll async jobs | `query_job_status` | Guessing timeouts |
 
@@ -218,6 +219,17 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 
 **Feature / bugfix session (strict order):**
 
+Prefer blueprint when the change is multi-file or surgical patches fit (see [adjutant-blueprint](../adjutant-blueprint/SKILL.md)):
+
+1. `scout_context` — map affected modules (if >2 files or layout unknown)
+2. `plan_blueprint` — set `plan_kind` + `expectation`
+3. `evaluate_agent_performance` (`PlannerAgent`, score ≥ 7)
+4. `execute_blueprint` — apply grounded pipeline (do **not** hand-apply SEARCH/REPLACE)
+5. `evaluate_agent_performance` (`BlueprintExecutor`, score ≥ 7)
+6. Premium only patches gaps triage/builder missed
+
+When blueprint is N/A (tiny single-file logic the coordinator must own):
+
 1. `scout_context` — map affected modules (if >2 files or layout unknown)
 2. Premium implements **logic only** in logic-bearing source — **do not create new test files or test modules** in this step
 3. `generate_tests_and_scaffolding` — **one call per touched logic-bearing source file** (before any project test runner)
@@ -254,9 +266,9 @@ Track mentally per category: **scout**, **triage**, **builder**, **web_fetcher**
 2. `web_fetch` — when the plan cites external library/API behavior
 3. `analyze_log` — when the plan depends on CI/log evidence
 4. `evaluate_agent_performance` — on scout/web/log outputs (score ≥ 7)
-5. `plan_blueprint` — when execution needs a multi-step Builder/Transpiler pipeline; set `plan_kind` and `expectation` so the cheap planner matches coordinator intent
+5. `plan_blueprint` — when execution needs a multi-step Builder pipeline; set `plan_kind` and `expectation` so the cheap planner matches coordinator intent
 6. `evaluate_agent_performance` — on planner blueprint (score ≥ 7); include `plan_kind` / `expectation` in `original_task`
-7. Premium integrates blueprint or writes the plan from verified adjutant evidence — not from manual Grep chains
+7. After planning is approved for execution: `execute_blueprint` → evaluate `BlueprintExecutor` (see [adjutant-blueprint](../adjutant-blueprint/SKILL.md)). Pure Plan mode may stop at step 6 and hand the blueprint to an implementation session.
 
 **Coordinator fields for `plan_blueprint`:**
 
@@ -311,7 +323,8 @@ Before handoff on substantive work, include in your response (or internal trace)
 - [ ] transpile_types — Y/N or N/A (see [adjutant-transpiler](../adjutant-transpiler/SKILL.md))
 - [ ] prepare_git_copy / create_git_branch — Y/N or N/A (see [adjutant-git-janitor](../adjutant-git-janitor/SKILL.md); ALWAYS evaluate after)
 - [ ] plan_blueprint — Y/N or N/A (set plan_kind + expectation when delegating blueprint)
-- [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …, transpiler …
+- [ ] execute_blueprint — Y/N or N/A (after plan eval ≥ 7; see [adjutant-blueprint](../adjutant-blueprint/SKILL.md))
+- [ ] evaluate_agent_performance — scores: scout …, builder …, triage …, web …, planner …, blueprint_executor …, transpiler …
 ```
 
 ### Builder ledger (hard / medium)
@@ -343,6 +356,10 @@ Every heavy tool requires `request_uuid`. **Never** treat the initial response a
 ```
 
 Run polls in the same turn when possible. Do not ask the user to wait without polling.
+
+**REQUIRED after `accepted` / `running`:** the next tool call **must** be `query_job_status` for that `request_uuid` (sleep between polls is fine). Keep the UUID in-session until `terminal=true`, then evaluate / continue the pipeline.
+
+**FORBIDDEN:** end the assistant turn, paste a status-only summary, or ask the user to wait while any `request_uuid` you started is still non-terminal. That is fire-and-forget — a coordinator failure, not an async-design feature.
 
 ---
 
@@ -502,7 +519,7 @@ Use for library docs, API specs, release notes — not for in-repo code (use sco
 }
 ```
 
-`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `BabysitterAgent` (for `babysit_pr`), `GitJanitorAgent` (for `prepare_git_copy` / `create_git_branch`), `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`, `PlannerAgent`.
+`target_agent` examples: `Phase_1_Scout`, `Phase_5_Triage`, `Phase_4_Builder`, `BabysitterAgent` (for `babysit_pr`), `GitJanitorAgent` (for `prepare_git_copy` / `create_git_branch`), `WebFetcher`, `Phase_3_Transformer`, `TranspilerAgent`, `PlannerAgent`, `BlueprintExecutor`.
 
 **transpile_types**
 
@@ -532,6 +549,18 @@ Full coordinator checklist: [adjutant-transpiler/SKILL.md](../adjutant-transpile
 ```
 
 When evaluating the planner, include `plan_kind` and `expectation` in `evaluate_agent_performance.original_task`. Coordinator rejections surface as `Blueprint rejected: pipeline[N]: …` from `emit_blueprint` before the evaluator runs.
+
+**execute_blueprint**
+
+```json
+{
+  "blueprint": "{ … validated Blueprint JSON from plan_blueprint … }",
+  "workspace_root": "/absolute/path/to/project",
+  "request_uuid": "<uuid>"
+}
+```
+
+Full coordinator checklist: [adjutant-blueprint/SKILL.md](../adjutant-blueprint/SKILL.md). Strip auto-eval appendix before passing `blueprint`. Rejects `sync_types` — use transpile_types instead.
 
 ---
 
@@ -572,6 +601,7 @@ flowchart TD
 - Evaluating `babysit_pr` as `Phase_5_Triage` — use `BabysitterAgent`
 - Delegating ambiguous architecture work in **low** mode
 - Stopping polling before `terminal=true`
+- Ending the turn / status-only narration while a job you started is still `accepted` or `running` (fire-and-forget)
 - **Giving up after one weak sub-agent result** instead of retrying with a better prompt
 - **Repeating the same vague prompt** — each retry must add constraints, paths, or critique from the prior attempt
 - **Self-serving immediately** when a refined delegation round would be cheaper than loading files into context
