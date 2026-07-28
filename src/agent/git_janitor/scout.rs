@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::cache::display_rel;
+
 use super::branch::{evaluate_branch_gate, git_current_branch, git_stdout, BranchGate};
 use super::conventions::{
     conventions_toml_string, load_conventions, GitConventions, ADJUTANT_TOML,
@@ -108,13 +110,6 @@ fn load_templates(root: &Path, conventions: &GitConventions) -> Vec<TemplateSnip
         });
     }
     out
-}
-
-fn display_rel(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 pub fn format_scout_block(scout: &GitJanitorScout) -> String {

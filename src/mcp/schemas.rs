@@ -13,6 +13,7 @@ pub const ANALYZE_LOG_TOOL_NAME: &str = "analyze_log";
 pub const BABYSIT_PR_TOOL_NAME: &str = "babysit_pr";
 pub const TRANSPILE_TYPES_TOOL_NAME: &str = "transpile_types";
 pub const PLAN_BLUEPRINT_TOOL_NAME: &str = "plan_blueprint";
+pub const EXECUTE_BLUEPRINT_TOOL_NAME: &str = "execute_blueprint";
 pub const PREPARE_GIT_COPY_TOOL_NAME: &str = "prepare_git_copy";
 pub const CREATE_GIT_BRANCH_TOOL_NAME: &str = "create_git_branch";
 
@@ -242,7 +243,7 @@ pub fn transpile_types_schema() -> Value {
 pub fn plan_blueprint_schema() -> Value {
     json!({
         "name": PLAN_BLUEPRINT_TOOL_NAME,
-        "description": "Runs the Lead Architect (PlannerAgent): analyzes a high-level feature request or bug report, scouts the repo with read-only tools, and emits a strict Blueprint JSON pipeline for downstream sub-agents (Triage/Transpiler/Builder). Optional coordinator fields plan_kind and expectation steer pipeline shape and patch style. The returned JSON is a prompt contract — the server validates shape but does not execute it. Returns immediately; fetch the result via query_job_status.",
+        "description": "Runs the Lead Architect (PlannerAgent): scouts the repo and emits a strict Blueprint JSON pipeline. Optional plan_kind and expectation steer shape. Pass the validated JSON to execute_blueprint — do not hand-apply SEARCH/REPLACE when execute is available. Returns immediately; poll query_job_status.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -263,6 +264,25 @@ pub fn plan_blueprint_schema() -> Value {
                 "request_uuid": request_uuid_schema_property()["request_uuid"]
             },
             "required": ["feature_request", "workspace_root", "request_uuid"]
+        }
+    })
+}
+
+pub fn execute_blueprint_schema() -> Value {
+    json!({
+        "name": EXECUTE_BLUEPRINT_TOOL_NAME,
+        "description": "Deterministically applies a validated Blueprint JSON: patch_file/create_file via SEARCH/REPLACE or full create, then verify_and_triage on touched paths, then generate_tests via BuilderAgent. Rejects sync_types (use transpile_types). Fail-closed with mutation journal rollback. Returns immediately; poll query_job_status. ALWAYS follow with evaluate_agent_performance (BlueprintExecutor).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "blueprint": {
+                    "type": "string",
+                    "description": "Full Blueprint JSON string from plan_blueprint (strip any [ADJUTANT AUTO-EVAL APPENDIX] first)."
+                },
+                "workspace_root": workspace_root_schema_property(),
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["blueprint", "workspace_root", "request_uuid"]
         }
     })
 }
@@ -337,6 +357,7 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         babysit_pr_schema(),
         transpile_types_schema(),
         plan_blueprint_schema(),
+        execute_blueprint_schema(),
         prepare_git_copy_schema(),
         create_git_branch_schema(),
         query_job_status_schema(),

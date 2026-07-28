@@ -10,11 +10,14 @@ use super::traits::{AgentContext, AutonomousAgent};
 use crate::cache::resolve_workspace_path;
 use crate::llm::{LlmClient, LlmToolSet};
 
+pub use crate::cache::display_rel;
 pub use args::{parse_plan_blueprint_args, PlanBlueprintArgs, PlanKind};
 pub use constraints::CoordinatorConstraints;
 pub use tools::{
-    extract_json_object, planner_emit_tool_set, planner_scout_tool_set, validate_blueprint,
-    validate_blueprint_coordinator, validate_blueprint_grounding,
+    apply_blueprint_file_steps, apply_hunks_to_body, extract_json_object, path_line_from_goal,
+    planner_emit_tool_set, planner_scout_tool_set, source_under_test_from_goal,
+    test_type_for_target, validate_blueprint, validate_blueprint_coordinator,
+    validate_blueprint_grounding,
 };
 
 pub const PLANNER_SCOUT_MAX_ITERATIONS: u32 = 12;

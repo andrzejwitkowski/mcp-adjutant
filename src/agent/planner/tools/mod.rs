@@ -1,3 +1,4 @@
+mod apply;
 mod emit;
 mod validate;
 
@@ -8,9 +9,10 @@ use crate::agent::planner::constraints::CoordinatorConstraints;
 use crate::agent::read_only_tools::ReadFileTool;
 use crate::llm::LlmToolSet;
 
+pub use apply::{apply_blueprint_file_steps, apply_hunks_to_body};
 pub use validate::{
-    extract_json_object, validate_blueprint, validate_blueprint_coordinator,
-    validate_blueprint_grounding,
+    extract_json_object, path_line_from_goal, source_under_test_from_goal, test_type_for_target,
+    validate_blueprint, validate_blueprint_coordinator, validate_blueprint_grounding,
 };
 
 pub use crate::agent::read_only_tools::planner_scout_tool_set;

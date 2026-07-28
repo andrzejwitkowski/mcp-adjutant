@@ -12,7 +12,7 @@ pub const QUERY_JOB_STATUS_TOOL_NAME: &str = "query_job_status";
 const STALL_HINT_AFTER: Duration = Duration::from_secs(90);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const TERMINAL_RETENTION: Duration = Duration::from_secs(3600);
-pub const JOB_WALL_CLOCK_SECS: u64 = 900;
+pub const JOB_WALL_CLOCK_SECS: u64 = 1800;
 
 static ACTIVE_REGISTRY: OnceLock<JobRegistry> = OnceLock::new();
 
@@ -355,6 +355,17 @@ pub fn query_job_status_schema() -> Value {
     })
 }
 
+fn tool_starts_mutation_journal(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "generate_tests_and_scaffolding"
+            | "verify_and_triage"
+            | "execute_global_refactor"
+            | "transpile_types"
+            | "execute_blueprint"
+    )
+}
+
 pub async fn run_tracked_job<F, Fut>(
     registry: JobRegistry,
     request_uuid: String,
@@ -370,13 +381,7 @@ pub async fn run_tracked_job<F, Fut>(
     registry.heartbeat(&request_uuid);
     let _heartbeat = HeartbeatHandle::start(registry.clone(), request_uuid.clone());
 
-    let mutating = matches!(
-        tool_name.as_str(),
-        "generate_tests_and_scaffolding"
-            | "verify_and_triage"
-            | "execute_global_refactor"
-            | "transpile_types"
-    );
+    let mutating = tool_starts_mutation_journal(&tool_name);
     if mutating {
         crate::mutation_journal::begin_job_journal(&request_uuid);
     }
@@ -441,6 +446,12 @@ pub async fn run_tracked_job<F, Fut>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execute_blueprint_arms_mutation_journal() {
+        assert!(tool_starts_mutation_journal("execute_blueprint"));
+        assert!(!tool_starts_mutation_journal("plan_blueprint"));
+    }
 
     #[test]
     fn register_rejects_duplicate_uuid() {
