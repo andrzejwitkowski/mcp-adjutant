@@ -1,16 +1,17 @@
-//! LLM context densifier (AgentPhase::Pruner). Used by MCP `compact_context` and auto-compact.
+//! LLM context densifier (`AgentPhase::Pruner`) for MCP `compact_context` and auto-compact.
 
 use std::future::Future;
 use std::sync::Arc;
 
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
-use crate::metrics::current_job_context;
+use crate::metrics::{current_job_context, estimate_tokens};
 
 pub const CHARS_PER_TOKEN: usize = 4;
-pub const COMPACT_THRESHOLD_PCT: u32 = 80;
-pub const COMPACT_CONTEXT_TOOL_NAME: &str = "compact_context";
 
-pub const PRUNER_SYSTEM_PROMPT: &str = r#"You are a context densifier (PRUNER). Rewrite the transcript into a shorter main prompt for another agent.
+/// Reentrancy guard: do not auto-compact while already inside `compact_context`.
+const COMPACT_CONTEXT_MCP_TOOL: &str = "compact_context";
+
+const PRUNER_SYSTEM_PROMPT: &str = r#"You are a context densifier (PRUNER). Rewrite the transcript into a shorter main prompt for another agent.
 
 Rules:
 - Preserve every actionable fact: paths, file:line, symbols, errors, decisions, open questions, tool outcomes
@@ -21,9 +22,7 @@ Rules:
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactMode {
-    /// Densify with minimal information loss (may stay near the target).
     Compact,
-    /// Hard-fit under target_tokens.
     Reduce,
 }
 
@@ -44,12 +43,36 @@ impl CompactMode {
     }
 }
 
+/// Window + densifier client. Proactive/target math lives here (not scattered literals).
+#[derive(Clone)]
 pub struct AutoCompactGuard {
     pub window_tokens: u32,
     pub pruner: Arc<dyn LlmClient>,
 }
 
+impl AutoCompactGuard {
+    /// Fire proactive compact at this % of the window.
+    pub const PROACTIVE_PCT: u32 = 80;
+    /// Densify down to this % of the window.
+    pub const TARGET_PCT: u32 = 50;
+    pub const MIN_TARGET_TOKENS: u32 = 512;
+
+    pub fn over_proactive_threshold(&self, est_tokens: u64) -> bool {
+        if self.window_tokens == 0 {
+            return false;
+        }
+        let limit = (u64::from(self.window_tokens) * u64::from(Self::PROACTIVE_PCT)) / 100;
+        est_tokens >= limit
+    }
+
+    pub fn densify_target_tokens(&self) -> u32 {
+        ((u64::from(self.window_tokens) * u64::from(Self::TARGET_PCT)) / 100)
+            .max(u64::from(Self::MIN_TARGET_TOKENS)) as u32
+    }
+}
+
 tokio::task_local! {
+    // ponytail: ambient install via with_phase_auto_compact — pass Option through orchestrator if more call sites need opt-out
     static AUTO_COMPACT: AutoCompactGuard;
 }
 
@@ -62,27 +85,10 @@ where
 }
 
 fn current_auto_compact() -> Option<AutoCompactGuard> {
-    AUTO_COMPACT
-        .try_with(|g| AutoCompactGuard {
-            window_tokens: g.window_tokens,
-            pruner: Arc::clone(&g.pruner),
-        })
-        .ok()
+    AUTO_COMPACT.try_with(Clone::clone).ok()
 }
 
-pub fn estimate_tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(CHARS_PER_TOKEN).max(1)
-}
-
-pub fn tokens_over_threshold(est_tokens: usize, window_tokens: u32) -> bool {
-    if window_tokens == 0 {
-        return false;
-    }
-    let limit = (window_tokens as u64 * COMPACT_THRESHOLD_PCT as u64) / 100;
-    est_tokens as u64 >= limit
-}
-
-pub fn is_context_overflow_err(err: &str) -> bool {
+fn is_context_overflow_err(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
     (lower.contains("context")
         && (lower.contains("length")
@@ -90,7 +96,6 @@ pub fn is_context_overflow_err(err: &str) -> bool {
             || lower.contains("overflow")
             || lower.contains("too long")
             || lower.contains("maximum")))
-        || lower.contains("maximum context")
         || lower.contains("token limit")
         || lower.contains("too many tokens")
         || lower.contains("context_length_exceeded")
@@ -99,7 +104,7 @@ pub fn is_context_overflow_err(err: &str) -> bool {
 fn auto_compact_allowed() -> bool {
     !matches!(
         current_job_context().and_then(|c| c.mcp_tool),
-        Some(ref t) if t == COMPACT_CONTEXT_TOOL_NAME
+        Some(ref t) if t == COMPACT_CONTEXT_MCP_TOOL
     )
 }
 
@@ -133,21 +138,12 @@ pub fn compact_text<C: LlmClient + ?Sized>(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "pruner returned empty content".to_string())?;
 
-    if mode == CompactMode::Reduce && estimate_tokens(&out) > target_tokens as usize {
+    if mode == CompactMode::Reduce && estimate_tokens(&out) > u64::from(target_tokens) {
         // ponytail: hard truncate if model ignored the cap
         let keep = target_chars.min(out.chars().count());
         return Ok(out.chars().take(keep).collect());
     }
     Ok(out)
-}
-
-/// Collapse densified transcript into the next-turn main prompt (history cleared).
-pub fn rewrite_context_for_window(
-    _input_prompt: &str,
-    _accumulated_data: &str,
-    compacted: &str,
-) -> (String, String) {
-    (compacted.to_string(), String::new())
 }
 
 /// Proactive densify when estimated prompt is ≥80% of the caller window.
@@ -163,7 +159,7 @@ pub fn maybe_proactive_compact(
     }
     let user = super::build_tool_loop_message(context);
     let est = estimate_tokens(system_prompt).saturating_add(estimate_tokens(&user));
-    if !tokens_over_threshold(est, guard.window_tokens) {
+    if !guard.over_proactive_threshold(est) {
         return Ok(());
     }
     apply_compact_to_context(context, &guard, CompactMode::Reduce)
@@ -193,12 +189,14 @@ fn apply_compact_to_context(
     mode: CompactMode,
 ) -> Result<(), String> {
     let blob = super::build_tool_loop_message(context);
-    let target = ((guard.window_tokens as u64 * 50) / 100).max(512) as u32;
-    let compacted = compact_text(guard.pruner.as_ref(), &blob, mode, target)?;
-    let (prompt, acc) =
-        rewrite_context_for_window(&context.input_prompt, &context.accumulated_data, &compacted);
-    context.input_prompt = prompt;
-    context.accumulated_data = acc;
+    let compacted = compact_text(
+        guard.pruner.as_ref(),
+        &blob,
+        mode,
+        guard.densify_target_tokens(),
+    )?;
+    context.input_prompt = compacted;
+    context.accumulated_data.clear();
     Ok(())
 }
 
@@ -220,16 +218,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn estimate_tokens_uses_chars_per_token() {
-        assert_eq!(estimate_tokens("abcd"), 1);
-        assert_eq!(estimate_tokens("abcdefgh"), 2);
+    fn guard(window: u32) -> AutoCompactGuard {
+        AutoCompactGuard {
+            window_tokens: window,
+            pruner: Arc::new(EchoShorter) as Arc<dyn LlmClient>,
+        }
     }
 
     #[test]
-    fn threshold_at_eighty_percent() {
-        assert!(!tokens_over_threshold(79, 100));
-        assert!(tokens_over_threshold(80, 100));
+    fn proactive_threshold_at_eighty_percent() {
+        let g = guard(100);
+        assert!(!g.over_proactive_threshold(79));
+        assert!(g.over_proactive_threshold(80));
+    }
+
+    #[test]
+    fn densify_target_is_half_window_floored() {
+        assert_eq!(guard(10_000).densify_target_tokens(), 5_000);
+        assert_eq!(
+            guard(100).densify_target_tokens(),
+            AutoCompactGuard::MIN_TARGET_TOKENS
+        );
     }
 
     #[test]

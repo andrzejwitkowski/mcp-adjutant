@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_PHASES, applyBindingToAllPhases } from './agents'
 import type { AdjutantConfig, PhaseBinding } from './types'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from './types'
 
 describe('applyBindingToAllPhases', () => {
   it('copies binding onto every AGENT_PHASES entry', () => {
@@ -18,7 +19,7 @@ describe('applyBindingToAllPhases', () => {
       model_name: 'gpt-4',
       max_tokens: 1000,
       temperature: 0.7,
-      context_window_tokens: 32768,
+      context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
     }
 
     const result = applyBindingToAllPhases(phases, binding)

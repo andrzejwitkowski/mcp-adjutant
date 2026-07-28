@@ -381,11 +381,7 @@ pub fn compact_context_schema() -> Value {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 4294967295_u64,
-                    "description": "Optional token budget for the densified output. Defaults to the agent_phase context window (or Pruner window)."
-                },
-                "agent_phase": {
-                    "type": "string",
-                    "description": "Optional phase whose context_window_tokens is the default target (e.g. scout, builder)."
+                    "description": "Optional token budget for densified output. Defaults to the Pruner phase context_window_tokens."
                 },
                 "workspace_root": workspace_root_schema_property(),
                 "request_uuid": request_uuid_schema_property()["request_uuid"]

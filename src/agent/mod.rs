@@ -51,11 +51,7 @@ pub use planner::{
     PLANNER_MAX_ITERATIONS, PLANNER_SCOUT_MAX_ITERATIONS, PLANNER_SCOUT_SYSTEM_PROMPT,
     PLANNER_SYSTEM_PROMPT,
 };
-pub use pruner::{
-    compact_text, estimate_tokens, is_context_overflow_err, rewrite_context_for_window,
-    tokens_over_threshold, with_auto_compact_async, AutoCompactGuard, CompactMode,
-    COMPACT_CONTEXT_TOOL_NAME, PRUNER_SYSTEM_PROMPT,
-};
+pub use pruner::{compact_text, with_auto_compact_async, AutoCompactGuard, CompactMode};
 pub use report::{
     format_builder_report, format_triage_success, triage_passed, BuilderReportInput,
     BUILDER_GREEN_MARKER, TRIAGE_PASS_MARKER,
