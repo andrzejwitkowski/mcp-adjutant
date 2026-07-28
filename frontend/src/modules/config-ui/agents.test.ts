@@ -10,6 +10,7 @@ describe('applyBindingToAllPhases', () => {
         model_name: 'old-model',
         max_tokens: 256,
         temperature: 0,
+        context_window_tokens: 8192,
       },
     }
     const binding: PhaseBinding = {
@@ -17,6 +18,7 @@ describe('applyBindingToAllPhases', () => {
       model_name: 'gpt-4',
       max_tokens: 1000,
       temperature: 0.7,
+      context_window_tokens: 32768,
     }
 
     const result = applyBindingToAllPhases(phases, binding)

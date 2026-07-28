@@ -33,6 +33,10 @@ const ALIASES: &[(&str, &str)] = &[
     ("git_janitor", "GitJanitorAgent"),
     ("gitjanitoragent", "GitJanitorAgent"),
     ("phase_git_janitor", "GitJanitorAgent"),
+    ("pruner", "PrunerAgent"),
+    ("pruneragent", "PrunerAgent"),
+    ("compactor", "PrunerAgent"),
+    ("reducer", "PrunerAgent"),
 ];
 
 pub fn normalize_agent_name(name: &str) -> String {

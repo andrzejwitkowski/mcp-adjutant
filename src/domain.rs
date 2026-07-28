@@ -33,6 +33,13 @@ pub enum Provider {
     Custom,
 }
 
+/// Default model context window when binding omits `context_window_tokens`.
+pub const DEFAULT_CONTEXT_WINDOW_TOKENS: u32 = 32_768;
+
+fn default_context_window_tokens() -> u32 {
+    DEFAULT_CONTEXT_WINDOW_TOKENS
+}
+
 /// Resolved LLM transport + generation settings (what clients consume).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PhaseProfile {
@@ -42,6 +49,8 @@ pub struct PhaseProfile {
     pub model_name: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    #[serde(default = "default_context_window_tokens")]
+    pub context_window_tokens: u32,
 }
 
 /// Shared credentials — referenced by phase bindings.
@@ -61,6 +70,8 @@ pub struct PhaseBinding {
     pub model_name: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    #[serde(default = "default_context_window_tokens")]
+    pub context_window_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -229,7 +240,28 @@ impl AdjutantConfig {
             model_name: binding.model_name.clone(),
             max_tokens: binding.max_tokens,
             temperature: binding.temperature,
+            context_window_tokens: binding.context_window_tokens,
         })
+    }
+
+    /// Caps for MCP `get_agent_context_caps` — one entry per configured phase.
+    pub fn agent_context_caps(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (phase, binding) in &self.phases {
+            let key = serde_json::to_value(phase)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("{phase:?}"));
+            map.insert(
+                key,
+                serde_json::json!({
+                    "context_window_tokens": binding.context_window_tokens,
+                    "max_tokens": binding.max_tokens,
+                    "model_name": binding.model_name,
+                }),
+            );
+        }
+        serde_json::Value::Object(map)
     }
 
     pub fn get_profile(&self, phase: &AgentPhase) -> PhaseProfile {
@@ -290,6 +322,7 @@ fn planner_emit_from_builder(builder: &PhaseBinding) -> PhaseBinding {
         model_name: "deepseek-coder".into(),
         max_tokens: 8_192,
         temperature: 0.1,
+        context_window_tokens: builder.context_window_tokens,
     }
 }
 
@@ -299,6 +332,7 @@ fn phase_binding(model_name: &str, max_tokens: u32, temperature: f32) -> PhaseBi
         model_name: model_name.to_string(),
         max_tokens,
         temperature,
+        context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
     }
 }
 
@@ -341,6 +375,7 @@ mod tests {
             assert_eq!(profile.model_name, model_name);
             assert_eq!(profile.max_tokens, max_tokens);
             assert!((profile.temperature - temperature).abs() < f32::EPSILON);
+            assert_eq!(profile.context_window_tokens, DEFAULT_CONTEXT_WINDOW_TOKENS);
         }
         assert_eq!(config.server_port, 3_000);
         assert!(!config.storage_path.is_empty());
@@ -365,12 +400,35 @@ mod tests {
     }
 
     #[test]
+    fn agent_context_caps_includes_pruner_window() {
+        let caps = AdjutantConfig::default().agent_context_caps();
+        let pruner = caps.get("pruner").expect("pruner");
+        assert_eq!(
+            pruner["context_window_tokens"],
+            DEFAULT_CONTEXT_WINDOW_TOKENS
+        );
+    }
+
+    #[test]
+    fn missing_context_window_deserializes_to_default() {
+        let json = r#"{
+            "profile_id":"default",
+            "model_name":"x",
+            "max_tokens":1024,
+            "temperature":0.1
+        }"#;
+        let binding: PhaseBinding = serde_json::from_str(json).expect("bind");
+        assert_eq!(binding.context_window_tokens, DEFAULT_CONTEXT_WINDOW_TOKENS);
+    }
+
+    #[test]
     fn planner_emit_from_builder_keeps_profile_id() {
         let builder = PhaseBinding {
             profile_id: "or-1".into(),
             model_name: "google/gemini-3.1-flash-lite".into(),
             max_tokens: 8_192,
             temperature: 0.2,
+            context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
         };
         let emit = planner_emit_from_builder(&builder);
         assert_eq!(emit.profile_id, "or-1");

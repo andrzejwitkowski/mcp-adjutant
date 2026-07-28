@@ -184,9 +184,21 @@ pub fn run_single_tool_turn<C: LlmClient>(
     system_prompt: &str,
     context: &mut AgentContext,
 ) -> Result<Option<(String, serde_json::Value)>, String> {
+    super::pruner::maybe_proactive_compact(system_prompt, context)?;
     let user_message = build_tool_loop_message(context);
     let request = LlmRequest::new(system_prompt, &user_message, tools);
-    let model_turn = client.complete(request)?;
+    let model_turn = match client.complete(request) {
+        Ok(turn) => turn,
+        Err(err) => {
+            if super::pruner::maybe_overflow_compact(&err, context)? {
+                let user_message = build_tool_loop_message(context);
+                let request = LlmRequest::new(system_prompt, &user_message, tools);
+                client.complete(request)?
+            } else {
+                return Err(err);
+            }
+        }
+    };
 
     let tool_call = match model_turn.tool_calls.first() {
         Some(call) => call,

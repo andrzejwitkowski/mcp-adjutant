@@ -114,6 +114,24 @@ export function AgentPhaseCard({
             }
           />
         </label>
+        <label>
+          Context window
+          <input
+            type="number"
+            min={1024}
+            step={1024}
+            value={binding.context_window_tokens ?? 32768}
+            onChange={(e) =>
+              onChange({
+                ...binding,
+                context_window_tokens: Math.max(
+                  1024,
+                  parseUint(e.target.value, binding.context_window_tokens ?? 32768),
+                ),
+              })
+            }
+          />
+        </label>
       </div>
       {webFetcher && onWebFetcherChange && (
         <details className="phase-card__advanced">

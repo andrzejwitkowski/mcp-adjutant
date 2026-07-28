@@ -2,6 +2,7 @@ export type Provider = 'deep_seek' | 'open_router' | 'open_ai' | 'custom'
 
 export type AgentPhase =
   | 'scout'
+  | 'pruner'
   | 'triage'
   | 'builder'
   | 'transformer'
@@ -21,6 +22,7 @@ export interface PhaseProfile {
   model_name: string
   max_tokens: number
   temperature: number
+  context_window_tokens: number
 }
 
 export interface ProviderProfile {
@@ -36,6 +38,7 @@ export interface PhaseBinding {
   model_name: string
   max_tokens: number
   temperature: number
+  context_window_tokens: number
 }
 
 export interface WebFetcherProfile {

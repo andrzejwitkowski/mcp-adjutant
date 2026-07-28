@@ -25,6 +25,8 @@ Offload expensive, repetitive work to **mcp-adjutant** sub-agents (Scout, Triage
 | `plan_blueprint` | Planner | Feature/bugfix/refactor blueprint JSON before execute |
 | `execute_blueprint` | BlueprintExecutor | Deterministic apply of blueprint (patch/create → triage → tests) |
 | `prepare_git_copy` / `create_git_branch` | GitJanitor | Commit/PR/changelog copy; branch gate before commit/push |
+| `get_agent_context_caps` | — | Sync: per-phase `context_window_tokens` (decide if compact is worth it) |
+| `compact_context` | Pruner | Densify transcript (`mode`: compact\|reduce); rare for premium — agents auto-compact |
 | `query_job_status` | — | Poll every async job until `terminal=true` |
 
 ---
@@ -115,6 +117,8 @@ When unsure, treat the file as in scope and call builder once; document N/A only
 | Signature/name change across many files | `execute_global_refactor` | Manual multi-file edit |
 | Cross-language API type / DTO sync | `transpile_types` (after `scout_context`) | Hand-written bindings, copy-paste structs |
 | Commit message, PR title/body, changelog, before git commit/push | `prepare_git_copy` (+ `create_git_branch` if `commit_allowed=false`) | Inventing commit/PR text; Shell `git checkout -b` |
+| Need sub-agent context window caps | `get_agent_context_caps` | Guessing local-model limits |
+| Densify a long transcript under a token budget | `compact_context` (after caps; usually skip if your window ≫ theirs) | Manual summarization; hand-truncating history |
 | Implementation blueprint before multi-step build | `plan_blueprint` then `execute_blueprint` (after scout when needed; see [adjutant-blueprint](../adjutant-blueprint/SKILL.md)) | Premium hand-applying SEARCH/REPLACE; drafting patches from scratch |
 | QA any sub-agent output | `evaluate_agent_performance` | Trusting output unchecked |
 | Poll async jobs | `query_job_status` | Guessing timeouts |

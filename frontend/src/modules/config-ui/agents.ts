@@ -13,6 +13,12 @@ export const AGENT_PHASES: {
     icon: 'search',
   },
   {
+    phase: 'pruner',
+    title: 'Compactor / Reducer',
+    hint: 'Densify agent context under token caps',
+    icon: 'compress',
+  },
+  {
     phase: 'triage',
     title: 'Triage',
     hint: 'Compiler errors & trivial fixes',

@@ -6,10 +6,10 @@ pub mod git_janitor;
 mod log_analyzer;
 mod orchestrator;
 mod planner;
+mod pruner;
 mod read_only_tools;
 mod report;
 mod scout;
-mod text_pruner_mock;
 mod traits;
 mod transformer;
 mod transpiler;
@@ -55,11 +55,15 @@ pub use report::{
     format_builder_report, format_triage_success, triage_passed, BuilderReportInput,
     BUILDER_GREEN_MARKER, TRIAGE_PASS_MARKER,
 };
+pub use pruner::{
+    compact_text, estimate_tokens, is_context_overflow_err, rewrite_context_for_window,
+    tokens_over_threshold, with_auto_compact_async, AutoCompactGuard, CompactMode,
+    COMPACT_CONTEXT_TOOL_NAME, PRUNER_SYSTEM_PROMPT,
+};
 pub use scout::{
     run_scout_with_cache, scout_tool_set, ScoutAgent, ScoutCacheOutcome, ScoutModelTurn,
     ScoutToolCall, SCOUT_SYSTEM_PROMPT,
 };
-pub use text_pruner_mock::TextPrunerMock;
 pub use traits::{AgentContext, AutonomousAgent};
 pub use transformer::{
     default_transformer_agent, filter_targets_by_scope, find_refactor_targets, path_under_scope,

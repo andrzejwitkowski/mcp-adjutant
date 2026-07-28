@@ -116,6 +116,10 @@ pub fn create_git_janitor_llm_client(
     create_llm_client_for_phase(config, AgentPhase::GitJanitor)
 }
 
+pub fn create_pruner_llm_client(config: &AdjutantConfig) -> Result<ConfiguredLlmClient, String> {
+    create_llm_client_for_phase(config, AgentPhase::Pruner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +169,7 @@ mod tests {
                 model_name: "google/gemini-2.5-flash".into(),
                 max_tokens: 4_096,
                 temperature: 0.1,
+                context_window_tokens: crate::domain::DEFAULT_CONTEXT_WINDOW_TOKENS,
             },
         );
 
