@@ -145,10 +145,14 @@ where
     let mut merged = (*config).clone();
     merged.merge_missing_from_defaults();
     let window = merged.try_get_profile(phase)?.context_window_tokens;
+    let pruner_window = merged
+        .try_get_profile(AgentPhase::Pruner)?
+        .context_window_tokens;
     let pruner = Arc::new(create_pruner_llm_client(&merged)?) as Arc<dyn LlmClient>;
     with_auto_compact_async(
         AutoCompactGuard {
             window_tokens: window,
+            pruner_window_tokens: pruner_window,
             pruner,
         },
         work,

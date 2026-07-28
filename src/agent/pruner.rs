@@ -46,16 +46,21 @@ impl CompactMode {
 /// Window + densifier client. Proactive/target math lives here (not scattered literals).
 #[derive(Clone)]
 pub struct AutoCompactGuard {
+    /// Calling phase context window (Scout/WebFetcher/…).
     pub window_tokens: u32,
+    /// Pruner model window — densify input must fit this, not only the caller window.
+    pub pruner_window_tokens: u32,
     pub pruner: Arc<dyn LlmClient>,
 }
 
 impl AutoCompactGuard {
     /// Fire proactive compact at this % of the window.
     pub const PROACTIVE_PCT: u32 = 80;
-    /// Densify down to this % of the window.
+    /// Densify down to this % of the (bounded) window.
     pub const TARGET_PCT: u32 = 50;
     pub const MIN_TARGET_TOKENS: u32 = 512;
+    /// Leave headroom in Pruner's window for system prompt + MODE framing.
+    pub const PRUNER_INPUT_PCT: u32 = 70;
 
     pub fn over_proactive_threshold(&self, est_tokens: u64) -> bool {
         if self.window_tokens == 0 {
@@ -66,8 +71,16 @@ impl AutoCompactGuard {
     }
 
     pub fn densify_target_tokens(&self) -> u32 {
-        ((u64::from(self.window_tokens) * u64::from(Self::TARGET_PCT)) / 100)
-            .max(u64::from(Self::MIN_TARGET_TOKENS)) as u32
+        let caller = (u64::from(self.window_tokens) * u64::from(Self::TARGET_PCT)) / 100;
+        let pruner = (u64::from(self.pruner_window_tokens) * u64::from(Self::TARGET_PCT)) / 100;
+        caller.min(pruner).max(u64::from(Self::MIN_TARGET_TOKENS)) as u32
+    }
+
+    fn pruner_input_budget_chars(&self) -> usize {
+        let tokens =
+            (u64::from(self.pruner_window_tokens) * u64::from(Self::PRUNER_INPUT_PCT)) / 100;
+        let tokens = tokens.max(u64::from(Self::MIN_TARGET_TOKENS)) as usize;
+        tokens.saturating_mul(CHARS_PER_TOKEN)
     }
 }
 
@@ -162,7 +175,8 @@ pub fn maybe_proactive_compact(
     if !guard.over_proactive_threshold(est) {
         return Ok(());
     }
-    apply_compact_to_context(context, &guard, CompactMode::Reduce)
+    apply_compact_to_context(context, &guard, CompactMode::Reduce)?;
+    Ok(())
 }
 
 /// After a context-overflow LLM error, densify once and signal caller to retry.
@@ -179,25 +193,37 @@ pub fn maybe_overflow_compact(
     if !auto_compact_allowed() {
         return Ok(false);
     }
-    apply_compact_to_context(context, &guard, CompactMode::Reduce)?;
-    Ok(true)
+    apply_compact_to_context(context, &guard, CompactMode::Reduce)
 }
 
 fn apply_compact_to_context(
     context: &mut super::AgentContext,
     guard: &AutoCompactGuard,
     mode: CompactMode,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let blob = super::build_tool_loop_message(context);
-    let compacted = compact_text(
+    let budget = guard.pruner_input_budget_chars();
+    let char_count = blob.chars().count();
+    let blob = if char_count > budget {
+        // ponytail: keep the tail (recent observations) when caller window ≫ pruner window
+        blob.chars().skip(char_count - budget).collect()
+    } else {
+        blob
+    };
+    let compacted = match compact_text(
         guard.pruner.as_ref(),
         &blob,
         mode,
         guard.densify_target_tokens(),
-    )?;
+    ) {
+        Ok(text) => text,
+        // Densify is best-effort — don't kill the tool turn when the pruner itself overflows.
+        Err(err) if is_context_overflow_err(&err) => return Ok(false),
+        Err(err) => return Err(err),
+    };
     context.input_prompt = compacted;
     context.accumulated_data.clear();
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -221,8 +247,19 @@ mod tests {
     fn guard(window: u32) -> AutoCompactGuard {
         AutoCompactGuard {
             window_tokens: window,
+            pruner_window_tokens: window,
             pruner: Arc::new(EchoShorter) as Arc<dyn LlmClient>,
         }
+    }
+
+    #[test]
+    fn densify_target_bounded_by_pruner_window() {
+        let g = AutoCompactGuard {
+            window_tokens: 100_000,
+            pruner_window_tokens: 4_000,
+            pruner: Arc::new(EchoShorter) as Arc<dyn LlmClient>,
+        };
+        assert_eq!(g.densify_target_tokens(), 2_000);
     }
 
     #[test]
