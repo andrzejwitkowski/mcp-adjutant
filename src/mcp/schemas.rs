@@ -379,6 +379,8 @@ pub fn compact_context_schema() -> Value {
                 },
                 "target_tokens": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4294967295_u64,
                     "description": "Optional token budget for the densified output. Defaults to the agent_phase context window (or Pruner window)."
                 },
                 "agent_phase": {

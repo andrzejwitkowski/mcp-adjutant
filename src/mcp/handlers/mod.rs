@@ -136,15 +136,10 @@ fn auto_compact_guard(
     config: &AdjutantConfig,
     phase: AgentPhase,
 ) -> Result<AutoCompactGuard, String> {
-    let window = config
-        .try_get_profile(phase)
-        .or_else(|_| {
-            let mut merged = config.clone();
-            merged.merge_missing_from_defaults();
-            merged.try_get_profile(phase)
-        })?
-        .context_window_tokens;
-    let pruner = Arc::new(create_pruner_llm_client(config)?) as Arc<dyn LlmClient>;
+    let mut merged = config.clone();
+    merged.merge_missing_from_defaults();
+    let window = merged.try_get_profile(phase)?.context_window_tokens;
+    let pruner = Arc::new(create_pruner_llm_client(&merged)?) as Arc<dyn LlmClient>;
     Ok(AutoCompactGuard {
         window_tokens: window,
         pruner,

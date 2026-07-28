@@ -58,7 +58,8 @@ pub fn backfill_evaluation_agent_names(conn: &rusqlite::Connection) -> Result<()
         .query_row(
             "SELECT COUNT(*) FROM agent_evaluations WHERE agent_name IN (
                 'builder','BuilderAgent','Builder','Scout','ScoutAgent',
-                'Triage','TriageAgent','Planner','planner','scout','triage'
+                'Triage','TriageAgent','Planner','planner','scout','triage',
+                'pruner','pruneragent','compactor','reducer','PrunerAgent'
             )",
             [],
             |row| row.get(0),

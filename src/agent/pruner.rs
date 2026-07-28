@@ -110,7 +110,9 @@ pub fn compact_text<C: LlmClient + ?Sized>(
     mode: CompactMode,
     target_tokens: u32,
 ) -> Result<String, String> {
-    let target_tokens = target_tokens.max(256);
+    if target_tokens == 0 {
+        return Err("target_tokens must be greater than zero".to_string());
+    }
     let target_chars = (target_tokens as usize).saturating_mul(CHARS_PER_TOKEN);
     let mode_line = match mode {
         CompactMode::Compact => {
@@ -139,20 +141,13 @@ pub fn compact_text<C: LlmClient + ?Sized>(
     Ok(out)
 }
 
-/// Replace observation history (or whole prompt) so the next turn fits the window.
+/// Collapse densified transcript into the next-turn main prompt (history cleared).
 pub fn rewrite_context_for_window(
-    input_prompt: &str,
-    accumulated_data: &str,
+    _input_prompt: &str,
+    _accumulated_data: &str,
     compacted: &str,
 ) -> (String, String) {
-    if accumulated_data.is_empty() {
-        (compacted.to_string(), String::new())
-    } else {
-        (
-            input_prompt.to_string(),
-            format!("[compacted observation history]\n{compacted}"),
-        )
-    }
+    (compacted.to_string(), String::new())
 }
 
 /// Proactive densify when estimated prompt is ≥80% of the caller window.
@@ -197,11 +192,7 @@ fn apply_compact_to_context(
     guard: &AutoCompactGuard,
     mode: CompactMode,
 ) -> Result<(), String> {
-    let blob = if context.accumulated_data.is_empty() {
-        context.input_prompt.clone()
-    } else {
-        context.accumulated_data.clone()
-    };
+    let blob = super::build_tool_loop_message(context);
     let target = ((guard.window_tokens as u64 * 50) / 100).max(512) as u32;
     let compacted = compact_text(guard.pruner.as_ref(), &blob, mode, target)?;
     let (prompt, acc) =
@@ -275,7 +266,12 @@ mod tests {
             }
         }
         let out = compact_text(&Verbose, "src", CompactMode::Reduce, 100).expect("reduce");
-        // floor is 256 tokens even if caller asks for less
-        assert!(estimate_tokens(&out) <= 256);
+        assert!(estimate_tokens(&out) <= 100);
+    }
+
+    #[test]
+    fn compact_text_rejects_zero_target() {
+        let err = compact_text(&EchoShorter, "x", CompactMode::Compact, 0).unwrap_err();
+        assert!(err.contains("greater than zero"), "{err}");
     }
 }

@@ -45,10 +45,19 @@ pub async fn handle_compact_context(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let target_override = args
-        .get("target_tokens")
-        .and_then(Value::as_u64)
-        .map(|v| v as u32);
+    let target_override = match args.get("target_tokens") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let n = v
+                .as_u64()
+                .ok_or_else(|| "target_tokens must be a positive integer".to_string())?;
+            let n = u32::try_from(n).map_err(|_| "target_tokens exceeds u32::MAX".to_string())?;
+            if n == 0 {
+                return Err("target_tokens must be greater than zero".to_string());
+            }
+            Some(n)
+        }
+    };
 
     dispatch_async_job(
         registry,

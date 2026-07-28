@@ -90,7 +90,7 @@ fn custom_config_roundtrip_preserves_all_fields() {
             model_name: "gpt-4o-mini".into(),
             max_tokens: 16_384,
             temperature: 0.5,
-            context_window_tokens: mcp_adjutant::DEFAULT_CONTEXT_WINDOW_TOKENS,
+            context_window_tokens: 65_536,
         },
     );
 
