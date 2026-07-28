@@ -1,5 +1,8 @@
 export type Provider = 'deep_seek' | 'open_router' | 'open_ai' | 'custom'
 
+/** Keep in sync with Rust `DEFAULT_CONTEXT_WINDOW_TOKENS`. */
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 32_768
+
 export type AgentPhase =
   | 'scout'
   | 'pruner'

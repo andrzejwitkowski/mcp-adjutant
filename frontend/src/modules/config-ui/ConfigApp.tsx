@@ -12,6 +12,7 @@ import type {
   ProviderProfile,
   WebFetcherProfile,
 } from './types'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from './types'
 import { emitUiNotify } from './uiLog'
 import './config-ui.css'
 
@@ -22,7 +23,7 @@ const DEFAULT_BINDING: PhaseBinding = {
   model_name: 'deepseek-chat',
   max_tokens: 4096,
   temperature: 0.2,
-  context_window_tokens: 32768,
+  context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
 }
 
 const PHASE_BINDING_OVERRIDES: Partial<Record<AgentPhase, Partial<PhaseBinding>>> = {
@@ -125,7 +126,7 @@ function migrateLegacyFlatPhases(loaded: AdjutantConfig): AdjutantConfig {
       model_name: obj.model_name,
       max_tokens: obj.max_tokens,
       temperature: obj.temperature,
-      context_window_tokens: obj.context_window_tokens ?? 32768,
+      context_window_tokens: obj.context_window_tokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
     }
   }
 
@@ -157,7 +158,7 @@ function withDisplayed(loaded: AdjutantConfig): AdjutantConfig {
     } else if (phases[phase]!.context_window_tokens == null) {
       phases[phase] = {
         ...phases[phase]!,
-        context_window_tokens: 32768,
+        context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
       }
     }
   }

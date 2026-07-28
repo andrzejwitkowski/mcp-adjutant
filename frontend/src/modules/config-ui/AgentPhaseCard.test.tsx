@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentPhaseCard } from './AgentPhaseCard'
 import type { ProviderProfile, WebFetcherProfile } from './types'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from './types'
 
 afterEach(cleanup)
 
@@ -33,7 +34,7 @@ describe('AgentPhaseCard', () => {
       model_name: 'gpt-4',
       max_tokens: 1024,
       temperature: 0.7,
-      context_window_tokens: 32768,
+      context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
     },
     profiles,
     onChange: vi.fn(),

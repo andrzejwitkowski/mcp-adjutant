@@ -3,11 +3,12 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::{dispatch_async_job, finish_agent_job_with_eval, JobRegistry};
-use crate::agent::{compact_text, CompactMode, COMPACT_CONTEXT_TOOL_NAME};
+use crate::agent::{compact_text, CompactMode};
 use crate::cache::require_workspace_root_arg;
 use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::parse_request_uuid;
 use crate::llm::create_pruner_llm_client;
+use crate::mcp::schemas::COMPACT_CONTEXT_TOOL_NAME;
 
 pub async fn handle_get_agent_context_caps(
     args: Value,
@@ -39,12 +40,6 @@ pub async fn handle_compact_context(
             .and_then(Value::as_str)
             .ok_or_else(|| "mode is required".to_string())?,
     )?;
-    let agent_phase = args
-        .get("agent_phase")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
     let target_override = match args.get("target_tokens") {
         None | Some(Value::Null) => None,
         Some(v) => {
@@ -69,12 +64,11 @@ pub async fn handle_compact_context(
         move || async move {
             let mut merged = (*config).clone();
             merged.merge_missing_from_defaults();
-            let phase = resolve_phase_hint(agent_phase.as_deref()).unwrap_or(AgentPhase::Pruner);
-            let window = merged
-                .try_get_profile(phase)
-                .or_else(|_| merged.try_get_profile(AgentPhase::Pruner))?
-                .context_window_tokens;
-            let target = target_override.unwrap_or(window);
+            let target = target_override.unwrap_or(
+                merged
+                    .try_get_profile(AgentPhase::Pruner)?
+                    .context_window_tokens,
+            );
             let client = create_pruner_llm_client(&merged)?;
             let densified = compact_text(&client, &context, mode, target)?;
             let output = format!(
@@ -91,11 +85,6 @@ pub async fn handle_compact_context(
         },
     )
     .await
-}
-
-fn resolve_phase_hint(raw: Option<&str>) -> Option<AgentPhase> {
-    let raw = raw?;
-    serde_json::from_value(Value::String(raw.to_ascii_lowercase())).ok()
 }
 
 #[cfg(test)]
@@ -115,12 +104,5 @@ mod tests {
         assert!(out.contains("\"pruner\""), "{out}");
         assert!(out.contains("\"scout\""), "{out}");
         assert!(out.contains("context_window_tokens"), "{out}");
-    }
-
-    #[test]
-    fn resolve_phase_hint_parses_snake() {
-        assert_eq!(resolve_phase_hint(Some("scout")), Some(AgentPhase::Scout));
-        assert_eq!(resolve_phase_hint(Some("PRUNER")), Some(AgentPhase::Pruner));
-        assert!(resolve_phase_hint(Some("nope")).is_none());
     }
 }

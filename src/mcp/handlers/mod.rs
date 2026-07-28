@@ -132,18 +132,32 @@ fn tool_eval_target_agent(tool_name: &str) -> Option<&'static str> {
     }
 }
 
-fn auto_compact_guard(
-    config: &AdjutantConfig,
+/// Install auto-compact for `phase`'s window; handlers call this instead of nesting guard setup.
+async fn with_phase_auto_compact<F, Fut, T>(
+    config: Arc<AdjutantConfig>,
     phase: AgentPhase,
-) -> Result<AutoCompactGuard, String> {
-    let mut merged = config.clone();
+    work: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, String>>,
+{
+    let mut merged = (*config).clone();
     merged.merge_missing_from_defaults();
     let window = merged.try_get_profile(phase)?.context_window_tokens;
+    let pruner_window = merged
+        .try_get_profile(AgentPhase::Pruner)?
+        .context_window_tokens;
     let pruner = Arc::new(create_pruner_llm_client(&merged)?) as Arc<dyn LlmClient>;
-    Ok(AutoCompactGuard {
-        window_tokens: window,
-        pruner,
-    })
+    with_auto_compact_async(
+        AutoCompactGuard {
+            window_tokens: window,
+            pruner_window_tokens: pruner_window,
+            pruner,
+        },
+        work,
+    )
+    .await
 }
 
 // ponytail: sync one-shot eval inside job closure — no extra async job UUID
@@ -282,8 +296,7 @@ pub async fn handle_scout_context(
         workspace_root,
         args.to_string(),
         move || async move {
-            let guard = auto_compact_guard(&config, AgentPhase::Scout)?;
-            with_auto_compact_async(guard, || async move {
+            with_phase_auto_compact(Arc::clone(&config), AgentPhase::Scout, || async move {
                 let cache_manager =
                     Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
                 let client = create_scout_llm_client(&config)?;
@@ -681,8 +694,7 @@ pub async fn handle_web_fetch(
         workspace_root,
         args.to_string(),
         move || async move {
-            let guard = auto_compact_guard(&config, AgentPhase::WebFetcher)?;
-            with_auto_compact_async(guard, || async move {
+            with_phase_auto_compact(Arc::clone(&config), AgentPhase::WebFetcher, || async move {
                 let web_profile = config.web_fetcher.clone().unwrap_or_default();
                 let cache_manager =
                     Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
@@ -785,8 +797,7 @@ pub async fn handle_plan_blueprint(
         workspace_root,
         args.to_string(),
         move || async move {
-            let guard = auto_compact_guard(&config, AgentPhase::Planner)?;
-            with_auto_compact_async(guard, || async move {
+            with_phase_auto_compact(Arc::clone(&config), AgentPhase::Planner, || async move {
                 let coordinator = CoordinatorConstraints::from_args(&parsed);
                 let scout_client = create_planner_llm_client(&config)?;
                 let emit_client = create_planner_emit_llm_client(&config)?;
