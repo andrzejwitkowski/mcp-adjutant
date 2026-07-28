@@ -7,29 +7,33 @@ use serde_json::Value;
 
 mod babysit_pr;
 mod builder_job;
+mod compact_context;
 mod execute_blueprint;
 mod transpile_types;
 
 pub use babysit_pr::handle_babysit_pr;
+pub use compact_context::{handle_compact_context, handle_get_agent_context_caps};
 pub use execute_blueprint::handle_execute_blueprint;
 pub use transpile_types::handle_transpile_types;
 
 use super::schemas::{
-    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, CREATE_GIT_BRANCH_TOOL_NAME,
-    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_BLUEPRINT_TOOL_NAME,
+    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, COMPACT_CONTEXT_TOOL_NAME,
+    CREATE_GIT_BRANCH_TOOL_NAME, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_BLUEPRINT_TOOL_NAME,
     EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
-    PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME,
-    TRANSPILE_TYPES_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
+    GET_AGENT_CONTEXT_CAPS_TOOL_NAME, PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME,
+    SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
+    WEB_FETCH_TOOL_NAME,
 };
 use crate::agent::{
     analyze_log_at_path, create_git_branch, default_transformer_agent, extract_json_object,
     format_eval_job_appendix, format_scout_block, format_triage_success,
     gather_conventions_and_diff, parse_plan_blueprint_args, run_git_janitor, run_planner_hybrid,
     run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
-    validate_blueprint_coordinator, validate_blueprint_grounding, AgentContext, AgentEvalSummary,
-    AgentLoopOrchestrator, CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent,
-    ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TriageAgent, WebCacheOutcome,
-    WebFetcherAgent, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    validate_blueprint_coordinator, validate_blueprint_grounding, with_auto_compact_async,
+    AgentContext, AgentEvalSummary, AgentLoopOrchestrator, AutoCompactGuard,
+    CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome,
+    ScoutInputs, SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent,
+    GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
     mcp_workspace_root, require_workspace_root_arg, resolve_workspace_path,
@@ -39,8 +43,9 @@ use crate::domain::{AdjutantConfig, AgentPhase};
 use crate::jobs::{accepted_job_response, parse_request_uuid, run_tracked_job, JobRegistry};
 use crate::llm::{
     create_evaluator_llm_client, create_git_janitor_llm_client, create_planner_emit_llm_client,
-    create_planner_llm_client, create_scout_llm_client, create_transformer_llm_client,
-    create_triage_llm_client, create_web_fetcher_llm_client, preflight_phase,
+    create_planner_llm_client, create_pruner_llm_client, create_scout_llm_client,
+    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
+    preflight_phase, LlmClient,
 };
 use crate::tools::LlmBuildDiscoverer;
 
@@ -121,9 +126,24 @@ fn tool_eval_target_agent(tool_name: &str) -> Option<&'static str> {
         EXECUTE_BLUEPRINT_TOOL_NAME => Some("BlueprintExecutor"),
         ANALYZE_LOG_TOOL_NAME => Some("LogAnalyzerAgent"),
         PREPARE_GIT_COPY_TOOL_NAME | CREATE_GIT_BRANCH_TOOL_NAME => Some("GitJanitorAgent"),
-        EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => None,
+        COMPACT_CONTEXT_TOOL_NAME => Some("PrunerAgent"),
+        GET_AGENT_CONTEXT_CAPS_TOOL_NAME | EVALUATE_AGENT_PERFORMANCE_TOOL_NAME => None,
         _ => None,
     }
+}
+
+fn auto_compact_guard(
+    config: &AdjutantConfig,
+    phase: AgentPhase,
+) -> Result<AutoCompactGuard, String> {
+    let mut merged = config.clone();
+    merged.merge_missing_from_defaults();
+    let window = merged.try_get_profile(phase)?.context_window_tokens;
+    let pruner = Arc::new(create_pruner_llm_client(&merged)?) as Arc<dyn LlmClient>;
+    Ok(AutoCompactGuard {
+        window_tokens: window,
+        pruner,
+    })
 }
 
 // ponytail: sync one-shot eval inside job closure — no extra async job UUID
@@ -262,23 +282,30 @@ pub async fn handle_scout_context(
         workspace_root,
         args.to_string(),
         move || async move {
-            let cache_manager =
-                Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
-            let client = create_scout_llm_client(&config)?;
-            let agent = ScoutAgent::new(client);
-            let result = match run_scout_with_cache(
-                &cache_manager,
-                &agent,
-                &query,
-                SCOUT_MAX_ITERATIONS,
-                !force_refresh,
-            )
-            .await?
-            {
-                ScoutCacheOutcome::Hit(report) => format!("[CACHE HIT]\n{report}"),
-                ScoutCacheOutcome::Fresh(report) => report,
-            };
-            Ok(finish_agent_job_with_eval(&config, SCOUT_CONTEXT_TOOL_NAME, &query, result).await)
+            let guard = auto_compact_guard(&config, AgentPhase::Scout)?;
+            with_auto_compact_async(guard, || async move {
+                let cache_manager =
+                    Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
+                let client = create_scout_llm_client(&config)?;
+                let agent = ScoutAgent::new(client);
+                let result = match run_scout_with_cache(
+                    &cache_manager,
+                    &agent,
+                    &query,
+                    SCOUT_MAX_ITERATIONS,
+                    !force_refresh,
+                )
+                .await?
+                {
+                    ScoutCacheOutcome::Hit(report) => format!("[CACHE HIT]\n{report}"),
+                    ScoutCacheOutcome::Fresh(report) => report,
+                };
+                Ok(
+                    finish_agent_job_with_eval(&config, SCOUT_CONTEXT_TOOL_NAME, &query, result)
+                        .await,
+                )
+            })
+            .await
         },
     )
     .await
@@ -654,33 +681,42 @@ pub async fn handle_web_fetch(
         workspace_root,
         args.to_string(),
         move || async move {
-            let web_profile = config.web_fetcher.clone().unwrap_or_default();
-            let cache_manager =
-                Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
-            let reasoning_client = create_web_fetcher_llm_client(&config)?;
-            let max_hops = web_profile.max_search_hops;
-            let ttl = web_profile.cache_ttl_seconds as i64;
-            let cache_threshold = web_profile.web_cache_threshold;
+            let guard = auto_compact_guard(&config, AgentPhase::WebFetcher)?;
+            with_auto_compact_async(guard, || async move {
+                let web_profile = config.web_fetcher.clone().unwrap_or_default();
+                let cache_manager =
+                    Arc::new(Mutex::new(open_cache_manager_near(&mcp_workspace_root())?));
+                let reasoning_client = create_web_fetcher_llm_client(&config)?;
+                let max_hops = web_profile.max_search_hops;
+                let ttl = web_profile.cache_ttl_seconds as i64;
+                let cache_threshold = web_profile.web_cache_threshold;
 
-            let agent = WebFetcherAgent::new(reasoning_client, web_profile);
-            let output = match run_web_fetch_with_cache(
-                &cache_manager,
-                &agent,
-                &search_phrase,
-                max_hops,
-                ttl,
-                cache_threshold,
-                !force_refresh,
-            )
-            .await?
-            {
-                WebCacheOutcome::Hit(report) => format!("[CACHE HIT]\n{report}"),
-                WebCacheOutcome::Fresh(report) => report,
-            };
-            Ok(
-                finish_agent_job_with_eval(&config, WEB_FETCH_TOOL_NAME, &search_phrase, output)
+                let agent = WebFetcherAgent::new(reasoning_client, web_profile);
+                let output = match run_web_fetch_with_cache(
+                    &cache_manager,
+                    &agent,
+                    &search_phrase,
+                    max_hops,
+                    ttl,
+                    cache_threshold,
+                    !force_refresh,
+                )
+                .await?
+                {
+                    WebCacheOutcome::Hit(report) => format!("[CACHE HIT]\n{report}"),
+                    WebCacheOutcome::Fresh(report) => report,
+                };
+                Ok(
+                    finish_agent_job_with_eval(
+                        &config,
+                        WEB_FETCH_TOOL_NAME,
+                        &search_phrase,
+                        output,
+                    )
                     .await,
-            )
+                )
+            })
+            .await
         },
     )
     .await
@@ -749,21 +785,25 @@ pub async fn handle_plan_blueprint(
         workspace_root,
         args.to_string(),
         move || async move {
-            let coordinator = CoordinatorConstraints::from_args(&parsed);
-            let scout_client = create_planner_llm_client(&config)?;
-            let emit_client = create_planner_emit_llm_client(&config)?;
+            let guard = auto_compact_guard(&config, AgentPhase::Planner)?;
+            with_auto_compact_async(guard, || async move {
+                let coordinator = CoordinatorConstraints::from_args(&parsed);
+                let scout_client = create_planner_llm_client(&config)?;
+                let emit_client = create_planner_emit_llm_client(&config)?;
 
-            let original_task = parsed.feature_request.clone();
-            let result = run_planner_hybrid(scout_client, emit_client, parsed).await?;
+                let original_task = parsed.feature_request.clone();
+                let result = run_planner_hybrid(scout_client, emit_client, parsed).await?;
 
-            let output = final_blueprint_or_report(&result, &coordinator);
-            Ok(finish_agent_job_with_eval(
-                &config,
-                PLAN_BLUEPRINT_TOOL_NAME,
-                &original_task,
-                output,
-            )
-            .await)
+                let output = final_blueprint_or_report(&result, &coordinator);
+                Ok(finish_agent_job_with_eval(
+                    &config,
+                    PLAN_BLUEPRINT_TOOL_NAME,
+                    &original_task,
+                    output,
+                )
+                .await)
+            })
+            .await
         },
     )
     .await

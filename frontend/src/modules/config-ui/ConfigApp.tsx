@@ -22,6 +22,7 @@ const DEFAULT_BINDING: PhaseBinding = {
   model_name: 'deepseek-chat',
   max_tokens: 4096,
   temperature: 0.2,
+  context_window_tokens: 32768,
 }
 
 const PHASE_BINDING_OVERRIDES: Partial<Record<AgentPhase, Partial<PhaseBinding>>> = {
@@ -35,6 +36,7 @@ const PHASE_BINDING_OVERRIDES: Partial<Record<AgentPhase, Partial<PhaseBinding>>
   transformer: { model_name: 'deepseek-coder', max_tokens: 8192, temperature: 0.1 },
   triage: { model_name: 'deepseek-coder', max_tokens: 4096, temperature: 0 },
   git_janitor: { max_tokens: 4096, temperature: 0.2 },
+  pruner: { max_tokens: 8192, temperature: 0.1 },
 }
 
 const DEFAULT_WEB_FETCHER: WebFetcherProfile = {
@@ -123,6 +125,7 @@ function migrateLegacyFlatPhases(loaded: AdjutantConfig): AdjutantConfig {
       model_name: obj.model_name,
       max_tokens: obj.max_tokens,
       temperature: obj.temperature,
+      context_window_tokens: obj.context_window_tokens ?? 32768,
     }
   }
 
@@ -151,6 +154,11 @@ function withDisplayed(loaded: AdjutantConfig): AdjutantConfig {
   for (const { phase } of AGENT_PHASES) {
     if (!phases[phase]) {
       phases[phase] = { ...defaultBinding(phase), profile_id: defaultId }
+    } else if (phases[phase]!.context_window_tokens == null) {
+      phases[phase] = {
+        ...phases[phase]!,
+        context_window_tokens: 32768,
+      }
     }
   }
   return {

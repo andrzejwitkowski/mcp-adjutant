@@ -358,6 +358,7 @@ fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
         "execute_blueprint" => vec![AgentPhase::Triage, AgentPhase::Builder],
         "prepare_git_copy" | "create_git_branch" => vec![AgentPhase::GitJanitor],
         "transpile_types" => vec![AgentPhase::Builder],
+        "compact_context" => vec![AgentPhase::Pruner],
         _ => vec![],
     }
 }

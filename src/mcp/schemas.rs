@@ -16,6 +16,8 @@ pub const PLAN_BLUEPRINT_TOOL_NAME: &str = "plan_blueprint";
 pub const EXECUTE_BLUEPRINT_TOOL_NAME: &str = "execute_blueprint";
 pub const PREPARE_GIT_COPY_TOOL_NAME: &str = "prepare_git_copy";
 pub const CREATE_GIT_BRANCH_TOOL_NAME: &str = "create_git_branch";
+pub const GET_AGENT_CONTEXT_CAPS_TOOL_NAME: &str = "get_agent_context_caps";
+pub const COMPACT_CONTEXT_TOOL_NAME: &str = "compact_context";
 
 pub fn scout_context_schema() -> Value {
     json!({
@@ -345,6 +347,54 @@ pub fn create_git_branch_schema() -> Value {
     })
 }
 
+pub fn get_agent_context_caps_schema() -> Value {
+    json!({
+        "name": GET_AGENT_CONTEXT_CAPS_TOOL_NAME,
+        "description": "Sync: returns each agent phase's context_window_tokens, max_tokens, and model_name. Call before compact_context when deciding whether a cheap sub-agent needs densifying (skip if your window is much larger).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workspace_root": workspace_root_schema_property()
+            },
+            "required": ["workspace_root"]
+        }
+    })
+}
+
+pub fn compact_context_schema() -> Value {
+    json!({
+        "name": COMPACT_CONTEXT_TOOL_NAME,
+        "description": "Densify a long agent transcript into a shorter main prompt via the Pruner agent. mode=compact (minimal loss) or mode=reduce (hard fit under target_tokens). Prefer get_agent_context_caps first; premium models rarely need this — internal agent loops auto-compact.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "type": "string",
+                    "description": "Transcript / prompt blob to densify."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["compact", "reduce"],
+                    "description": "compact = densify with minimal loss; reduce = hard-fit under target_tokens."
+                },
+                "target_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4294967295_u64,
+                    "description": "Optional token budget for the densified output. Defaults to the agent_phase context window (or Pruner window)."
+                },
+                "agent_phase": {
+                    "type": "string",
+                    "description": "Optional phase whose context_window_tokens is the default target (e.g. scout, builder)."
+                },
+                "workspace_root": workspace_root_schema_property(),
+                "request_uuid": request_uuid_schema_property()["request_uuid"]
+            },
+            "required": ["context", "mode", "workspace_root", "request_uuid"]
+        }
+    })
+}
+
 pub fn registered_mcp_tools() -> Vec<Value> {
     vec![
         scout_context_schema(),
@@ -360,6 +410,8 @@ pub fn registered_mcp_tools() -> Vec<Value> {
         execute_blueprint_schema(),
         prepare_git_copy_schema(),
         create_git_branch_schema(),
+        get_agent_context_caps_schema(),
+        compact_context_schema(),
         query_job_status_schema(),
     ]
 }
@@ -416,6 +468,14 @@ mod workspace_root_schema_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compact_and_caps_tools_registered() {
+        let tools = registered_mcp_tools();
+        let names: Vec<_> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"get_agent_context_caps"));
+        assert!(names.contains(&"compact_context"));
     }
 
     #[test]

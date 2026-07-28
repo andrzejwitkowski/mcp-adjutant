@@ -27,8 +27,8 @@ pub use agent::{
     validate_blueprint_grounding, AgentContext, AgentLoopOrchestrator, AutonomousAgent,
     BabysitterAgent, BuildCommandRunner, BuilderAgent, CoordinatorConstraints, DefaultBuilderAgent,
     DefaultTransformerAgent, EvaluatorAgent, LogAnalyzerAgent, PlanBlueprintArgs, PlanKind,
-    PlannerAgent, ScoutAgent, ScoutModelTurn, ScoutToolCall, SystemBuildRunner, TextPrunerMock,
-    TransformerAgent, TranspilerAgent, TriageAgent, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
+    PlannerAgent, ScoutAgent, ScoutModelTurn, ScoutToolCall, SystemBuildRunner, TransformerAgent,
+    TranspilerAgent, TriageAgent, WebFetcherAgent, BABYSITTER_MAX_ITERATIONS,
     BABYSITTER_SYSTEM_PROMPT, BUILDER_SYSTEM_PROMPT, EVALUATOR_SYSTEM_PROMPT,
     LOG_ANALYZER_SYSTEM_PROMPT, PLANNER_MAX_ITERATIONS, PLANNER_SYSTEM_PROMPT, SCOUT_SYSTEM_PROMPT,
     TRANSFORMER_MAX_ITERATIONS, TRANSFORMER_SYSTEM_PROMPT, TRANSPILER_MAX_ITERATIONS,
@@ -40,28 +40,30 @@ pub use cache::{
 };
 pub use domain::{
     AdjutantConfig, AgentPhase, PhaseBinding, PhaseProfile, Provider, ProviderProfile,
-    WebFetcherProfile, DEFAULT_PROFILE_ID,
+    WebFetcherProfile, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_PROFILE_ID,
 };
 pub use error::AdjutantConfigError;
 pub use jobs::{query_job_status_schema, JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 pub use llm::{
     create_babysitter_llm_client, create_builder_llm_client, create_evaluator_llm_client,
-    create_llm_client, create_llm_client_for_phase, create_log_analyzer_llm_client,
-    create_scout_llm_client, create_transformer_llm_client, create_triage_llm_client,
-    create_web_fetcher_llm_client, ConfiguredLlmClient, LlmClient, LlmModelTurn, LlmRequest,
-    LlmTool, LlmToolCall, LlmToolSet, LlmUsage, OpenAiCompatibleClient, ParamType, ToolDefinition,
-    ToolInvocationResult, ToolParam,
+    create_git_janitor_llm_client, create_llm_client, create_llm_client_for_phase,
+    create_log_analyzer_llm_client, create_pruner_llm_client, create_scout_llm_client,
+    create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
+    ConfiguredLlmClient, LlmClient, LlmModelTurn, LlmRequest, LlmTool, LlmToolCall, LlmToolSet,
+    LlmUsage, OpenAiCompatibleClient, ParamType, ToolDefinition, ToolInvocationResult, ToolParam,
 };
 pub use mcp::{
     analyze_log_schema, babysit_pr_schema, evaluate_agent_performance_schema,
     execute_blueprint_schema, execute_global_refactor_schema,
     generate_tests_and_scaffolding_schema, handle_analyze_log, handle_babysit_pr,
-    handle_evaluate_agent_performance, handle_execute_blueprint, handle_execute_global_refactor,
-    handle_generate_tests_and_scaffolding, handle_query_job_status, handle_scout_context,
+    handle_compact_context, handle_evaluate_agent_performance, handle_execute_blueprint,
+    handle_execute_global_refactor, handle_generate_tests_and_scaffolding,
+    handle_get_agent_context_caps, handle_query_job_status, handle_scout_context,
     handle_transpile_types, handle_verify_and_triage, handle_web_fetch, registered_mcp_tools,
     scout_context_schema, transpile_types_schema, verify_and_triage_schema, web_fetch_schema,
-    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-    EXECUTE_BLUEPRINT_TOOL_NAME, EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
-    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME,
+    ANALYZE_LOG_TOOL_NAME, BABYSIT_PR_TOOL_NAME, COMPACT_CONTEXT_TOOL_NAME,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_BLUEPRINT_TOOL_NAME,
+    EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+    GET_AGENT_CONTEXT_CAPS_TOOL_NAME, SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME,
     VERIFY_AND_TRIAGE_TOOL_NAME, WEB_FETCH_TOOL_NAME,
 };

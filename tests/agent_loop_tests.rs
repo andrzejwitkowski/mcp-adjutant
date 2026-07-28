@@ -1,8 +1,46 @@
-use mcp_adjutant::agent::{AgentLoopOrchestrator, TextPrunerMock};
+use async_trait::async_trait;
+use mcp_adjutant::agent::{AgentContext, AgentLoopOrchestrator, AutonomousAgent};
+
+/// Local stub: shrinks prompt each turn until under 100 chars (replaces TextPrunerMock).
+struct ShrinkStub;
+
+#[async_trait]
+impl AutonomousAgent for ShrinkStub {
+    fn name(&self) -> &'static str {
+        "shrink_stub"
+    }
+
+    async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
+        context
+            .input_prompt
+            .push_str("\n[MUST BE LESS THAN 100 CHARS]");
+        Ok(())
+    }
+
+    async fn process_and_evaluate(&self, context: &mut AgentContext) -> Result<(), String> {
+        let source = if context.iterations <= 1 {
+            &context.input_prompt
+        } else {
+            &context.accumulated_data
+        };
+        let keep = (source.chars().count() * 70 / 100).max(1);
+        let pruned: String = source.chars().take(keep).collect();
+        context.is_finished = pruned.chars().count() < 100;
+        context.accumulated_data = pruned;
+        Ok(())
+    }
+
+    async fn mutate_next_iteration(&self, context: &mut AgentContext) -> Result<(), String> {
+        context
+            .input_prompt
+            .push_str("\nStill too long, apply more aggressive pruning");
+        Ok(())
+    }
+}
 
 #[tokio::test]
-async fn text_pruner_mock_loops_mutates_and_stops_when_short_enough() {
-    let agent = TextPrunerMock;
+async fn shrink_stub_loops_mutates_and_stops_when_short_enough() {
+    let agent = ShrinkStub;
     let long_prompt = "x".repeat(300);
 
     let result = AgentLoopOrchestrator::run(&agent, long_prompt, 10)
@@ -36,8 +74,8 @@ async fn text_pruner_mock_loops_mutates_and_stops_when_short_enough() {
 }
 
 #[tokio::test]
-async fn text_pruner_mock_respects_max_iterations() {
-    let agent = TextPrunerMock;
+async fn shrink_stub_respects_max_iterations() {
+    let agent = ShrinkStub;
     let long_prompt = "y".repeat(10_000);
 
     let result = AgentLoopOrchestrator::run(&agent, long_prompt, 2)

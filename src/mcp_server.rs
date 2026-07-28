@@ -8,14 +8,15 @@ use tokio::sync::RwLock;
 use crate::domain::AdjutantConfig;
 use crate::jobs::{JobRegistry, QUERY_JOB_STATUS_TOOL_NAME};
 use crate::mcp::{
-    handle_analyze_log, handle_babysit_pr, handle_create_git_branch,
+    handle_analyze_log, handle_babysit_pr, handle_compact_context, handle_create_git_branch,
     handle_evaluate_agent_performance, handle_execute_blueprint, handle_execute_global_refactor,
-    handle_generate_tests_and_scaffolding, handle_plan_blueprint, handle_prepare_git_copy,
-    handle_query_job_status, handle_scout_context, handle_transpile_types,
+    handle_generate_tests_and_scaffolding, handle_get_agent_context_caps, handle_plan_blueprint,
+    handle_prepare_git_copy, handle_query_job_status, handle_scout_context, handle_transpile_types,
     handle_verify_and_triage, handle_web_fetch, registered_mcp_tools, ANALYZE_LOG_TOOL_NAME,
-    BABYSIT_PR_TOOL_NAME, CREATE_GIT_BRANCH_TOOL_NAME, EVALUATE_AGENT_PERFORMANCE_TOOL_NAME,
-    EXECUTE_BLUEPRINT_TOOL_NAME, EXECUTE_GLOBAL_REFACTOR_TOOL_NAME,
-    GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME, PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME,
+    BABYSIT_PR_TOOL_NAME, COMPACT_CONTEXT_TOOL_NAME, CREATE_GIT_BRANCH_TOOL_NAME,
+    EVALUATE_AGENT_PERFORMANCE_TOOL_NAME, EXECUTE_BLUEPRINT_TOOL_NAME,
+    EXECUTE_GLOBAL_REFACTOR_TOOL_NAME, GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME,
+    GET_AGENT_CONTEXT_CAPS_TOOL_NAME, PLAN_BLUEPRINT_TOOL_NAME, PREPARE_GIT_COPY_TOOL_NAME,
     SCOUT_CONTEXT_TOOL_NAME, TRANSPILE_TYPES_TOOL_NAME, VERIFY_AND_TRIAGE_TOOL_NAME,
     WEB_FETCH_TOOL_NAME,
 };
@@ -195,6 +196,12 @@ async fn handle_tool_call(
         }
         CREATE_GIT_BRANCH_TOOL_NAME => {
             handle_create_git_branch(arguments, config_snapshot, &jobs).await
+        }
+        GET_AGENT_CONTEXT_CAPS_TOOL_NAME => {
+            handle_get_agent_context_caps(arguments, config_snapshot).await
+        }
+        COMPACT_CONTEXT_TOOL_NAME => {
+            handle_compact_context(arguments, config_snapshot, &jobs).await
         }
         QUERY_JOB_STATUS_TOOL_NAME => handle_query_job_status(arguments, &jobs).await,
         other => Err(format!("unknown tool: {other}")),
