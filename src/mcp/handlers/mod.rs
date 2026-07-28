@@ -30,10 +30,10 @@ use crate::agent::{
     gather_conventions_and_diff, parse_plan_blueprint_args, run_git_janitor, run_planner_hybrid,
     run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
     validate_blueprint_coordinator, validate_blueprint_grounding, with_auto_compact_async,
-    AgentContext, AgentEvalSummary, AgentLoopOrchestrator, AutoCompactGuard, CoordinatorConstraints,
-    EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner,
-    TriageAgent, WebCacheOutcome, WebFetcherAgent, GIT_JANITOR_SYSTEM_PROMPT,
-    TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    AgentContext, AgentEvalSummary, AgentLoopOrchestrator, AutoCompactGuard,
+    CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome,
+    ScoutInputs, SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent,
+    GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
     mcp_workspace_root, require_workspace_root_arg, resolve_workspace_path,
@@ -712,8 +712,13 @@ pub async fn handle_web_fetch(
                     WebCacheOutcome::Fresh(report) => report,
                 };
                 Ok(
-                    finish_agent_job_with_eval(&config, WEB_FETCH_TOOL_NAME, &search_phrase, output)
-                        .await,
+                    finish_agent_job_with_eval(
+                        &config,
+                        WEB_FETCH_TOOL_NAME,
+                        &search_phrase,
+                        output,
+                    )
+                    .await,
                 )
             })
             .await

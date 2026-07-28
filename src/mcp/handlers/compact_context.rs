@@ -45,7 +45,10 @@ pub async fn handle_compact_context(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let target_override = args.get("target_tokens").and_then(Value::as_u64).map(|v| v as u32);
+    let target_override = args
+        .get("target_tokens")
+        .and_then(Value::as_u64)
+        .map(|v| v as u32);
 
     dispatch_async_job(
         registry,

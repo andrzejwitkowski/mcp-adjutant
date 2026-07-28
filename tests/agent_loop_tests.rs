@@ -11,7 +11,9 @@ impl AutonomousAgent for ShrinkStub {
     }
 
     async fn enrich_context(&self, context: &mut AgentContext) -> Result<(), String> {
-        context.input_prompt.push_str("\n[MUST BE LESS THAN 100 CHARS]");
+        context
+            .input_prompt
+            .push_str("\n[MUST BE LESS THAN 100 CHARS]");
         Ok(())
     }
 

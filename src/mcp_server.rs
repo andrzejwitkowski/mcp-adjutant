@@ -200,7 +200,9 @@ async fn handle_tool_call(
         GET_AGENT_CONTEXT_CAPS_TOOL_NAME => {
             handle_get_agent_context_caps(arguments, config_snapshot).await
         }
-        COMPACT_CONTEXT_TOOL_NAME => handle_compact_context(arguments, config_snapshot, &jobs).await,
+        COMPACT_CONTEXT_TOOL_NAME => {
+            handle_compact_context(arguments, config_snapshot, &jobs).await
+        }
         QUERY_JOB_STATUS_TOOL_NAME => handle_query_job_status(arguments, &jobs).await,
         other => Err(format!("unknown tool: {other}")),
     };

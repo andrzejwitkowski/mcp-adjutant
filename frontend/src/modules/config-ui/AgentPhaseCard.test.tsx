@@ -33,6 +33,7 @@ describe('AgentPhaseCard', () => {
       model_name: 'gpt-4',
       max_tokens: 1024,
       temperature: 0.7,
+      context_window_tokens: 32768,
     },
     profiles,
     onChange: vi.fn(),
@@ -70,9 +71,19 @@ describe('AgentPhaseCard', () => {
 
   it('calls onChange when max tokens is changed', () => {
     render(<AgentPhaseCard {...defaultProps} />)
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2048' } })
+    fireEvent.change(screen.getByLabelText(/Max Tokens/i), { target: { value: '2048' } })
     expect(defaultProps.onChange).toHaveBeenCalledWith(
       expect.objectContaining({ max_tokens: 2048 }),
+    )
+  })
+
+  it('calls onChange when context window is changed', () => {
+    render(<AgentPhaseCard {...defaultProps} />)
+    fireEvent.change(screen.getByLabelText(/Context window/i), {
+      target: { value: '16384' },
+    })
+    expect(defaultProps.onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ context_window_tokens: 16384 }),
     )
   })
 
