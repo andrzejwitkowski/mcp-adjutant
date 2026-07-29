@@ -8,10 +8,11 @@ use crate::agent::{
     builder_task_parts, default_builder_agent, format_builder_report, AgentLoopOrchestrator,
     BuilderReportInput, BUILDER_GREEN_MARKER,
 };
-use crate::cache::{load_best_builder_dense_exemplar, mcp_workspace_root, open_cache_connection};
+use crate::cache::mcp_workspace_root;
 use crate::domain::AdjutantConfig;
 use crate::llm::{create_builder_llm_client, create_scout_llm_client, create_triage_llm_client};
 use crate::mcp::schemas::GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME;
+use crate::metrics::{load_best_builder_dense_exemplar, metrics_store};
 
 use super::{open_cache_manager_near, BUILDER_MAX_ITERATIONS};
 
@@ -54,13 +55,17 @@ pub async fn run_builder_green(
         "{GENERATE_TESTS_AND_SCAFFOLDING_TOOL_NAME}\nPHASE_4_BUILDER\n\n{}",
         parts.workflow
     );
-    if let Ok((_, conn)) = open_cache_connection(&project_root) {
-        if let Ok(Some(exemplar)) = load_best_builder_dense_exemplar(&conn) {
-            prompt.push_str(
-                "\n\n## 10/10 dense report exemplar (path + diffstat + scenarios + pass/fail — no source bodies)\n",
-            );
-            prompt.push_str(&exemplar);
-        }
+    let exemplar = metrics_store().and_then(|store| {
+        let guard = store.lock().ok()?;
+        load_best_builder_dense_exemplar(guard.connection())
+            .ok()
+            .flatten()
+    });
+    if let Some(exemplar) = exemplar {
+        prompt.push_str(
+            "\n\n## 10/10 dense report exemplar (path + diffstat + scenarios + pass/fail — no source bodies)\n",
+        );
+        prompt.push_str(&exemplar);
     }
     if !parts.exemplar.is_empty() {
         prompt.push_str("\n\n");

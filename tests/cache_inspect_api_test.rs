@@ -1,49 +1,65 @@
 mod common;
 
 use std::fs;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
 use mcp_adjutant::cache::{
-    list_evaluations, list_evaluations_page, load_best_desired_output_exemplar,
-    load_cache_snapshot, load_scout_cache_page, load_web_cache_page, open_cache_connection,
-    EVALUATIONS_PAGE_SIZE,
+    is_dense_builder_report_exemplar, load_cache_snapshot, load_scout_cache_page,
+    load_web_cache_page, open_cache_connection,
 };
+use mcp_adjutant::metrics::{
+    list_evaluations, list_evaluations_page, load_best_builder_dense_exemplar,
+    load_best_desired_output_exemplar, MetricsStore, EVALUATIONS_PAGE_SIZE,
+};
+
+fn open_temp_metrics(label: &str) -> Arc<Mutex<MetricsStore>> {
+    let dir = std::env::temp_dir().join(format!(
+        "metrics-eval-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("tmpdir");
+    let db_path = dir.join("metrics.db");
+    Arc::new(Mutex::new(MetricsStore::open(&db_path).expect("open")))
+}
 
 #[test]
 fn list_evaluations_returns_newest_first() {
-    let project_root = unique_temp_project("inspect-eval");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
-    cache
-        .store_evaluation("Scout", "task one", "output one", 7, "ok", "desired one")
-        .expect("first evaluation");
+    let store = open_temp_metrics("list");
+    {
+        let guard = store.lock().expect("lock");
+        guard
+            .store_evaluation("Scout", "task one", "output one", 7, "ok", "desired one")
+            .expect("first");
+    }
     thread::sleep(Duration::from_millis(1100));
-    cache
-        .store_evaluation(
-            "Builder",
-            "task two",
-            "output two",
-            9,
-            "great",
-            "desired two",
-        )
-        .expect("second evaluation");
-
-    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let rows = list_evaluations(&conn).expect("list evaluations");
-
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].agent_name, "Phase_4_Builder");
-    assert_eq!(rows[0].score, 9);
-    assert_eq!(rows[0].desired_output, "desired two");
-    assert_eq!(rows[1].agent_name, "Phase_1_Scout");
-    assert_eq!(rows[1].desired_output, "desired one");
-
-    fs::remove_dir_all(&project_root).ok();
+    {
+        let guard = store.lock().expect("lock");
+        guard
+            .store_evaluation(
+                "Builder",
+                "task two",
+                "output two",
+                9,
+                "great",
+                "desired two",
+            )
+            .expect("second");
+        let rows = list_evaluations(guard.connection()).expect("list");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].agent_name, "Phase_4_Builder");
+        assert_eq!(rows[0].score, 9);
+        assert_eq!(rows[0].desired_output, "desired two");
+        assert_eq!(rows[1].agent_name, "Phase_1_Scout");
+        assert_eq!(rows[1].desired_output, "desired one");
+    }
 }
 
 #[test]
@@ -121,13 +137,10 @@ fn cache_snapshot_includes_web_rows() {
 
 #[test]
 fn list_evaluations_page_returns_twenty_per_page_newest_first() {
-    let project_root = unique_temp_project("inspect-eval-page");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
+    let store = open_temp_metrics("page");
+    let guard = store.lock().expect("lock");
     for index in 0..25 {
-        cache
+        guard
             .store_evaluation(
                 "Scout",
                 &format!("task {index}"),
@@ -136,13 +149,12 @@ fn list_evaluations_page_returns_twenty_per_page_newest_first() {
                 "ok",
                 "exemplar",
             )
-            .expect("store evaluation");
+            .expect("store");
         thread::sleep(Duration::from_millis(10));
     }
 
-    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let page1 = list_evaluations_page(&conn, 1, EVALUATIONS_PAGE_SIZE).expect("page 1");
-    let page2 = list_evaluations_page(&conn, 2, EVALUATIONS_PAGE_SIZE).expect("page 2");
+    let page1 = list_evaluations_page(guard.connection(), 1, EVALUATIONS_PAGE_SIZE).expect("p1");
+    let page2 = list_evaluations_page(guard.connection(), 2, EVALUATIONS_PAGE_SIZE).expect("p2");
 
     assert_eq!(page1.total_count, 25);
     assert_eq!(page1.total_pages, 2);
@@ -150,84 +162,62 @@ fn list_evaluations_page_returns_twenty_per_page_newest_first() {
     assert_eq!(page2.items.len(), 5);
     assert!(page1.items[0].created_at >= page1.items[1].created_at);
     assert_eq!(page1.avg_score, Some(5.0));
-
-    fs::remove_dir_all(&project_root).ok();
 }
 
 #[test]
 fn load_best_desired_output_exemplar_picks_highest_score() {
-    let project_root = unique_temp_project("inspect-exemplar");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
-    cache
+    let store = open_temp_metrics("exemplar");
+    let guard = store.lock().expect("lock");
+    guard
         .store_evaluation("BabysitterAgent", "t1", "o1", 5, "ok", "low exemplar")
         .expect("store");
     thread::sleep(Duration::from_millis(10));
-    cache
+    guard
         .store_evaluation("BabysitterAgent", "t2", "o2", 9, "great", "high exemplar")
         .expect("store");
 
-    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let got = load_best_desired_output_exemplar(&conn, "BabysitterAgent")
+    let got = load_best_desired_output_exemplar(guard.connection(), "BabysitterAgent")
         .expect("load")
         .expect("some");
     assert_eq!(got, "high exemplar");
-
-    fs::remove_dir_all(&project_root).ok();
 }
 
 #[test]
 fn load_best_desired_output_exemplar_skips_below_seven() {
-    let project_root = unique_temp_project("inspect-exemplar-floor");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
-    cache
+    let store = open_temp_metrics("floor");
+    let guard = store.lock().expect("lock");
+    guard
         .store_evaluation("BabysitterAgent", "t1", "o1", 6, "ok", "six exemplar")
         .expect("store");
 
-    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let got = load_best_desired_output_exemplar(&conn, "BabysitterAgent").expect("load");
+    let got = load_best_desired_output_exemplar(guard.connection(), "BabysitterAgent").expect("load");
     assert!(got.is_none());
-
-    fs::remove_dir_all(&project_root).ok();
 }
 
 #[test]
 fn load_best_builder_dense_exemplar_skips_legacy_source_dumps() {
-    let project_root = unique_temp_project("inspect-builder-dense");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
     let bloated = format!(
         "path: tests/foo.rs\n```rust\n{}\n```\n",
         "#[test]\nfn t() {}\n".repeat(80)
     );
     let dense = "path: tests/foo.rs\ndiffstat: +12/-0\nscenarios: foo_ok, foo_err\ncmd: cargo test --test foo\nexit: 0\npass";
 
-    let mut cache = open_cache_manager(&project_root);
-    cache
+    let store = open_temp_metrics("dense");
+    let guard = store.lock().expect("lock");
+    guard
         .store_evaluation("Phase_4_Builder", "t1", "o1", 10, "old", &bloated)
-        .expect("store bloated");
+        .expect("bloated");
     thread::sleep(Duration::from_millis(10));
-    cache
+    guard
         .store_evaluation("Phase_4_Builder", "t2", "o2", 9, "dense", dense)
-        .expect("store dense");
+        .expect("dense");
 
-    let (_, conn) = open_cache_connection(&project_root).expect("open cache");
-    let got = mcp_adjutant::cache::load_best_builder_dense_exemplar(&conn)
+    let got = load_best_builder_dense_exemplar(guard.connection())
         .expect("load")
         .expect("dense");
     assert_eq!(got, dense);
-    assert!(mcp_adjutant::cache::is_dense_builder_report_exemplar(dense));
-    assert!(!mcp_adjutant::cache::is_dense_builder_report_exemplar(
-        &bloated
-    ));
-
-    fs::remove_dir_all(&project_root).ok();
+    assert!(is_dense_builder_report_exemplar(dense));
+    assert!(!is_dense_builder_report_exemplar(&bloated));
 }
 
 #[test]

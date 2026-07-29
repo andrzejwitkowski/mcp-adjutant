@@ -8,14 +8,12 @@ use crate::agent::{
     format_babysitter_result, AgentLoopOrchestrator, BabysitterAgent, SystemBuildRunner,
     TriageAgent, BABYSITTER_MAX_ITERATIONS, BABYSITTER_SYSTEM_PROMPT,
 };
-use crate::cache::{
-    load_best_desired_output_exemplar, mcp_workspace_root, open_cache_connection,
-    require_workspace_root_arg,
-};
+use crate::cache::require_workspace_root_arg;
 use crate::domain::AdjutantConfig;
 use crate::jobs::{parse_request_uuid, JobRegistry};
 use crate::llm::{create_babysitter_llm_client, create_triage_llm_client};
 use crate::mcp::schemas::BABYSIT_PR_TOOL_NAME;
+use crate::metrics::{load_best_desired_output_exemplar, metrics_store};
 use crate::tools::{assert_on_pr_head_branch, gh_pr_state, LlmBuildDiscoverer};
 
 use super::{dispatch_async_job, finish_agent_job_with_eval};
@@ -63,13 +61,15 @@ pub async fn handle_babysit_pr(
             let original_task = format!("{BABYSIT_PR_TOOL_NAME} PR #{pr_number}");
             let mut prompt =
                 format!("{BABYSIT_PR_TOOL_NAME}\nPR #{pr_number}\n\n{BABYSITTER_SYSTEM_PROMPT}");
-            if let Ok((_, conn)) = open_cache_connection(&mcp_workspace_root()) {
-                if let Ok(Some(exemplar)) =
-                    load_best_desired_output_exemplar(&conn, "BabysitterAgent")
-                {
-                    prompt.push_str("\n\n## 10/10 output exemplar (match this JSON shape)\n");
-                    prompt.push_str(&exemplar);
-                }
+            let exemplar = metrics_store().and_then(|store| {
+                let guard = store.lock().ok()?;
+                load_best_desired_output_exemplar(guard.connection(), "BabysitterAgent")
+                    .ok()
+                    .flatten()
+            });
+            if let Some(exemplar) = exemplar {
+                prompt.push_str("\n\n## 10/10 output exemplar (match this JSON shape)\n");
+                prompt.push_str(&exemplar);
             }
             let result =
                 AgentLoopOrchestrator::run(&agent, prompt, BABYSITTER_MAX_ITERATIONS).await?;

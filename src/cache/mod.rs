@@ -8,11 +8,9 @@ pub mod project;
 pub use agent_names::{backfill_evaluation_agent_names, normalize_agent_name};
 pub use embedding::{LocalEmbeddingEngine, EMBEDDING_DIM};
 pub use inspect::{
-    is_dense_builder_report_exemplar, list_evaluations, list_evaluations_page,
-    load_best_builder_dense_exemplar, load_best_desired_output_exemplar, load_cache_snapshot,
-    load_scout_cache_page, load_web_cache_page, AgentEvaluationRow, CacheSnapshot, EvaluationsPage,
-    ScoutCachePage, WebCachePage, WebFetchDependencyRow, WebQueryRow, WebReportRow, WebSourceRow,
-    EVALUATIONS_PAGE_SIZE,
+    is_dense_builder_report_exemplar, load_cache_snapshot, load_scout_cache_page,
+    load_web_cache_page, CacheSnapshot, ScoutCachePage, WebCachePage, WebFetchDependencyRow,
+    WebQueryRow, WebReportRow, WebSourceRow,
 };
 pub use manager::{
     ProjectCacheManager, WebReportCacheLookup, WebReportRevalidation, WebSourceSnapshot,

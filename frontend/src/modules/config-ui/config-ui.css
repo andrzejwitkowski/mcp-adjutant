@@ -249,6 +249,15 @@
   flex: 1;
 }
 
+.eval-card__project {
+  color: var(--muted, #888);
+  font-size: 0.85em;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .eval-card__time {
   color: #9aa0a6;
   font-size: 0.8rem;

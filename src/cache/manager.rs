@@ -318,47 +318,6 @@ impl ProjectCacheManager {
         }
     }
 
-    /// Persists an LLM-as-a-Judge evaluation for meta-learning and prompt optimization.
-    pub fn store_evaluation(
-        &mut self,
-        agent_name: &str,
-        original_task: &str,
-        agent_output: &str,
-        score: i32,
-        feedback_notes: &str,
-        desired_output: &str,
-    ) -> Result<(), String> {
-        let agent_name = super::agent_names::normalize_agent_name(agent_name);
-        let created_at = current_unix_timestamp()?;
-        let id = hash_query_text(&format!(
-            "{agent_name}\0{original_task}\0{agent_output}\0{feedback_notes}\0{desired_output}\0{created_at}\0{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.subsec_nanos())
-                .unwrap_or(0)
-        ));
-
-        self.conn
-            .execute(
-                "INSERT INTO agent_evaluations
-                 (id, agent_name, original_task, agent_output, score, feedback_notes, desired_output, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    id,
-                    agent_name.as_str(),
-                    original_task,
-                    agent_output,
-                    score,
-                    feedback_notes,
-                    desired_output,
-                    created_at
-                ],
-            )
-            .map_err(|err| format!("failed to store agent evaluation: {err}"))?;
-
-        Ok(())
-    }
-
     pub fn clear_web_cache(&self) -> Result<(), String> {
         self.conn
             .execute("DELETE FROM web_fetch_dependencies", [])

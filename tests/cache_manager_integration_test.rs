@@ -1,16 +1,22 @@
 mod common;
 
-use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
-use rusqlite::{params, Connection};
+use mcp_adjutant::metrics::MetricsStore;
+use rusqlite::params;
 use std::fs;
 
 #[test]
 fn store_evaluation_persists_data() {
-    let project_root = unique_temp_project("eval-persist");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
+    let dir = std::env::temp_dir().join(format!(
+        "eval-persist-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("tmpdir");
+    let store = MetricsStore::open(&dir.join("metrics.db")).expect("open");
 
     let agent_name = "TestAgent";
     let original_task = "Test task description";
@@ -18,7 +24,7 @@ fn store_evaluation_persists_data() {
     let score = 10;
     let feedback_notes = "Test feedback notes";
 
-    cache
+    store
         .store_evaluation(
             agent_name,
             original_task,
@@ -29,9 +35,8 @@ fn store_evaluation_persists_data() {
         )
         .expect("store evaluation");
 
-    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
-    let conn = Connection::open(&db_path).expect("open cache.db");
-    let count: i32 = conn
+    let count: i32 = store
+        .connection()
         .query_row(
             "SELECT COUNT(*) FROM agent_evaluations WHERE agent_name = ?1",
             params![agent_name],
@@ -40,9 +45,11 @@ fn store_evaluation_persists_data() {
         .expect("count evaluations");
     assert_eq!(count, 1, "evaluation should be persisted");
 
-    let stored_evaluation: (String, String, String, i32, String, String) = conn
+    let stored: (String, String, String, i32, String, String) = store
+        .connection()
         .query_row(
-            "SELECT agent_name, original_task, agent_output, score, feedback_notes, desired_output FROM agent_evaluations WHERE agent_name = ?1",
+            "SELECT agent_name, original_task, agent_output, score, feedback_notes, desired_output
+             FROM agent_evaluations WHERE agent_name = ?1",
             params![agent_name],
             |row| {
                 Ok((
@@ -55,40 +62,44 @@ fn store_evaluation_persists_data() {
                 ))
             },
         )
-        .expect("retrieve stored evaluation");
+        .expect("retrieve");
 
-    assert_eq!(stored_evaluation.0, agent_name);
-    assert_eq!(stored_evaluation.1, original_task);
-    assert_eq!(stored_evaluation.2, agent_output);
-    assert_eq!(stored_evaluation.3, score);
-    assert_eq!(stored_evaluation.4, feedback_notes);
-    assert_eq!(stored_evaluation.5, "");
+    assert_eq!(stored.0, agent_name);
+    assert_eq!(stored.1, original_task);
+    assert_eq!(stored.2, agent_output);
+    assert_eq!(stored.3, score);
+    assert_eq!(stored.4, feedback_notes);
+    assert_eq!(stored.5, "");
 
-    fs::remove_dir_all(&project_root).ok();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn store_evaluation_normalizes_builder_alias() {
-    let project_root = unique_temp_project("eval-normalize");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
-
-    let mut cache = open_cache_manager(&project_root);
-    cache
+    let dir = std::env::temp_dir().join(format!(
+        "eval-norm-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("tmpdir");
+    let store = MetricsStore::open(&dir.join("metrics.db")).expect("open");
+    store
         .store_evaluation("builder", "task", "output", 7, "ok", "exemplar")
-        .expect("store evaluation");
+        .expect("store");
 
-    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
-    let conn = Connection::open(&db_path).expect("open cache.db");
-    let agent_name: String = conn
+    let agent_name: String = store
+        .connection()
         .query_row(
             "SELECT agent_name FROM agent_evaluations LIMIT 1",
             [],
             |row| row.get(0),
         )
-        .expect("read agent_name");
+        .expect("read");
 
     assert_eq!(agent_name, "Phase_4_Builder");
-
-    fs::remove_dir_all(&project_root).ok();
+    let _ = fs::remove_dir_all(&dir);
 }

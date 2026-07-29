@@ -45,7 +45,7 @@ export function EvaluationsView() {
             summary: `load failed: ${error.message}`,
           },
           meta: {
-              sourceModule: 'config-ui/EvaluationsView',
+            sourceModule: 'config-ui/EvaluationsView',
             correlationId: null,
           },
         })
@@ -61,14 +61,11 @@ export function EvaluationsView() {
   const rows = data?.items ?? []
   const avgScore =
     data?.avg_score != null ? data.avg_score.toFixed(1) : '—'
-  const cacheHint = data?.project_root
-    ? `Cache: ${data.project_root}`
-    : 'LLM-as-judge ratings from evaluate_agent_performance'
 
   return (
     <PageShell
       title="Agent evaluations"
-      subtitle={cacheHint}
+      subtitle="Global metrics.db — all workspaces"
       actions={
         <button
           type="button"
@@ -120,6 +117,11 @@ export function EvaluationsView() {
                   >
                     <span className={`score-badge ${scoreClass(row.score)}`}>{row.score}/10</span>
                     <span className="eval-card__agent">{row.agent_name}</span>
+                    {row.project_root && (
+                      <span className="eval-card__project" title={row.project_root}>
+                        {row.project_root.split('/').pop()}
+                      </span>
+                    )}
                     <span className="eval-card__time">{formatTimestamp(row.created_at)}</span>
                   </button>
                   {isOpen && (
