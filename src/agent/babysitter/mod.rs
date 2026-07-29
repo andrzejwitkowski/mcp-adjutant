@@ -206,8 +206,8 @@ pub fn format_babysitter_result(
 }
 
 pub use tools::{
-    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
-    parse_reply_arguments, parse_triage_arguments,
+    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_reply_arguments,
+    parse_report_body, parse_triage_arguments,
 };
 
 pub const BABYSITTER_SYSTEM_PROMPT: &str = r#"You are the BabysitterAgent (PHASE_BABYSITTER), a high-level orchestrator inside mcp-adjutant. Drive the assigned GitHub PR to mergeable state (green CI, resolved actionable reviews).
