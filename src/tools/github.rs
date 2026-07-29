@@ -33,7 +33,7 @@ struct GhPrView {
 pub struct PrReviewComment {
     #[serde(default)]
     pub id: u64,
-    #[serde(default)]
+    #[serde(default, rename = "in_reply_to_id")]
     pub in_reply_to: Option<u64>,
     #[serde(default)]
     pub path: Option<String>,
@@ -382,7 +382,6 @@ mod tests {
                     path: Some("src/foo.rs".to_string()),
                     line: Some(166),
                     body: "already a reply".into(),
-                    ..Default::default()
                 },
             ],
         };
@@ -492,5 +491,15 @@ mod tests {
             },
         ];
         assert_eq!(root_review_comment_ids(&comments), vec![10]);
+    }
+
+    #[test]
+    fn pr_review_comment_deserializes_in_reply_to_id() {
+        let comment: PrReviewComment = serde_json::from_str(
+            r#"{"id":11,"in_reply_to_id":10,"path":"src/a.rs","line":1,"body":"reply"}"#,
+        )
+        .expect("parse");
+        assert_eq!(comment.in_reply_to, Some(10));
+        assert_eq!(root_review_comment_ids(&[comment]), Vec::<u64>::new());
     }
 }
