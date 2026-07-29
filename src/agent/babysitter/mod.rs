@@ -17,7 +17,8 @@ use crate::domain::AdjutantConfig;
 use crate::llm::{LlmClient, LlmModelTurn, LlmRequest, LlmToolSet};
 use crate::tools::{
     assert_on_pr_head_branch, ci_checks_blocking, format_pr_state_markdown, gh_post_comment,
-    gh_pr_state, git_push_origin_head, review_comment_paths, LlmBuildDiscoverer, PrState,
+    gh_pr_state, gh_reply_review_comment, git_push_origin_head, review_comment_paths,
+    root_review_comment_ids, LlmBuildDiscoverer, PrState,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +26,42 @@ struct BabysitterSession {
     report_posted: bool,
     review_paths_seen: HashSet<String>,
     review_paths_handled: HashSet<String>,
+    review_comment_ids_seen: HashSet<u64>,
+    review_comment_ids_replied: HashSet<u64>,
+}
+
+impl BabysitterSession {
+    fn record_reviews(&mut self, comments: &[crate::tools::PrReviewComment]) {
+        for path in review_comment_paths(comments) {
+            self.review_paths_seen.insert(path);
+        }
+        self.review_comment_ids_seen
+            .extend(root_review_comment_ids(comments));
+    }
+
+    fn unreplied_comment_ids(&self) -> Vec<u64> {
+        let mut ids: Vec<_> = self
+            .review_comment_ids_seen
+            .difference(&self.review_comment_ids_replied)
+            .copied()
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn comments_replied_count(&self) -> usize {
+        self.review_comment_ids_replied
+            .intersection(&self.review_comment_ids_seen)
+            .count()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BabysitterSessionSnapshot {
+    pub report_posted: bool,
+    pub paths_seen: Vec<String>,
+    pub paths_handled: Vec<String>,
+    pub comments_replied: usize,
 }
 
 fn uncovered_review_paths(
@@ -81,6 +118,18 @@ fn check_finalize_allowed(
         ));
     }
 
+    let unreplied = session.unreplied_comment_ids();
+    if !unreplied.is_empty() {
+        return Err(format!(
+            "refusing finalize_session: review comment ids not replied: {} — call github_reply_review_comment for each root id from github_get_pr_state",
+            unreplied
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
     Ok(())
 }
 
@@ -106,6 +155,7 @@ pub fn format_babysitter_result(
     paths_seen: &[String],
     paths_handled: &[String],
     skipped_paths: &[String],
+    comments_replied: usize,
     pr_number: u64,
     iterations: u32,
     summary: Option<&str>,
@@ -135,6 +185,7 @@ pub fn format_babysitter_result(
             "paths_seen": paths_seen_sorted,
             "paths_handled": paths_handled_sorted,
             "skipped_paths": skipped_sorted,
+            "comments_replied": comments_replied,
         },
         "gh_state": {
             "mergeable": state.mergeable.as_deref().unwrap_or("unknown"),
@@ -155,8 +206,8 @@ pub fn format_babysitter_result(
 }
 
 pub use tools::{
-    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_report_body,
-    parse_triage_arguments,
+    babysitter_tool_set, parse_finalize_arguments, parse_log_path, parse_reply_arguments,
+    parse_report_body, parse_triage_arguments,
 };
 
 pub const BABYSITTER_SYSTEM_PROMPT: &str = r#"You are the BabysitterAgent (PHASE_BABYSITTER), a high-level orchestrator inside mcp-adjutant. Drive the assigned GitHub PR to mergeable state (green CI, resolved actionable reviews).
@@ -167,11 +218,11 @@ Orchestration rules:
 1. Start with github_get_pr_state.
 2. CI failure -> run_log_analyzer on gh-run:<id> from state, then invoke_child_triage for straightforward compile/lint errors.
 2b. CI green but review line comments exist -> invoke_child_triage on cited paths (CodeRabbit/bot inline comments are FIXABLE_ACTION by default).
-3. Review comments: [FIXABLE_ACTION] -> invoke_child_triage; [ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] -> skip (note in finalize report).
+3. Review comments: [FIXABLE_ACTION] -> invoke_child_triage then github_reply_review_comment on that comment's id=…; [ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] -> github_reply_review_comment with skip reason (no triage).
 4. Never git_push_changes until the latest invoke_child_triage observation contains [TRIAGE PASS].
-5. When done: github_post_final_report, then finalize_session with skipped_review_paths for any review paths not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]). The harness builds authoritative JSON on finalize — your summary is optional decoration inside it.
+5. When done: every root review comment id must have a thread reply, then github_post_final_report, then finalize_session with skipped_review_paths for any review paths not triaged ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]). The harness builds authoritative JSON on finalize — your summary is optional decoration inside it.
 
-Available tools: github_get_pr_state, run_log_analyzer, invoke_child_triage, git_push_changes, github_post_final_report, finalize_session."#;
+Available tools: github_get_pr_state, run_log_analyzer, invoke_child_triage, git_push_changes, github_reply_review_comment, github_post_final_report, finalize_session."#;
 
 pub const BABYSITTER_MAX_ITERATIONS: u32 = 20;
 const CHILD_TRIAGE_MAX_ITERATIONS: u32 = 5;
@@ -204,17 +255,16 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
         }
     }
 
-    pub fn session_snapshot(&self) -> (bool, Vec<String>, Vec<String>) {
+    pub fn session_snapshot(&self) -> BabysitterSessionSnapshot {
         self.session
             .lock()
-            .map(|guard| {
-                (
-                    guard.report_posted,
-                    guard.review_paths_seen.iter().cloned().collect(),
-                    guard.review_paths_handled.iter().cloned().collect(),
-                )
+            .map(|guard| BabysitterSessionSnapshot {
+                report_posted: guard.report_posted,
+                paths_seen: guard.review_paths_seen.iter().cloned().collect(),
+                paths_handled: guard.review_paths_handled.iter().cloned().collect(),
+                comments_replied: guard.comments_replied_count(),
             })
-            .unwrap_or((false, Vec::new(), Vec::new()))
+            .unwrap_or_default()
     }
 
     async fn run_child_triage(
@@ -259,9 +309,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                     .session
                     .lock()
                     .map_err(|_| "session lock poisoned".to_string())?;
-                for path in review_comment_paths(&state.review_comments) {
-                    guard.review_paths_seen.insert(path);
-                }
+                guard.record_reviews(&state.review_comments);
                 Ok(format_pr_state_markdown(&state))
             }
             "run_log_analyzer" => {
@@ -297,6 +345,27 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                 }
                 git_push_origin_head()
             }
+            "github_reply_review_comment" => {
+                let (comment_id, body) = tools::parse_reply_arguments(arguments)?;
+                {
+                    let guard = self
+                        .session
+                        .lock()
+                        .map_err(|_| "session lock poisoned".to_string())?;
+                    if !guard.review_comment_ids_seen.contains(&comment_id) {
+                        return Err(format!(
+                            "comment_id {comment_id} is not a known root review comment — call github_get_pr_state first and use an id=… from that output"
+                        ));
+                    }
+                }
+                gh_reply_review_comment(self.pr_number, comment_id, &body)?;
+                let mut guard = self
+                    .session
+                    .lock()
+                    .map_err(|_| "session lock poisoned".to_string())?;
+                guard.review_comment_ids_replied.insert(comment_id);
+                Ok(format!("replied to review comment {comment_id}"))
+            }
             "github_post_final_report" => {
                 let body = tools::parse_report_body(arguments)?;
                 gh_post_comment(self.pr_number, &body)?;
@@ -318,6 +387,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                 let paths_seen: Vec<_> = session.review_paths_seen.iter().cloned().collect();
                 let paths_handled: Vec<_> = session.review_paths_handled.iter().cloned().collect();
                 let report_posted = session.report_posted;
+                let comments_replied = session.comments_replied_count();
                 drop(session);
                 let summary_text = summary.as_deref();
                 let json = format_babysitter_result(
@@ -326,6 +396,7 @@ impl<C: LlmClient, TC: LlmClient, SC: LlmClient> BabysitterAgent<C, TC, SC> {
                     &paths_seen,
                     &paths_handled,
                     &skipped_review_paths,
+                    comments_replied,
                     self.pr_number,
                     context.iterations,
                     summary_text,
@@ -420,9 +491,7 @@ mod finalize_gate_tests {
     use crate::tools::{PrCheck, PrReviewComment};
 
     fn seed_review_paths(session: &mut BabysitterSession, state: &PrState) {
-        for path in review_comment_paths(&state.review_comments) {
-            session.review_paths_seen.insert(path);
-        }
+        session.record_reviews(&state.review_comments);
     }
 
     #[test]
@@ -450,6 +519,7 @@ mod finalize_gate_tests {
             &["src/a.rs".into()],
             &["src/a.rs".into()],
             &[],
+            0,
             31,
             3,
             Some("done"),
@@ -459,6 +529,7 @@ mod finalize_gate_tests {
         assert!(json.contains("\"action\": \"mergeable\""), "{json}");
         assert!(json.contains("Rust Backend (Check & Test)"), "{json}");
         assert!(json.contains("\"paths_seen\""), "{json}");
+        assert!(json.contains("\"comments_replied\": 0"), "{json}");
     }
 
     #[test]
@@ -532,9 +603,11 @@ mod finalize_gate_tests {
             url: "u".into(),
             checks: vec![],
             review_comments: vec![PrReviewComment {
+                id: 7,
                 path: Some("src/foo.rs".into()),
                 line: Some(1),
                 body: "fix".into(),
+                ..Default::default()
             }],
         };
         let mut session = BabysitterSession {
@@ -545,6 +618,7 @@ mod finalize_gate_tests {
         session
             .review_paths_handled
             .insert("src/foo.rs".to_string());
+        session.review_comment_ids_replied.insert(7);
         assert!(check_finalize_allowed(&state, &session, &[]).is_ok());
     }
 
@@ -560,9 +634,11 @@ mod finalize_gate_tests {
             url: "u".into(),
             checks: vec![],
             review_comments: vec![PrReviewComment {
+                id: 7,
                 path: Some("src/foo.rs".into()),
                 line: Some(1),
                 body: "fix".into(),
+                ..Default::default()
             }],
         };
         let mut session = BabysitterSession {
@@ -586,9 +662,11 @@ mod finalize_gate_tests {
             url: "u".into(),
             checks: vec![],
             review_comments: vec![PrReviewComment {
+                id: 8,
                 path: Some("src/foo.rs".into()),
                 line: None,
                 body: "nit".into(),
+                ..Default::default()
             }],
         };
         let mut session = BabysitterSession {
@@ -596,6 +674,39 @@ mod finalize_gate_tests {
             ..Default::default()
         };
         seed_review_paths(&mut session, &state);
+        session.review_comment_ids_replied.insert(8);
         assert!(check_finalize_allowed(&state, &session, &["src/foo.rs".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn check_finalize_rejects_unreplied_comments() {
+        let state = PrState {
+            number: 1,
+            title: "t".into(),
+            state: "OPEN".into(),
+            mergeable: None,
+            head_ref_name: "feat".into(),
+            base_ref_name: "main".into(),
+            url: "u".into(),
+            checks: vec![],
+            review_comments: vec![PrReviewComment {
+                id: 9,
+                path: Some("src/foo.rs".into()),
+                line: Some(1),
+                body: "fix".into(),
+                ..Default::default()
+            }],
+        };
+        let mut session = BabysitterSession {
+            report_posted: true,
+            ..Default::default()
+        };
+        seed_review_paths(&mut session, &state);
+        session
+            .review_paths_handled
+            .insert("src/foo.rs".to_string());
+        let err = check_finalize_allowed(&state, &session, &[]).unwrap_err();
+        assert!(err.contains("not replied"));
+        assert!(err.contains('9'));
     }
 }

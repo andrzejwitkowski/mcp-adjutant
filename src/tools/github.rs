@@ -29,12 +29,17 @@ struct GhPrView {
     url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct PrReviewComment {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default, rename = "in_reply_to_id")]
+    pub in_reply_to: Option<u64>,
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
     pub line: Option<u32>,
+    #[serde(default)]
     pub body: String,
 }
 
@@ -157,6 +162,14 @@ pub fn review_comment_paths(comments: &[PrReviewComment]) -> Vec<String> {
     paths
 }
 
+pub fn root_review_comment_ids(comments: &[PrReviewComment]) -> Vec<u64> {
+    comments
+        .iter()
+        .filter(|c| c.in_reply_to.is_none() && c.id != 0)
+        .map(|c| c.id)
+        .collect()
+}
+
 pub fn gh_pr_state(pr_number: u64) -> Result<PrState, String> {
     let view_json = run_gh_capture(&[
         "pr",
@@ -234,11 +247,16 @@ pub fn format_pr_state_markdown(state: &PrState) -> String {
         }
     }
 
-    if !state.review_comments.is_empty() {
+    let roots: Vec<_> = state
+        .review_comments
+        .iter()
+        .filter(|c| c.in_reply_to.is_none() && c.id != 0)
+        .collect();
+    if !roots.is_empty() {
         out.push_str(
             "\n### Actionable review comments (treat as FIXABLE_ACTION unless clearly nitpick)\n",
         );
-        for comment in &state.review_comments {
+        for comment in roots {
             let path = comment.path.as_deref().unwrap_or("(general)");
             let loc = match comment.line {
                 Some(line) => format!("{path}:{line}"),
@@ -252,7 +270,10 @@ pub fn format_pr_state_markdown(state: &PrState) -> String {
                 .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
                 .collect();
             let suffix = if chars.next().is_some() { "…" } else { "" };
-            out.push_str(&format!("- `{loc}` — {preview}{suffix}\n"));
+            out.push_str(&format!(
+                "- id={} `{loc}` — {preview}{suffix}\n",
+                comment.id
+            ));
         }
     }
 
@@ -272,6 +293,30 @@ pub fn gh_post_comment(pr_number: u64, body: &str) -> Result<(), String> {
     ])?;
     let _ = std::fs::remove_file(&tmp);
     Ok(())
+}
+
+pub fn gh_reply_review_comment(
+    pr_number: u64,
+    comment_id: u64,
+    body: &str,
+) -> Result<String, String> {
+    if comment_id == 0 {
+        return Err("comment_id must be a non-zero GitHub review comment id".into());
+    }
+    let payload = serde_json::json!({ "body": body, "in_reply_to": comment_id });
+    let tmp = std::env::temp_dir().join(format!("babysitter-reply-{pr_number}-{comment_id}.json"));
+    std::fs::write(&tmp, payload.to_string()).map_err(|err| format!("write reply body: {err}"))?;
+    let path = tmp.to_string_lossy().into_owned();
+    let out = run_gh_capture(&[
+        "api",
+        "--method",
+        "POST",
+        &format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments"),
+        "--input",
+        &path,
+    ]);
+    let _ = std::fs::remove_file(&tmp);
+    out
 }
 
 pub fn assert_on_pr_head_branch(expected_head_ref: &str) -> Result<(), String> {
@@ -323,16 +368,30 @@ mod tests {
             base_ref_name: "main".to_string(),
             url: "https://example.com/pull/27".to_string(),
             checks: Vec::new(),
-            review_comments: vec![PrReviewComment {
-                path: Some("src/foo.rs".to_string()),
-                line: Some(166),
-                body: "fix this bug".repeat(50),
-            }],
+            review_comments: vec![
+                PrReviewComment {
+                    id: 42,
+                    path: Some("src/foo.rs".to_string()),
+                    line: Some(166),
+                    body: "fix this bug".repeat(50),
+                    ..Default::default()
+                },
+                PrReviewComment {
+                    id: 43,
+                    in_reply_to: Some(42),
+                    path: Some("src/foo.rs".to_string()),
+                    line: Some(166),
+                    body: "already a reply".into(),
+                },
+            ],
         };
         let md = format_pr_state_markdown(&state);
         assert!(md.contains("Actionable review comments"));
+        assert!(md.contains("id=42"));
         assert!(md.contains("src/foo.rs:166"));
         assert!(md.contains('…'));
+        assert!(!md.contains("already a reply"));
+        assert!(!md.contains("id=43"));
     }
 
     #[test]
@@ -390,21 +449,57 @@ mod tests {
                 path: Some("src/a.rs".into()),
                 line: Some(1),
                 body: "a".into(),
+                ..Default::default()
             },
             PrReviewComment {
                 path: Some("src/a.rs".into()),
                 line: Some(2),
                 body: "b".into(),
+                ..Default::default()
             },
             PrReviewComment {
                 path: None,
                 line: None,
                 body: "general".into(),
+                ..Default::default()
             },
         ];
         assert_eq!(
             review_comment_paths(&comments),
             vec!["src/a.rs".to_string()]
         );
+    }
+
+    #[test]
+    fn root_review_comment_ids_skips_replies_and_zero() {
+        let comments = vec![
+            PrReviewComment {
+                id: 10,
+                body: "root".into(),
+                ..Default::default()
+            },
+            PrReviewComment {
+                id: 11,
+                in_reply_to: Some(10),
+                body: "reply".into(),
+                ..Default::default()
+            },
+            PrReviewComment {
+                id: 0,
+                body: "no id".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(root_review_comment_ids(&comments), vec![10]);
+    }
+
+    #[test]
+    fn pr_review_comment_deserializes_in_reply_to_id() {
+        let comment: PrReviewComment = serde_json::from_str(
+            r#"{"id":11,"in_reply_to_id":10,"path":"src/a.rs","line":1,"body":"reply"}"#,
+        )
+        .expect("parse");
+        assert_eq!(comment.in_reply_to, Some(10));
+        assert_eq!(root_review_comment_ids(&[comment]), Vec::<u64>::new());
     }
 }

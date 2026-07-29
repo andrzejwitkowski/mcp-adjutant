@@ -86,6 +86,23 @@ pub fn babysitter_tool_set() -> LlmToolSet {
             false,
         ))
         .register(HarnessTool::new(
+            ToolDefinition::new(
+                "github_reply_review_comment",
+                "Replies in a PR review comment thread after fixing or intentionally skipping that comment.",
+            )
+            .integer_param(
+                "comment_id",
+                "GitHub review comment id from github_get_pr_state (id=…).",
+                true,
+            )
+            .string_param(
+                "body",
+                "Short reply: fixed (what changed) or skipped with reason ([NITPICK_OR_IGNORE] / [ARCHITECTURAL_DISCUSSION]).",
+                true,
+            ),
+            false,
+        ))
+        .register(HarnessTool::new(
             ToolDefinition::new("finalize_session", "Ends the babysitter session (terminal).")
                 .string_param("summary", "Optional one-line session summary.", false)
                 .string_array_param(
@@ -118,6 +135,18 @@ pub fn parse_triage_arguments(arguments: &Value) -> Result<(Vec<String>, String)
 
 pub fn parse_report_body(arguments: &Value) -> Result<String, String> {
     required_str(arguments, "report")
+}
+
+pub fn parse_reply_arguments(arguments: &Value) -> Result<(u64, String), String> {
+    let comment_id = arguments
+        .get("comment_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "comment_id integer is required".to_string())?;
+    if comment_id == 0 {
+        return Err("comment_id must be non-zero".into());
+    }
+    let body = required_str(arguments, "body")?;
+    Ok((comment_id, body))
 }
 
 pub fn parse_finalize_arguments(
@@ -161,5 +190,26 @@ mod tests {
         let (summary, skipped) = parse_finalize_arguments(&json!({})).expect("parse");
         assert!(summary.is_none());
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn parse_reply_arguments_reads_id_and_body() {
+        let (id, body) = parse_reply_arguments(&json!({
+            "comment_id": 99,
+            "body": "Fixed in push."
+        }))
+        .expect("parse");
+        assert_eq!(id, 99);
+        assert_eq!(body, "Fixed in push.");
+    }
+
+    #[test]
+    fn parse_reply_arguments_rejects_zero_id() {
+        let err = parse_reply_arguments(&json!({
+            "comment_id": 0,
+            "body": "x"
+        }))
+        .unwrap_err();
+        assert!(err.contains("non-zero"));
     }
 }
