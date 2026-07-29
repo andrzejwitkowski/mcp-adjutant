@@ -71,6 +71,7 @@ export interface AgentEvaluationRow {
   feedback_notes: string
   desired_output: string
   created_at: number
+  project_root?: string
 }
 
 export interface EvaluationsPage {
@@ -80,7 +81,6 @@ export interface EvaluationsPage {
   total_count: number
   total_pages: number
   avg_score: number | null
-  project_root?: string
 }
 
 export interface CacheOverview {

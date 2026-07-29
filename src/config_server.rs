@@ -13,12 +13,17 @@ use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cache::{
-    list_evaluations_page, load_scout_cache_page, load_web_cache_page, open_cache_connection,
-    EvaluationsPage, ScoutCachePage, WebCachePage, EVALUATIONS_PAGE_SIZE,
+    load_scout_cache_page, load_web_cache_page, open_cache_connection, ScoutCachePage, WebCachePage,
 };
 use crate::domain::AdjutantConfig;
 use crate::error::AdjutantConfigError;
-use crate::metrics::{query_daily, query_summary, query_timeline, session_id, MetricsStore};
+use crate::metrics::{
+    list_evaluations_page, query_daily, query_summary, query_timeline, session_id, EvaluationsPage,
+    MetricsStore, EVALUATIONS_PAGE_SIZE,
+};
+
+/// Shared UI page size for scout/web cache inspect (same default as evaluations).
+const CACHE_UI_PAGE_SIZE: u32 = EVALUATIONS_PAGE_SIZE;
 
 #[derive(Clone)]
 pub struct ConfigServerState {
@@ -119,10 +124,12 @@ async fn get_evaluations(
     State(state): State<ConfigServerState>,
     Query(query): Query<EvaluationsQuery>,
 ) -> Result<Json<EvaluationsPage>, CacheApiError> {
-    let (project_root, conn) = open_workspace_cache(&state).map_err(CacheApiError::from)?;
-    let mut page = list_evaluations_page(&conn, query.page, EVALUATIONS_PAGE_SIZE)
+    let metrics = state
+        .metrics
+        .lock()
+        .map_err(|_| CacheApiError::from("metrics store lock poisoned".to_string()))?;
+    let page = list_evaluations_page(metrics.connection(), query.page, EVALUATIONS_PAGE_SIZE)
         .map_err(CacheApiError::from)?;
-    page.project_root = project_root.display().to_string();
     Ok(Json(page))
 }
 
@@ -141,7 +148,7 @@ async fn get_scout_cache(
     Query(query): Query<CachePageQuery>,
 ) -> Result<Json<ScoutCachePage>, CacheApiError> {
     let (project_root, conn) = open_workspace_cache(&state).map_err(CacheApiError::from)?;
-    let page = load_scout_cache_page(&conn, &project_root, query.page, EVALUATIONS_PAGE_SIZE)
+    let page = load_scout_cache_page(&conn, &project_root, query.page, CACHE_UI_PAGE_SIZE)
         .map_err(CacheApiError::from)?;
     Ok(Json(page))
 }
@@ -157,7 +164,7 @@ async fn get_web_cache(
         &project_root,
         ttl_seconds,
         query.page,
-        EVALUATIONS_PAGE_SIZE,
+        CACHE_UI_PAGE_SIZE,
     )
     .map_err(CacheApiError::from)?;
     Ok(Json(page))

@@ -7,7 +7,8 @@ use std::time::Duration;
 mod common;
 
 use common::{open_cache_manager, unique_temp_project, write_demo_cargo_manifest};
-use rusqlite::{params, Connection};
+use mcp_adjutant::metrics::MetricsStore;
+use rusqlite::params;
 
 fn init_git_repo(project_root: &Path) {
     Command::new("git")
@@ -314,13 +315,19 @@ fn git_tracked_dependency_change_invalidates_cache() {
 
 #[test]
 fn store_evaluation_allows_duplicate_scores_in_same_second() {
-    let project_root = unique_temp_project("eval-dup");
-    fs::create_dir_all(&project_root).expect("create project root");
-    write_demo_cargo_manifest(&project_root);
+    let dir = std::env::temp_dir().join(format!(
+        "eval-dup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("tmpdir");
+    let store = MetricsStore::open(&dir.join("metrics.db")).expect("open");
 
-    let mut cache = open_cache_manager(&project_root);
-
-    cache
+    store
         .store_evaluation(
             "Phase_1_Scout",
             "same task",
@@ -330,7 +337,7 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
             "exemplar",
         )
         .expect("first evaluation");
-    cache
+    store
         .store_evaluation(
             "Phase_1_Scout",
             "same task",
@@ -341,9 +348,8 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
         )
         .expect("second evaluation with same score");
 
-    let db_path = mcp_adjutant::cache::project_cache_db_path(&project_root).expect("cache db path");
-    let conn = Connection::open(&db_path).expect("open cache.db");
-    let count: i32 = conn
+    let count: i32 = store
+        .connection()
         .query_row(
             "SELECT COUNT(*) FROM agent_evaluations WHERE agent_name = ?1",
             params!["Phase_1_Scout"],
@@ -352,5 +358,5 @@ fn store_evaluation_allows_duplicate_scores_in_same_second() {
         .expect("count evaluations");
     assert_eq!(count, 2, "both evaluations should be persisted");
 
-    fs::remove_dir_all(&project_root).ok();
+    let _ = fs::remove_dir_all(&dir);
 }

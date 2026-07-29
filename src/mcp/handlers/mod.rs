@@ -173,17 +173,8 @@ async fn eval_after_agent_job(
     {
         return None;
     }
-    let cache_manager = Arc::new(Mutex::new(
-        open_cache_manager_near(&mcp_workspace_root()).ok()?,
-    ));
     let client = create_evaluator_llm_client(config).ok()?;
-    let agent = EvaluatorAgent::new(
-        client,
-        cache_manager,
-        target_agent,
-        original_task,
-        received_output,
-    );
+    let agent = EvaluatorAgent::new(client, target_agent, original_task, received_output);
     agent.evaluate_once().await.ok()
 }
 
@@ -636,16 +627,8 @@ pub async fn handle_evaluate_agent_performance(
         workspace_root,
         args.to_string(),
         move || async move {
-            let cache_start = mcp_workspace_root();
-            let cache_manager = Arc::new(Mutex::new(open_cache_manager_near(&cache_start)?));
             let client = create_evaluator_llm_client(&config)?;
-            let agent = EvaluatorAgent::new(
-                client,
-                cache_manager,
-                target_agent,
-                original_task,
-                received_output,
-            );
+            let agent = EvaluatorAgent::new(client, target_agent, original_task, received_output);
 
             let result = AgentLoopOrchestrator::run(
                 &agent,

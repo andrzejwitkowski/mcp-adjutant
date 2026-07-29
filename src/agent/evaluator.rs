@@ -1,11 +1,10 @@
-use std::sync::{Arc, Mutex};
-
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::traits::{AgentContext, AutonomousAgent};
-use crate::cache::{normalize_agent_name, ProjectCacheManager};
+use crate::cache::normalize_agent_name;
 use crate::llm::{LlmClient, LlmRequest, LlmToolSet};
+use crate::metrics;
 
 pub const EVALUATOR_SYSTEM_PROMPT: &str = r#"You are a Strict Quality Inspector (QA_AGENT). Your job is to evaluate other AI agents.
 You will receive:
@@ -133,7 +132,6 @@ struct EvaluationPayload {
 
 pub struct EvaluatorAgent<C: LlmClient> {
     client: C,
-    cache_manager: Arc<Mutex<ProjectCacheManager>>,
     target_agent: String,
     original_task: String,
     received_output: String,
@@ -142,14 +140,12 @@ pub struct EvaluatorAgent<C: LlmClient> {
 impl<C: LlmClient> EvaluatorAgent<C> {
     pub fn new(
         client: C,
-        cache_manager: Arc<Mutex<ProjectCacheManager>>,
         target_agent: impl Into<String>,
         original_task: impl Into<String>,
         received_output: impl Into<String>,
     ) -> Self {
         Self {
             client,
-            cache_manager,
             target_agent: target_agent.into(),
             original_task: original_task.into(),
             received_output: received_output.into(),
@@ -189,11 +185,7 @@ impl<C: LlmClient> EvaluatorAgent<C> {
         }
         normalize_desired_output(&mut evaluation)?;
 
-        let mut cache = self
-            .cache_manager
-            .lock()
-            .map_err(|_| "cache manager lock poisoned".to_string())?;
-        cache.store_evaluation(
+        metrics::store_evaluation(
             &self.target_agent,
             &self.original_task,
             agent_output,

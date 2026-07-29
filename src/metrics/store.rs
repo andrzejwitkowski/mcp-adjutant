@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::{params, Connection};
 
-use crate::cache::current_unix_timestamp;
+use crate::cache::{
+    current_unix_timestamp, hash_query_text, mcp_workspace_root, normalize_agent_name,
+};
 use crate::domain::AgentPhase;
 use crate::llm::LlmUsage;
 
@@ -60,6 +62,22 @@ const MIGRATIONS: &[&str] = &[
         utc_date TEXT NOT NULL
     );",
     "CREATE INDEX IF NOT EXISTS idx_premium_bridge_utc_date ON premium_bridge(utc_date);",
+    "CREATE TABLE IF NOT EXISTS agent_evaluations (
+        id TEXT PRIMARY KEY,
+        agent_name TEXT NOT NULL,
+        original_task TEXT NOT NULL,
+        agent_output TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        feedback_notes TEXT NOT NULL,
+        desired_output TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        project_root TEXT NOT NULL DEFAULT '',
+        request_uuid TEXT,
+        utc_date TEXT NOT NULL
+    );",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evaluations_utc_date ON agent_evaluations(utc_date);",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evaluations_created_at ON agent_evaluations(created_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evaluations_agent_score ON agent_evaluations(agent_name, score);",
 ];
 
 pub fn resolve_metrics_db_path(config_path: &Path) -> PathBuf {
@@ -283,6 +301,57 @@ impl MetricsStore {
             .map_err(|err| format!("record premium bridge: {err}"))?;
         Ok(())
     }
+
+    pub fn store_evaluation(
+        &self,
+        agent_name: &str,
+        original_task: &str,
+        agent_output: &str,
+        score: i32,
+        feedback_notes: &str,
+        desired_output: &str,
+    ) -> Result<(), String> {
+        let agent_name = normalize_agent_name(agent_name);
+        let created_at = current_unix_timestamp()?;
+        let utc_date = utc_date_from_secs(created_at);
+        let job = current_job_context();
+        let request_uuid = job.as_ref().and_then(|ctx| ctx.request_uuid.clone());
+        let project_root = job
+            .and_then(|ctx| ctx.workspace_root)
+            .unwrap_or_else(mcp_workspace_root)
+            .display()
+            .to_string();
+        let id = hash_query_text(&format!(
+            "{agent_name}\0{original_task}\0{agent_output}\0{feedback_notes}\0{desired_output}\0{created_at}\0{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos())
+                .unwrap_or(0)
+        ));
+
+        self.conn
+            .execute(
+                "INSERT INTO agent_evaluations (
+                    id, agent_name, original_task, agent_output, score, feedback_notes,
+                    desired_output, created_at, project_root, request_uuid, utc_date
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id,
+                    agent_name.as_str(),
+                    original_task,
+                    agent_output,
+                    score,
+                    feedback_notes,
+                    desired_output,
+                    created_at,
+                    project_root,
+                    request_uuid,
+                    utc_date,
+                ],
+            )
+            .map_err(|err| format!("failed to store agent evaluation: {err}"))?;
+        Ok(())
+    }
 }
 
 pub fn record_llm_call(phase: AgentPhase, model_name: &str, usage: LlmUsage) {
@@ -341,6 +410,28 @@ pub fn record_premium_bridge(
     ) {
         tracing::warn!("metrics premium bridge not recorded: {err}");
     }
+}
+
+pub fn store_evaluation(
+    agent_name: &str,
+    original_task: &str,
+    agent_output: &str,
+    score: i32,
+    feedback_notes: &str,
+    desired_output: &str,
+) -> Result<(), String> {
+    let store = metrics_store().ok_or_else(|| "metrics store not initialized".to_string())?;
+    let guard = store
+        .lock()
+        .map_err(|_| "metrics store lock poisoned".to_string())?;
+    guard.store_evaluation(
+        agent_name,
+        original_task,
+        agent_output,
+        score,
+        feedback_notes,
+        desired_output,
+    )
 }
 
 fn phases_for_mcp_tool(mcp_tool: &str) -> Vec<AgentPhase> {
