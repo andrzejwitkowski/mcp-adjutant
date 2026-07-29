@@ -29,7 +29,8 @@ pub struct EvaluationsPage {
     pub avg_score: Option<f64>,
 }
 
-const EVAL_SELECT: &str = "SELECT id, agent_name, original_task, agent_output, score, feedback_notes,
+const EVAL_SELECT: &str =
+    "SELECT id, agent_name, original_task, agent_output, score, feedback_notes,
         desired_output, created_at, project_root
  FROM agent_evaluations";
 
@@ -60,7 +61,9 @@ pub fn list_evaluations_page(
     };
 
     let mut statement = conn
-        .prepare(&format!("{EVAL_SELECT} ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"))
+        .prepare(&format!(
+            "{EVAL_SELECT} ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+        ))
         .map_err(|err| format!("failed to prepare evaluations page query: {err}"))?;
     let items = statement
         .query_map(params![page_size, offset], map_evaluation_row)

@@ -190,7 +190,8 @@ fn load_best_desired_output_exemplar_skips_below_seven() {
         .store_evaluation("BabysitterAgent", "t1", "o1", 6, "ok", "six exemplar")
         .expect("store");
 
-    let got = load_best_desired_output_exemplar(guard.connection(), "BabysitterAgent").expect("load");
+    let got =
+        load_best_desired_output_exemplar(guard.connection(), "BabysitterAgent").expect("load");
     assert!(got.is_none());
 }
 

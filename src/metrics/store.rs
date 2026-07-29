@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::{params, Connection};
 
-use crate::cache::{current_unix_timestamp, hash_query_text, mcp_workspace_root, normalize_agent_name};
+use crate::cache::{
+    current_unix_timestamp, hash_query_text, mcp_workspace_root, normalize_agent_name,
+};
 use crate::domain::AgentPhase;
 use crate::llm::LlmUsage;
 
