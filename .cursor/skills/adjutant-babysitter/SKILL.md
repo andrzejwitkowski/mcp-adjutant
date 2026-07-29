@@ -28,20 +28,21 @@ The MCP server auto-evaluates every adjutant agent job and appends QA score + de
    - CI Failure: Trigger `run_log_analyzer` on the raw log. If the failure is a straightforward compilation, lint, or type error, delegate the fix to a child `TriageAgent` loop via `invoke_child_triage`.
    - CI Green + Review Comments: When checks pass but inline review comments exist, treat CodeRabbit/bot line comments as `[FIXABLE_ACTION]` by default and delegate cited paths to `invoke_child_triage` before finalize.
    - Review Comment: Classify into:
-     * [FIXABLE_ACTION] -> (e.g., typos, missing null checks, explicit bug fixes). Delegate to `invoke_child_triage`.
-     * [ARCHITECTURAL_DISCUSSION] or [NITPICK_OR_IGNORE] -> Do NOT attempt to fix. Log these into your internal session memory as "skipped_tasks".
+     * [FIXABLE_ACTION] -> (e.g., typos, missing null checks, explicit bug fixes). Delegate to `invoke_child_triage`, then `github_reply_review_comment` on that comment's `id=…`.
+     * [ARCHITECTURAL_DISCUSSION] or [NITPICK_OR_IGNORE] -> Do NOT attempt to fix. Call `github_reply_review_comment` with the skip reason, and log as "skipped_tasks".
 3. Local Verification First: Never push code blindly. A child `TriageAgent` must report a successful local build/test execution (`compile` tool returning green) before you are allowed to call `git_push_changes`.
-4. Infinite Loop / Hard Cap Protection: You have a hard budget of iterations. If a specific file or bug fails local verification after multiple attempts within a child loop, or if your own iteration count nears the cap, abort fixing that specific issue, mark it as [FAILED_LIMIT] in your memory, and move to the next issue.
-5. Final Reporting: When all actionable issues are either fixed/pushed or classified as skipped/failed, compile your findings and call `github_post_final_report` to write a unified summary comment on the remote PR, then call `finalize_session` with `skipped_review_paths` listing any review comment file paths you did not triage ([ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] / [FAILED_LIMIT]).
+4. Infinite Loop / Hard Cap Protection: You have a hard budget of iterations. If a specific file or bug fails local verification after multiple attempts within a child loop, or if your own iteration count nears the cap, abort fixing that specific issue, mark it as [FAILED_LIMIT] in your memory, reply on the thread, and move to the next issue.
+5. Final Reporting: When every root review comment has an in-thread reply and all actionable issues are fixed/pushed or skipped/failed, call `github_post_final_report`, then `finalize_session` with `skipped_review_paths` listing any review comment file paths you did not triage ([ARCHITECTURAL_DISCUSSION] / [NITPICK_OR_IGNORE] / [FAILED_LIMIT]).
 
 ## Available Toolset Guidelines
 
-- `github_get_pr_state`: Fetches remote CI logs and PR line comments.
+- `github_get_pr_state`: Fetches remote CI logs and PR line comments (root threads include `id=…` for replies).
 - `run_log_analyzer`: Invokes the single-shot LogAnalyzerAgent to extract root causes.
 - `invoke_child_triage`: Runs a nested Scout/Triage loop on a specific target file and error context.
 - `git_push_changes`: Pushes the green local workspace state back to GitHub.
+- `github_reply_review_comment`: Replies in a review thread (`comment_id` + short body) after a fix or intentional skip. Required for every root comment before finalize.
 - `github_post_final_report`: Posts the structured markdown report of what was fixed, skipped, or failed.
-- `finalize_session`: Terminal tool to set is_finished = true. Requires `github_post_final_report` first, green CI (no failing/pending checks), and every review path from `github_get_pr_state` either triaged via `invoke_child_triage` or listed in `skipped_review_paths`.
+- `finalize_session`: Terminal tool to set is_finished = true. Requires `github_post_final_report` first, green CI (no failing/pending checks), every review path from `github_get_pr_state` either triaged via `invoke_child_triage` or listed in `skipped_review_paths`, and every root review comment id replied via `github_reply_review_comment`.
 
 ## Session memory
 
@@ -86,13 +87,15 @@ flowchart TD
   classify -->|CI fail| logAnalyze[run_log_analyzer]
   logAnalyze --> triageFix[invoke_child_triage]
   classify -->|FIXABLE_ACTION review| triageFix
-  classify -->|ARCH / NIT| skip[skipped_tasks]
+  classify -->|ARCH / NIT| replySkip[github_reply_review_comment]
   triageFix --> localGreen{compile green?}
   localGreen -->|yes| push[git_push_changes]
   localGreen -->|no retry cap| failedLimit[FAILED_LIMIT]
-  push --> getState
-  skip --> getState
-  failedLimit --> getState
+  push --> replyFixed[github_reply_review_comment]
+  replyFixed --> getState
+  replySkip --> getState
+  failedLimit --> replyFailed[github_reply_review_comment]
+  replyFailed --> getState
   getState -->|no blockers| report[github_post_final_report]
   report --> finalize[finalize_session + skipped_review_paths]
 ```
@@ -108,6 +111,7 @@ When `babysit_pr` MCP is available, prefer it for the full 20-turn BabysitterAge
 | `run_log_analyzer` | built-in | MCP `analyze_log` with `log_path: gh-run:<run_id>`; poll `query_job_status` |
 | `invoke_child_triage` | built-in | MCP `verify_and_triage` with `target_paths`; poll + `evaluate_agent_performance` |
 | `git_push_changes` | built-in | `git push` only after triage green |
+| `github_reply_review_comment` | built-in | `gh api` POST pulls comments with `in_reply_to` |
 | `github_post_final_report` | built-in | `gh pr comment <n> --body-file …` |
 | `finalize_session` | built-in | Mark session done; stop iterating |
 

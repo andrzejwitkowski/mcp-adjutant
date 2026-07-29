@@ -78,13 +78,14 @@ pub async fn handle_babysit_pr(
                 result.accumulated_data
             } else {
                 let state = gh_pr_state(pr_number)?;
-                let (report_posted, paths_seen, paths_handled) = agent.session_snapshot();
+                let snap = agent.session_snapshot();
                 format_babysitter_result(
                     &state,
-                    report_posted,
-                    &paths_seen,
-                    &paths_handled,
+                    snap.report_posted,
+                    &snap.paths_seen,
+                    &snap.paths_handled,
                     &[],
+                    snap.comments_replied,
                     pr_number,
                     result.iterations,
                     Some(&result.accumulated_data),
