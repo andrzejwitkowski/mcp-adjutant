@@ -39,13 +39,12 @@ Be ruthless. Give 10/10 only for perfect, surgical, dense execution."#;
 const PLANNER_RUBRIC: &str = r#"
 
 PLANNER RUBRIC (override generic rubric):
-- 9-10: Multi-step pipeline (create_file + patch_file SEARCH/REPLACE wiring + manifest/module entry when needed + generate_tests), every goal cites path:line, SEARCH anchors grounded in scouted files, paste-ready surgical hunks with zero ellipses/placeholders
-- 7-8: Correct pipeline structure with grounded SEARCH/REPLACE hunks and generate_tests step present; minor API/style issues only
-- 5-6: Schema-valid but single-step feature, missing generate_tests when code changes exist, ungrounded SEARCH blocks, logic dumped into REPLACE (>15 lines), or comment sketches
-- 1-4: Hallucinated modules, empty patches, ellipses/.../pseudo-code in patch_content, path-access failure with no recovery blueprint, or full-function / whole-file rewrites instead of hunks
-Hard caps: single-step feature blueprint max 6; no generate_tests on code changes max 6; any ellipsis or placeholder in patch_content max 4; whole-file dump in blueprint max 4.
-patch_file MUST use SEARCH/REPLACE hunks. generate_tests step MUST exist (final step) with non-empty goal citing the test file path:line.
-Score down if blueprint violates stated coordinator plan_kind or expectations. Prefer surgical hunks over pasting entire files."#;
+- 9-10: Diff-first pipeline — surgical patch_file SEARCH/REPLACE hunks (≥2 SEARCH context lines), goals cite path:line, final generate_tests; create_file only for tiny new files (≤15 lines). No whole-file listings in patch_content.
+- 7-8: Correct structure with grounded hunks + generate_tests; minor density issues only
+- 5-6: Schema-valid but missing generate_tests, one-line SEARCH, REPLACE dumps >15 lines, or oversized create_file
+- 1-4: Invalid/missing blueprint, ellipses/placeholders, hallucinated paths, or full-file dumps as plan content
+Hard caps: whole-file / large create_file body in blueprint max 4; missing path:line in goals max 8; no generate_tests on code changes max 6.
+Prefer patch diffs over create_file. Score down if coordinator surgical expectations are violated."#;
 
 const BLUEPRINT_EXECUTOR_RUBRIC: &str = r#"
 
@@ -100,8 +99,8 @@ Do not apply Triage build-log hard caps — babysitter evidence is PR/CI/review 
 const GIT_JANITOR_RUBRIC: &str = r#"
 
 GIT JANITOR RUBRIC — prepare_git_copy (override generic rubric):
-- 9-10: Valid JSON with commit_message, pr_title, pr_body, changelog_entry, branch_status, action_required, commit_allowed, suggested_branch_name, current_branch; commit_allowed false when on default/mismatched branch
-- 5-7: Missing branch gate fields or invents ticket not in scout context
+- 9-10: Dense JSON with commit_message, pr_title, pr_body, changelog_entry, branch_status, action_required, commit_allowed, suggested_branch_name, current_branch; NO conventions/suggested_adjutant_toml unless persisted_adjutant_toml is set; commit_allowed false on default/mismatched branch; ticket in commit_message and pr_title when ticket_id set; Testing grounded or conditional (no unverified "CI passed")
+- 5-7: Missing branch gate fields, invents ticket not in scout context, OR dumps conventions/toml when nothing persisted
 - 1-4: Not JSON / claims commit_allowed true on main/master
 Do NOT require create_git_branch-only fields (branch/status/previous) as the primary contract.
 "#;
@@ -391,7 +390,7 @@ mod tests {
     fn planner_rubric_appended_for_planner_agent() {
         let rubric = agent_evaluation_rubric("PlannerAgent", "", "").expect("rubric");
         assert!(rubric.contains("PLANNER RUBRIC"));
-        assert!(rubric.contains("ellipsis"));
+        assert!(rubric.contains("Diff-first"));
         assert!(rubric.contains("generate_tests"));
     }
 

@@ -29,16 +29,29 @@ impl AgentLoopOrchestrator {
         Ok(context)
     }
 
-    /// Continue an in-flight loop (e.g. planner JSON fix rounds) without resetting context.
+    /// Continue an in-flight loop without resetting context.
+    /// When `soft_finalize` is false (planner emit + JSON fix rounds), keep observations so
+    /// rejected `emit_blueprint` payloads survive for the next cheap-model fix pass.
     pub async fn resume(
+        agent: &impl AutonomousAgent,
+        context: AgentContext,
+        extra_iters: u32,
+    ) -> Result<AgentContext, String> {
+        Self::resume_with_finalize(agent, context, extra_iters, true).await
+    }
+
+    pub async fn resume_with_finalize(
         agent: &impl AutonomousAgent,
         mut context: AgentContext,
         extra_iters: u32,
+        soft_finalize: bool,
     ) -> Result<AgentContext, String> {
         context.is_finished = false;
         context.max_iterations = context.iterations.saturating_add(extra_iters);
         Self::run_loop(agent, &mut context).await?;
-        Self::apply_iteration_cap(agent, &mut context);
+        if soft_finalize {
+            Self::apply_iteration_cap(agent, &mut context);
+        }
         Ok(context)
     }
 
@@ -77,7 +90,7 @@ impl AgentLoopOrchestrator {
         Ok(())
     }
 
-    fn apply_iteration_cap(agent: &impl AutonomousAgent, context: &mut AgentContext) {
+    pub(crate) fn apply_iteration_cap(agent: &impl AutonomousAgent, context: &mut AgentContext) {
         // ponytail: hard stop — densify observations into a soft-finalize report when capped
         if context.is_finished {
             return;
@@ -178,6 +191,15 @@ pub fn build_tool_loop_message(context: &AgentContext) -> String {
     }
 }
 
+fn is_planner_draft_soft_reject(tool_name: &str) -> bool {
+    tool_name == "emit_blueprint"
+        || tool_name == "blueprint_begin"
+        || tool_name == "blueprint_add_patch"
+        || tool_name == "blueprint_add_create"
+        || tool_name == "blueprint_add_tests"
+        || tool_name == "blueprint_finalize"
+}
+
 pub fn run_single_tool_turn<C: LlmClient>(
     client: &C,
     tools: &crate::llm::LlmToolSet,
@@ -231,8 +253,8 @@ pub fn run_single_tool_turn<C: LlmClient>(
 
     let invocation = match tools.invoke(&tool_call.name, &tool_call.arguments) {
         Ok(result) => result,
-        // ponytail: emit_blueprint validates in invoke — rejection is a retry nudge, not a job killer
-        Err(err) if tool_call.name == "emit_blueprint" => {
+        // ponytail: blueprint_* / emit_blueprint validate in invoke — rejection is a retry nudge, not a job killer
+        Err(err) if is_planner_draft_soft_reject(&tool_call.name) => {
             let thought = model_turn.content.unwrap_or_default();
             let step = format!(
                 "Thought:\n{thought}\nTool: {}({})\nObservation:\n{err}\n",
@@ -484,7 +506,37 @@ mod tests {
 
         assert!(!result.agent_completed);
         assert_eq!(result.iterations, 2);
-        assert!(result.accumulated_data.contains("scout notes"));
+        // default resume soft-finalizes incomplete loops
+        assert!(
+            result.accumulated_data.contains("soft-finalize")
+                || result.accumulated_data.contains("scout notes")
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_without_soft_finalize_keeps_observations() {
+        let agent = CountingAgent { max_process: 99 };
+        let context = AgentContext {
+            input_prompt: "plan".to_string(),
+            accumulated_data: "Tool: emit_blueprint({\"blueprint\":\"{bad}\"})\nObservation:\nrejected\n"
+                .to_string(),
+            iterations: 1,
+            max_iterations: 1,
+            is_finished: true,
+            agent_completed: false,
+            touched_files: Vec::new(),
+            last_tool_call: None,
+        };
+
+        let result =
+            AgentLoopOrchestrator::resume_with_finalize(&agent, context, 1, false)
+                .await
+                .expect("resume");
+
+        assert!(!result.agent_completed);
+        assert_eq!(result.iterations, 2);
+        assert!(result.accumulated_data.contains("emit_blueprint"));
+        assert!(!result.accumulated_data.contains("soft-finalize"));
     }
 
     #[test]

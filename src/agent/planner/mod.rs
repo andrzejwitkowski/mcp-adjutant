@@ -21,9 +21,11 @@ pub use tools::{
 };
 
 pub const PLANNER_SCOUT_MAX_ITERATIONS: u32 = 12;
-pub const PLANNER_EMIT_MAX_ITERATIONS: u32 = 3;
+/// begin + ~6 patches + tests + finalize (+ retries)
+pub const PLANNER_EMIT_MAX_ITERATIONS: u32 = 12;
+/// Soft nudges to continue draft tools when finalize never ran.
 pub const PLANNER_JSON_FIX_ITERATIONS: u32 = 4;
-pub const PLANNER_JSON_FIX_ROUNDS: u32 = 2;
+pub const PLANNER_JSON_FIX_ROUNDS: u32 = 1;
 
 pub const PLANNER_MAX_ITERATIONS: u32 = PLANNER_SCOUT_MAX_ITERATIONS + PLANNER_EMIT_MAX_ITERATIONS;
 
@@ -35,68 +37,27 @@ READ-ONLY tools:
 Strategy:
 1. Use ripgrep/ast_calls to locate files and line numbers relevant to the feature or bug.
 2. read_file every file you expect to patch or that defines wiring (package entry, manifest, target module).
-3. Use extract_search_anchor(file, start, end) to copy verbatim SEARCH anchors for future patch_file hunks.
+3. Use extract_search_anchor(file, start, end) to copy verbatim SEARCH anchors for future patch hunks (≥2 lines).
 4. Scout 3–8 turns. One tool per turn. Do not output Blueprint JSON in chat."#;
 
-pub const PLANNER_EMIT_SYSTEM_PROMPT: &str = r#"You are the Lead Software Architect (PLANNER emit phase). Synthesize a strict Blueprint JSON pipeline from scout evidence below.
+pub const PLANNER_EMIT_SYSTEM_PROMPT: &str = r#"You are the Lead Software Architect (PLANNER emit phase). Build a Blueprint by calling draft tools — Rust assembles valid JSON. Never invent a Blueprint JSON string.
 
-Downstream sub-agents execute your pipeline. Triage runs automatically inside Builder/Transpiler — never put TriageAgent in pipeline steps.
+Downstream: BuilderAgent applies steps. Triage runs automatically — never put TriageAgent in the pipeline.
 
-EMIT tools:
-- read_file (only if a target_file was missed during scout)
-- emit_blueprint (terminal)
-
-Agent routing (mandatory):
-| action | agent |
-| patch_file, create_file, generate_tests | BuilderAgent |
-| sync_types | TranspilerAgent |
-
-Blueprint JSON schema:
-{
-  "task_id": "kebab-case-id",
-  "architecture_summary": "brief approach",
-  "pipeline": [{
-    "step": 1,
-    "agent": "BuilderAgent" | "TranspilerAgent",
-    "action": "patch_file" | "create_file" | "sync_types" | "generate_tests",
-    "target_file": "repo-relative path",
-    "goal": "directive citing path:line evidence from scout tools",
-    "patch_content": "see rules 2 & 10"
-  }]
-}
-
-patch_content format (critical):
-- create_file → full file contents (new file, no anchors).
-- patch_file on EXISTING files → one or more SEARCH/REPLACE hunks (never a full function rewrite):
-<<<<<<< SEARCH
-    let app = Router::new()
-        .route("/api/config", get(get_config).put(put_config))
-=======
-    let limit = crate::config_rate_limit::RateLimitState::new(60);
-    let api = Router::new()
-        .route("/api/config", get(get_config).put(put_config))
->>>>>>> REPLACE
-- sync_types / generate_tests → empty string "" (BuilderAgent writes tests; goal must cite tests/foo.rs:1).
+EMIT tools (exactly one per turn):
+- read_file — only if a target was missed during scout
+- blueprint_begin(task_id, architecture_summary) — once; task_id must be kebab-case with a hyphen
+- blueprint_add_patch(target_file, goal, search, replace) — diffs only; pass RAW search/replace text (no <<<<<<< markers); search ≥2 non-empty lines copied from scout; replace ≤15 extra lines
+- blueprint_add_create(target_file, goal, contents) — ONLY tiny new files ≤15 lines; prefer patch
+- blueprint_add_tests(target_file, goal) — usually last; goal must cite path:line
+- blueprint_finalize() — terminal; Rust validates and returns JSON
 
 Hard rules:
-1. Emit only via emit_blueprint — no prose outside JSON.
-2. patch_content for patch_file MUST be paste-ready SEARCH/REPLACE hunks (format above). create_file takes full contents. No comment sketches, no "...", no placeholders — emit_blueprint rejects ellipses.
-3. You MUST read_file every target_file before emit_blueprint (scout evidence counts; re-read if unsure).
-4. Every goal must cite path:line evidence (e.g. "Split router at config_server.rs:35"), including generate_tests goals (e.g. "tests/rate_limit_test.rs:1").
-5. sync_types and generate_tests: patch_content must be "".
-6. target_file must exist on disk (except create_file).
-7. Any patch_file/create_file work MUST end with a generate_tests step (non-optional final step).
-8. create_file for a new source module MUST include patch_file on the package entry (lib.rs, mod.rs, __init__.py, index.ts, …).
-9. When adding dependencies, patch the project manifest (Cargo.toml, package.json, go.mod, pyproject.toml, …) with a SEARCH/REPLACE hunk anchored to a real manifest line.
-10. SURGICAL: every SEARCH anchor MUST be copied verbatim from scout read_file/extract_search_anchor output. emit_blueprint rejects any SEARCH block not found on disk, any REPLACE identical to SEARCH, and any REPLACE that adds >15 lines over its SEARCH. New logic goes in a create_file step; patch_file is wiring/registration only (module declares, route registration, manifest line, struct field).
-
-Feature pipeline template (follow this order when applicable):
-1. create_file for new module (where new logic lives) OR patch_file on existing files (wiring hunks only)
-2. patch_file package entry (1-line module declare hunk) when adding a module
-3. patch_file dependency manifest (single-line hunk) when adding deps or features
-4. generate_tests as the final step
-
-Strategy: Call emit_blueprint with complete JSON. One tool per turn."#;
+1. Sequence: begin → one or more add_patch (and rare add_create) → add_tests → finalize.
+2. Goals must cite path:line. architecture_summary should too.
+3. Do NOT paste full files into create/patch. Plans are SEARCH/REPLACE diffs.
+4. Do NOT write Blueprint JSON in chat or as a single string arg.
+5. One tool per turn."#;
 
 pub const PLANNER_SYSTEM_PROMPT: &str = PLANNER_EMIT_SYSTEM_PROMPT;
 
@@ -143,7 +104,7 @@ pub fn format_emit_prompt(args: &PlanBlueprintArgs, scout: &AgentContext) -> Str
     let constraints = CoordinatorConstraints::from_args(args);
     if constraints.surgical_patches {
         prompt.push_str(
-            "\nemit_blueprint enforces surgical SEARCH/REPLACE hunks: every SEARCH anchor must be copied verbatim from scout evidence (grounding), REPLACE must differ from SEARCH, and REPLACE may add at most 15 lines over SEARCH.\n",
+            "\nSurgical mode: use blueprint_add_patch with verbatim ≥2-line search from scout; replace ≤15 extra lines; prefer patch over create.\n",
         );
     }
     prompt.push_str("\n## Scout evidence (read_file / extract_search_anchor observations)\n\n");
@@ -214,8 +175,14 @@ pub async fn run_planner_hybrid<C: LlmClient>(
         touched_files: scout_ctx.touched_files,
         last_tool_call: None,
     };
-    emit_ctx =
-        AgentLoopOrchestrator::resume(&emit_agent, emit_ctx, PLANNER_EMIT_MAX_ITERATIONS).await?;
+    // ponytail: no soft-finalize between emit/fix — soft-finalize wiped rejected JSON (11-turn VALIDATION FAILED)
+    emit_ctx = AgentLoopOrchestrator::resume_with_finalize(
+        &emit_agent,
+        emit_ctx,
+        PLANNER_EMIT_MAX_ITERATIONS,
+        false,
+    )
+    .await?;
 
     for _ in 0..PLANNER_JSON_FIX_ROUNDS {
         if emit_ctx.agent_completed {
@@ -227,11 +194,27 @@ pub async fn run_planner_hybrid<C: LlmClient>(
         };
         emit_ctx.is_finished = false;
         emit_ctx.input_prompt.push_str(&format!(
-            "\n\nBLUEPRINT JSON FIX REQUIRED: {reason}\nCall emit_blueprint with valid Blueprint JSON (schema in system prompt). Do not paste JSON in chat prose."
+            "\n\nBLUEPRINT DRAFT FIX REQUIRED: {reason}\n\
+             Continue with blueprint_* tools (begin → add_patch/add_create/add_tests → finalize). \
+             Do not paste Blueprint JSON in chat."
         ));
-        emit_ctx =
-            AgentLoopOrchestrator::resume(&emit_agent, emit_ctx, PLANNER_JSON_FIX_ITERATIONS)
-                .await?;
+        emit_ctx = AgentLoopOrchestrator::resume_with_finalize(
+            &emit_agent,
+            emit_ctx,
+            PLANNER_JSON_FIX_ITERATIONS,
+            false,
+        )
+        .await?;
+    }
+
+    if !emit_ctx.agent_completed {
+        // ponytail: skip soft-finalize when a valid JSON body already sits in accumulated_data
+        if extract_json_object(&emit_ctx.accumulated_data)
+            .and_then(|j| validate_blueprint(j).ok())
+            .is_none()
+        {
+            AgentLoopOrchestrator::apply_iteration_cap(&emit_agent, &mut emit_ctx);
+        }
     }
 
     Ok(emit_ctx)
@@ -241,21 +224,52 @@ pub fn planner_json_fixup_reason(
     accumulated_data: &str,
     coordinator: &CoordinatorConstraints,
 ) -> Option<String> {
-    let Some(json) = extract_json_object(accumulated_data) else {
-        return Some(
-            "output contains no Blueprint JSON object — call emit_blueprint with the full schema"
-                .to_string(),
-        );
-    };
-    match validate_blueprint(json) {
-        Ok(bp) => match validate_blueprint_coordinator(&bp, coordinator) {
-            Ok(()) => Some(
-                "valid Blueprint JSON found in observations but emit_blueprint was not called — call emit_blueprint with it".to_string(),
-            ),
-            Err(err) => Some(err),
-        },
-        Err(err) => Some(err),
+    // Terminal finalize replaces accumulated_data with pretty JSON.
+    if let Some(json) = extract_json_object(accumulated_data) {
+        if let Ok(bp) = validate_blueprint(json) {
+            return match validate_blueprint_coordinator(&bp, coordinator) {
+                Ok(()) => None, // already valid complete blueprint
+                Err(err) => Some(err),
+            };
+        }
     }
+    if accumulated_data.contains("Tool: blueprint_finalize")
+        || accumulated_data.contains("draft begun")
+        || accumulated_data.contains("queued step")
+    {
+        return Some(
+            "draft incomplete — finish with blueprint_add_* as needed then blueprint_finalize"
+                .into(),
+        );
+    }
+    Some(
+        "no Blueprint draft yet — call blueprint_begin, then add_patch/add_tests, then blueprint_finalize"
+            .into(),
+    )
+}
+
+/// Prefer finalized JSON body (terminal output) over legacy emit_blueprint string arg.
+pub fn last_emit_blueprint_arg(accumulated: &str) -> Option<String> {
+    if let Ok(bp) = validate_blueprint(accumulated.trim()) {
+        return serde_json::to_string(&bp).ok();
+    }
+    if let Some(json) = extract_json_object(accumulated) {
+        if validate_blueprint(json).is_ok() {
+            return Some(json.to_string());
+        }
+    }
+    // legacy string-blob emit (tests / old transcripts)
+    let marker = "Tool: emit_blueprint(";
+    let start = accumulated.rfind(marker)?;
+    let after = &accumulated[start + marker.len()..];
+    let end = after.find(")\nObservation:")?;
+    let args_raw = after[..end].trim();
+    let value: Value = serde_json::from_str(args_raw).ok()?;
+    value
+        .get("blueprint")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
 }
 
 #[derive(Clone, Copy)]
@@ -318,7 +332,7 @@ fn reject_incomplete_blueprint(context: &mut AgentContext, reason: &str) {
     context.agent_completed = false;
     context.is_finished = false;
     context.input_prompt.push_str(&format!(
-        "\nBlueprint rejected after emit_blueprint: {reason}\nRead every target_file with read_file, fix the JSON, call emit_blueprint again."
+        "\nBlueprint rejected after finalize: {reason}\nFix with blueprint_add_* then blueprint_finalize again."
     ));
 }
 
@@ -329,20 +343,8 @@ fn nudge_prose_json(context: &mut AgentContext) {
     if !thought.contains('{') {
         return;
     }
-    let nudge = match extract_json_object(thought)
-        .map(validate_blueprint)
-        .transpose()
-    {
-        Ok(Some(_)) => {
-            "You pasted valid Blueprint JSON in chat — call emit_blueprint with that JSON instead."
-        }
-        Ok(None) => return,
-        Err(err) => {
-            return context.input_prompt.push_str(&format!(
-                "\nBlueprint JSON in chat is invalid ({err}) — fix and call emit_blueprint."
-            ));
-        }
-    };
+    let nudge =
+        "Do not paste Blueprint JSON in chat — call blueprint_begin / add_patch / add_tests / blueprint_finalize.";
     if !context.input_prompt.contains(nudge) {
         context.input_prompt.push_str(&format!("\n{nudge}\n"));
     }
@@ -397,10 +399,10 @@ impl<C: LlmClient> AutonomousAgent for PlannerHybridAgent<C> {
                 "\nContinue scouting. Call exactly one tool: detect_language, ripgrep, ast_calls, read_file, or extract_search_anchor."
             }
             PlannerLoopPhase::Emit if context.iterations >= context.max_iterations.saturating_sub(1) => {
-                "\nFinal emit turn: read_file any unread target_file, then emit_blueprint with complete JSON."
+                "\nFinal emit turn: blueprint_finalize if draft is ready (begin + patches + tests)."
             }
             PlannerLoopPhase::Emit => {
-                "\nContinue. Call exactly one tool: read_file or emit_blueprint."
+                "\nContinue. Call exactly one tool: read_file, blueprint_begin, blueprint_add_patch, blueprint_add_create, blueprint_add_tests, or blueprint_finalize."
             }
         };
         context.input_prompt.push_str(nudge);
@@ -411,6 +413,24 @@ impl<C: LlmClient> AutonomousAgent for PlannerHybridAgent<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_emit_blueprint_arg_prefers_finalized_json() {
+        let golden = include_str!("../../../tests/fixtures/golden-rate-limit-blueprint.json");
+        let raw = last_emit_blueprint_arg(golden).expect("payload");
+        assert!(raw.contains("task_id"));
+        assert!(planner_json_fixup_reason(golden, &CoordinatorConstraints::none()).is_none());
+    }
+
+    #[test]
+    fn last_emit_blueprint_arg_legacy_emit_string() {
+        let hist = r#"Tool: emit_blueprint({"blueprint":"{ \"task_id\": \"bad\" }"})
+Observation:
+Blueprint rejected
+"#;
+        let raw = last_emit_blueprint_arg(hist).expect("payload");
+        assert!(raw.contains("task_id"));
+    }
 
     #[test]
     fn format_scout_prompt_includes_kind_and_expectation() {
@@ -449,18 +469,27 @@ mod tests {
         assert!(prompt.contains("emit phase"));
         assert!(prompt.contains("Example feature pipeline shape"));
         assert!(prompt.contains("Scout evidence"));
-        assert!(prompt.contains("emit_blueprint"));
-        assert!(prompt.contains("SEARCH/REPLACE"));
+        assert!(prompt.contains("blueprint_finalize"));
+        assert!(prompt.contains("blueprint_add_patch"));
+        assert!(!prompt.contains("emit_blueprint"));
     }
 
     #[test]
     fn emit_system_prompt_documents_emit_tools() {
-        for tool in ["read_file", "emit_blueprint"] {
+        for tool in [
+            "read_file",
+            "blueprint_begin",
+            "blueprint_add_patch",
+            "blueprint_add_create",
+            "blueprint_add_tests",
+            "blueprint_finalize",
+        ] {
             assert!(
                 PLANNER_EMIT_SYSTEM_PROMPT.contains(tool),
                 "emit prompt missing {tool}"
             );
         }
+        assert!(!PLANNER_EMIT_SYSTEM_PROMPT.contains("emit_blueprint"));
     }
 
     #[test]
@@ -513,10 +542,10 @@ mod tests {
     }
 
     #[test]
-    fn planner_json_fixup_reason_flags_missing_json() {
+    fn planner_json_fixup_reason_flags_missing_draft() {
         let none = CoordinatorConstraints::none();
         let reason = planner_json_fixup_reason("Thought:\njust prose\n", &none).expect("reason");
-        assert!(reason.contains("no Blueprint JSON"));
+        assert!(reason.contains("blueprint_begin"), "{reason}");
     }
 
     #[test]
@@ -527,15 +556,22 @@ mod tests {
             &none,
         )
         .expect("reason");
-        assert!(reason.contains("pipeline"));
+        assert!(reason.contains("pipeline") || reason.contains("blueprint_begin"), "{reason}");
     }
 
     #[test]
-    fn planner_json_fixup_reason_flags_unemitted_valid_json() {
+    fn planner_json_fixup_reason_accepts_finalized_valid_json() {
         let none = CoordinatorConstraints::none();
         let golden = include_str!("../../../tests/fixtures/golden-rate-limit-blueprint.json");
-        let reason = planner_json_fixup_reason(golden, &none).expect("reason");
-        assert!(reason.contains("emit_blueprint"));
+        assert!(planner_json_fixup_reason(golden, &none).is_none());
+    }
+
+    #[test]
+    fn planner_json_fixup_reason_flags_incomplete_draft() {
+        let none = CoordinatorConstraints::none();
+        let hist = "Observation:\ndraft begun task_id=fix-x\nqueued step 1: patch_file\n";
+        let reason = planner_json_fixup_reason(hist, &none).expect("reason");
+        assert!(reason.contains("blueprint_finalize"), "{reason}");
     }
 
     #[test]
