@@ -518,8 +518,9 @@ mod tests {
         let agent = CountingAgent { max_process: 99 };
         let context = AgentContext {
             input_prompt: "plan".to_string(),
-            accumulated_data: "Tool: emit_blueprint({\"blueprint\":\"{bad}\"})\nObservation:\nrejected\n"
-                .to_string(),
+            accumulated_data:
+                "Tool: emit_blueprint({\"blueprint\":\"{bad}\"})\nObservation:\nrejected\n"
+                    .to_string(),
             iterations: 1,
             max_iterations: 1,
             is_finished: true,
@@ -528,10 +529,9 @@ mod tests {
             last_tool_call: None,
         };
 
-        let result =
-            AgentLoopOrchestrator::resume_with_finalize(&agent, context, 1, false)
-                .await
-                .expect("resume");
+        let result = AgentLoopOrchestrator::resume_with_finalize(&agent, context, 1, false)
+            .await
+            .expect("resume");
 
         assert!(!result.agent_completed);
         assert_eq!(result.iterations, 2);
