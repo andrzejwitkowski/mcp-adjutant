@@ -227,10 +227,7 @@ pub fn planner_json_fixup_reason(
     // Terminal finalize replaces accumulated_data with pretty JSON.
     if let Some(json) = extract_json_object(accumulated_data) {
         if let Ok(bp) = validate_blueprint(json) {
-            return match validate_blueprint_coordinator(&bp, coordinator) {
-                Ok(()) => None, // already valid complete blueprint
-                Err(err) => Some(err),
-            };
+            return validate_blueprint_coordinator(&bp, coordinator).err();
         }
     }
     if accumulated_data.contains("Tool: blueprint_finalize")
