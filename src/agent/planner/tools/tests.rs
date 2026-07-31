@@ -900,4 +900,3 @@ fn validate_accepts_generate_tests_target_in_tests() {
         validate_blueprint(raw).err()
     );
 }
-

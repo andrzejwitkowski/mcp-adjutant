@@ -556,7 +556,10 @@ Blueprint rejected
             &none,
         )
         .expect("reason");
-        assert!(reason.contains("pipeline") || reason.contains("blueprint_begin"), "{reason}");
+        assert!(
+            reason.contains("pipeline") || reason.contains("blueprint_begin"),
+            "{reason}"
+        );
     }
 
     #[test]

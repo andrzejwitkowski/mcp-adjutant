@@ -132,7 +132,11 @@ pub fn build_emit_json(
 }
 
 fn first_line_commit_summary(commit_message: &str) -> &str {
-    let line = commit_message.lines().next().unwrap_or(commit_message).trim();
+    let line = commit_message
+        .lines()
+        .next()
+        .unwrap_or(commit_message)
+        .trim();
     if let Some(rest) = line.strip_prefix('[') {
         if let Some((_, after)) = rest.split_once(']') {
             let after = after.trim().trim_start_matches(':').trim();

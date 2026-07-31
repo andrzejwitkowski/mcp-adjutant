@@ -86,9 +86,8 @@ impl BlueprintDraft {
             return Err("replace contains ellipsis/placeholder — paste real code".into());
         }
         let abs = resolve_workspace_path(&target_file);
-        let body = std::fs::read_to_string(&abs).map_err(|err| {
-            format!("cannot read {target_file} to ground search: {err}")
-        })?;
+        let body = std::fs::read_to_string(&abs)
+            .map_err(|err| format!("cannot read {target_file} to ground search: {err}"))?;
         let file = body.replace("\r\n", "\n");
         if !file.contains(&search) {
             let preview: String = search.chars().take(60).collect();
@@ -154,7 +153,9 @@ impl BlueprintDraft {
     pub fn add_tests(&mut self, target_file: String, goal: String) -> Result<String, String> {
         self.require_begun()?;
         if path_line_from_goal(&goal).is_none() {
-            return Err("goal must cite path:line (e.g. tests/foo_test.rs:1 or src/foo.rs:10)".into());
+            return Err(
+                "goal must cite path:line (e.g. tests/foo_test.rs:1 or src/foo.rs:10)".into(),
+            );
         }
         self.steps.push(DraftStep {
             action: "generate_tests",
@@ -174,7 +175,9 @@ impl BlueprintDraft {
             return Err("call blueprint_begin first".into());
         }
         if self.steps.is_empty() {
-            return Err("pipeline empty — call blueprint_add_patch / add_create / add_tests".into());
+            return Err(
+                "pipeline empty — call blueprint_add_patch / add_create / add_tests".into(),
+            );
         }
         let pipeline: Vec<Value> = self
             .steps
@@ -198,8 +201,8 @@ impl BlueprintDraft {
         });
         let raw = serde_json::to_string(&blueprint)
             .map_err(|err| format!("serialize blueprint: {err}"))?;
-        let validated = validate_blueprint(&raw)
-            .map_err(|err| format!("Blueprint rejected: {err}"))?;
+        let validated =
+            validate_blueprint(&raw).map_err(|err| format!("Blueprint rejected: {err}"))?;
         validate_blueprint_coordinator(&validated, coordinator)
             .map_err(|err| format!("Blueprint rejected: {err}"))?;
         serde_json::to_string_pretty(&validated)
@@ -310,11 +313,7 @@ impl DraftTool {
                 "Queue generate_tests (usually final step). Builder writes the tests.",
             )
             .string_param("target_file", "Intended test file path", true)
-            .string_param(
-                "goal",
-                "Must cite path:line for source or test file",
-                true,
-            ),
+            .string_param("goal", "Must cite path:line for source or test file", true),
             draft,
             coordinator,
             kind: DraftToolKind::AddTests,
@@ -396,9 +395,18 @@ pub fn draft_emit_tools(coordinator: CoordinatorConstraints) -> crate::llm::LlmT
     crate::llm::LlmToolSet::new()
         .register(crate::agent::read_only_tools::ReadFileTool::new())
         .register(DraftTool::begin(Arc::clone(&draft), coordinator.clone()))
-        .register(DraftTool::add_patch(Arc::clone(&draft), coordinator.clone()))
-        .register(DraftTool::add_create(Arc::clone(&draft), coordinator.clone()))
-        .register(DraftTool::add_tests(Arc::clone(&draft), coordinator.clone()))
+        .register(DraftTool::add_patch(
+            Arc::clone(&draft),
+            coordinator.clone(),
+        ))
+        .register(DraftTool::add_create(
+            Arc::clone(&draft),
+            coordinator.clone(),
+        ))
+        .register(DraftTool::add_tests(
+            Arc::clone(&draft),
+            coordinator.clone(),
+        ))
         .register(DraftTool::finalize(draft, coordinator))
 }
 
@@ -440,9 +448,15 @@ mod tests {
     #[test]
     fn add_create_rejects_oversize() {
         let mut d = BlueprintDraft::default();
-        d.begin("fix-emit-tools".into(), "cap create at validate.rs:1".into())
-            .unwrap();
-        let big = (0..20).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        d.begin(
+            "fix-emit-tools".into(),
+            "cap create at validate.rs:1".into(),
+        )
+        .unwrap();
+        let big = (0..20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let err = d
             .add_create(
                 "src/new_mod.rs".into(),

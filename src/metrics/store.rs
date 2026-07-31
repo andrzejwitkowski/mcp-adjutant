@@ -749,10 +749,13 @@ mod tests {
 
     #[tokio::test]
     async fn green_triage_with_bridge_counts_as_run() {
-        let dir = std::env::temp_dir().join(format!("metrics-triage-bridge-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("metrics-triage-bridge-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
-        let store = Arc::new(Mutex::new(MetricsStore::open(&dir.join("metrics.db")).expect("open")));
+        let store = Arc::new(Mutex::new(
+            MetricsStore::open(&dir.join("metrics.db")).expect("open"),
+        ));
         init("session-triage-bridge".to_string(), Arc::clone(&store));
 
         store
@@ -785,7 +788,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("metrics-exec-builder-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
-        let store = Arc::new(Mutex::new(MetricsStore::open(&dir.join("metrics.db")).expect("open")));
+        let store = Arc::new(Mutex::new(
+            MetricsStore::open(&dir.join("metrics.db")).expect("open"),
+        ));
         init("session-exec-builder".to_string(), Arc::clone(&store));
 
         with_job_context_async(
