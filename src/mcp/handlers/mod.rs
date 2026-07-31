@@ -27,13 +27,14 @@ use super::schemas::{
 use crate::agent::{
     analyze_log_at_path, create_git_branch, default_transformer_agent, extract_json_object,
     format_eval_job_appendix, format_scout_block, format_triage_success,
-    gather_conventions_and_diff, parse_plan_blueprint_args, run_git_janitor, run_planner_hybrid,
-    run_scout_with_cache, run_web_fetch_with_cache, triage_passed, validate_blueprint,
-    validate_blueprint_coordinator, validate_blueprint_grounding, with_auto_compact_async,
-    AgentContext, AgentEvalSummary, AgentLoopOrchestrator, AutoCompactGuard,
-    CoordinatorConstraints, EvaluatorAgent, GitJanitorAgent, ScoutAgent, ScoutCacheOutcome,
-    ScoutInputs, SystemBuildRunner, TriageAgent, WebCacheOutcome, WebFetcherAgent,
-    GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS, TRIAGE_SYSTEM_PROMPT,
+    gather_conventions_and_diff, last_emit_blueprint_arg, parse_plan_blueprint_args,
+    run_git_janitor, run_planner_hybrid, run_scout_with_cache, run_web_fetch_with_cache,
+    triage_passed, validate_blueprint, validate_blueprint_coordinator,
+    validate_blueprint_grounding, with_auto_compact_async, AgentContext, AgentEvalSummary,
+    AgentLoopOrchestrator, AutoCompactGuard, CoordinatorConstraints, EvaluatorAgent,
+    GitJanitorAgent, ScoutAgent, ScoutCacheOutcome, ScoutInputs, SystemBuildRunner, TriageAgent,
+    WebCacheOutcome, WebFetcherAgent, GIT_JANITOR_SYSTEM_PROMPT, TRANSFORMER_MAX_ITERATIONS,
+    TRIAGE_SYSTEM_PROMPT,
 };
 use crate::cache::{
     mcp_workspace_root, require_workspace_root_arg, resolve_workspace_path,
@@ -47,6 +48,7 @@ use crate::llm::{
     create_transformer_llm_client, create_triage_llm_client, create_web_fetcher_llm_client,
     preflight_phase, LlmClient,
 };
+use crate::metrics::{load_best_desired_output_exemplar, metrics_store};
 use crate::tools::LlmBuildDiscoverer;
 
 use builder_job::run_builder_green;
@@ -876,6 +878,16 @@ pub async fn handle_prepare_git_copy(
                     "\n\nMode update_conventions: call update_git_conventions with a patch, then emit_git_copy.",
                 );
             }
+            let exemplar = metrics_store().and_then(|store| {
+                let guard = store.lock().ok()?;
+                load_best_desired_output_exemplar(guard.connection(), "GitJanitorAgent")
+                    .ok()
+                    .flatten()
+            });
+            if let Some(exemplar) = exemplar {
+                prompt.push_str("\n\n## 10/10 output exemplar (match this dense JSON shape)\n");
+                prompt.push_str(&exemplar);
+            }
 
             let client = create_git_janitor_llm_client(&config)?;
             let agent = GitJanitorAgent::new(client, scout, persist_allowed, root);
@@ -943,7 +955,11 @@ fn final_blueprint_or_report(
     result: &AgentContext,
     coordinator: &CoordinatorConstraints,
 ) -> String {
-    if let Some(json) = extract_json_object(&result.accumulated_data) {
+    let from_emit = last_emit_blueprint_arg(&result.accumulated_data);
+    let json = from_emit
+        .as_deref()
+        .or_else(|| extract_json_object(&result.accumulated_data));
+    if let Some(json) = json {
         match validate_blueprint(json)
             .and_then(|bp| validate_blueprint_coordinator(&bp, coordinator).map(|_| bp))
             .and_then(|bp| validate_blueprint_grounding(&bp, &result.touched_files).map(|_| bp))

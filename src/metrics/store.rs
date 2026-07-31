@@ -258,10 +258,21 @@ impl MetricsStore {
                 |row| row.get(0),
             )
             .map_err(|err| format!("metered cache check: {err}"))?;
-        Ok(cache > 0)
+        if cache > 0 {
+            return Ok(true);
+        }
+        let bridge: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM premium_bridge WHERE request_uuid = ?1 AND agent_phase = ?2",
+                params![request_uuid, label],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("metered bridge check: {err}"))?;
+        Ok(bridge > 0)
     }
 
-    /// One row per job on `phases[0]` only — avoids double-count for multi-phase tools.
+    /// One row per job on the first metered phase (LLM/cache), else `phases[0]`.
     pub fn record_premium_bridge(
         &self,
         mcp_tool: &str,
@@ -272,13 +283,26 @@ impl MetricsStore {
         if premium_in_tokens == 0 && premium_out_tokens == 0 {
             return Ok(());
         }
-        let Some(phase) = phases_for_mcp_tool(mcp_tool).into_iter().next() else {
+        let phases = phases_for_mcp_tool(mcp_tool);
+        if phases.is_empty() {
             return Ok(());
+        }
+        let request_uuid =
+            request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
+        let phase = if let Some(uuid) = request_uuid.as_deref() {
+            let mut selected = None;
+            for candidate in phases.iter().copied() {
+                if self.phase_had_metered_activity(candidate, uuid)? {
+                    selected = Some(candidate);
+                    break;
+                }
+            }
+            selected.unwrap_or(phases[0])
+        } else {
+            phases[0]
         };
         let created_at = current_unix_timestamp()?;
         let utc_date = utc_date_from_secs(created_at);
-        let request_uuid =
-            request_uuid.or_else(|| current_job_context().and_then(|ctx| ctx.request_uuid));
 
         self.conn
             .execute(
@@ -719,6 +743,112 @@ mod tests {
             );
         }
 
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn green_triage_with_bridge_counts_as_run() {
+        let dir =
+            std::env::temp_dir().join(format!("metrics-triage-bridge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let store = Arc::new(Mutex::new(
+            MetricsStore::open(&dir.join("metrics.db")).expect("open"),
+        ));
+        init("session-triage-bridge".to_string(), Arc::clone(&store));
+
+        store
+            .lock()
+            .expect("lock")
+            .record_premium_bridge("verify_and_triage", Some("req-tb".into()), 10, 20)
+            .expect("bridge");
+        store
+            .lock()
+            .expect("lock")
+            .record_agent_run("verify_and_triage", Some("req-tb".into()))
+            .expect("run");
+
+        let runs: i64 = store
+            .lock()
+            .expect("lock")
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE agent_phase = 'triage' AND request_uuid = 'req-tb'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(runs, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn execute_blueprint_bridge_follows_builder_llm() {
+        let dir = std::env::temp_dir().join(format!("metrics-exec-builder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let store = Arc::new(Mutex::new(
+            MetricsStore::open(&dir.join("metrics.db")).expect("open"),
+        ));
+        init("session-exec-builder".to_string(), Arc::clone(&store));
+
+        with_job_context_async(
+            JobContext {
+                request_uuid: Some("req-eb".into()),
+                mcp_tool: Some("execute_blueprint".into()),
+                workspace_root: None,
+            },
+            || async {
+                let store = store.lock().expect("lock");
+                store
+                    .record_llm_call(
+                        AgentPhase::Builder,
+                        "m",
+                        LlmUsage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                            cached_tokens: 0,
+                        },
+                    )
+                    .expect("builder llm");
+                store
+                    .record_premium_bridge("execute_blueprint", Some("req-eb".into()), 5, 6)
+                    .expect("bridge");
+                store
+                    .record_agent_run("execute_blueprint", Some("req-eb".into()))
+                    .expect("run");
+            },
+        )
+        .await;
+
+        let store = store.lock().expect("lock");
+        let conn = store.connection();
+        let phase: String = conn
+            .query_row(
+                "SELECT agent_phase FROM premium_bridge WHERE request_uuid = 'req-eb'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("phase");
+        assert_eq!(phase, "builder");
+        let triage_runs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE agent_phase = 'triage' AND request_uuid = 'req-eb'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("triage runs");
+        let builder_runs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_runs WHERE agent_phase = 'builder' AND request_uuid = 'req-eb'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("builder runs");
+        assert_eq!(triage_runs, 0);
+        assert_eq!(builder_runs, 1);
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }

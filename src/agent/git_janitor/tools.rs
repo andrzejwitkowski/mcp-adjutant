@@ -108,7 +108,10 @@ pub fn build_emit_json(
     suggested_toml: &str,
     persist_wrote: Option<&str>,
 ) -> Value {
-    json!({
+    let summary = first_line_commit_summary(&fields.commit_message);
+    let suggested_branch_name =
+        super::branch::suggest_branch_name(gate.ticket_id.as_deref(), Some(summary));
+    let mut out = json!({
         "commit_message": fields.commit_message,
         "pr_title": fields.pr_title,
         "pr_body": fields.pr_body,
@@ -117,10 +120,96 @@ pub fn build_emit_json(
         "branch_status": gate.branch_status,
         "action_required": gate.action_required,
         "commit_allowed": gate.commit_allowed,
-        "suggested_branch_name": gate.suggested_branch_name,
+        "suggested_branch_name": suggested_branch_name,
         "current_branch": gate.current_branch,
-        "conventions": conventions,
-        "suggested_adjutant_toml": suggested_toml,
-        "persisted_adjutant_toml": persist_wrote,
-    })
+    });
+    if let Some(path) = persist_wrote {
+        out["conventions"] = serde_json::to_value(conventions).unwrap_or(Value::Null);
+        out["suggested_adjutant_toml"] = Value::String(suggested_toml.to_string());
+        out["persisted_adjutant_toml"] = Value::String(path.to_string());
+    }
+    out
+}
+
+fn first_line_commit_summary(commit_message: &str) -> &str {
+    let line = commit_message
+        .lines()
+        .next()
+        .unwrap_or(commit_message)
+        .trim();
+    if let Some(rest) = line.strip_prefix('[') {
+        if let Some((_, after)) = rest.split_once(']') {
+            let after = after.trim().trim_start_matches(':').trim();
+            if !after.is_empty() {
+                return after;
+            }
+        }
+    }
+    line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::git_janitor::branch::{BranchAction, BranchGate, BranchStatus};
+    use crate::agent::git_janitor::conventions::GitConventions;
+
+    fn gate() -> BranchGate {
+        BranchGate {
+            current_branch: "feat/x".into(),
+            branch_status: BranchStatus::Ok,
+            action_required: BranchAction::None,
+            commit_allowed: true,
+            suggested_branch_name: "feat/stale".into(),
+            ticket_id: Some("GIT-0".into()),
+        }
+    }
+
+    #[test]
+    fn emit_omits_conventions_without_persist() {
+        let fields = EmitFields {
+            commit_message: "[GIT-0] fix: rustfmt import order".into(),
+            pr_title: "[GIT-0] fix: rustfmt import order".into(),
+            pr_body: "body".into(),
+            changelog_entry: "a. b.".into(),
+        };
+        let v = build_emit_json(&fields, &gate(), &GitConventions::default(), "toml", None);
+        assert!(v.get("conventions").is_none());
+        assert!(v.get("suggested_adjutant_toml").is_none());
+        assert!(v.get("persisted_adjutant_toml").is_none());
+        assert_eq!(
+            v["suggested_branch_name"].as_str().unwrap(),
+            "feat/GIT-0-fix-rustfmt-import-order"
+        );
+    }
+
+    #[test]
+    fn emit_includes_conventions_when_persisted() {
+        let fields = EmitFields {
+            commit_message: "feat: x".into(),
+            pr_title: "feat: x".into(),
+            pr_body: "b".into(),
+            changelog_entry: "c. d.".into(),
+        };
+        let v = build_emit_json(
+            &fields,
+            &gate(),
+            &GitConventions::default(),
+            "toml-body",
+            Some("/tmp/.adjutant.toml"),
+        );
+        assert!(v.get("conventions").is_some());
+        assert_eq!(v["suggested_adjutant_toml"], "toml-body");
+        assert_eq!(v["persisted_adjutant_toml"], "/tmp/.adjutant.toml");
+    }
+
+    #[test]
+    fn first_line_commit_summary_strips_ticket_bracket() {
+        assert_eq!(
+            first_line_commit_summary("[GIT-42] fix: rustfmt import order\n\nBody"),
+            "fix: rustfmt import order"
+        );
+        assert_eq!(first_line_commit_summary("  chore: tidy  "), "chore: tidy");
+        assert_eq!(first_line_commit_summary("[TICKET]   \nbody"), "[TICKET]");
+    }
 }

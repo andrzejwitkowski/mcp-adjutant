@@ -1,4 +1,3 @@
-use super::emit::EmitBlueprintTool;
 use super::validate::{extract_json_object, is_comment_sketch, is_kebab_case};
 use super::{
     planner_emit_tool_set, planner_scout_tool_set, validate_blueprint,
@@ -7,7 +6,6 @@ use super::{
 use crate::agent::planner::constraints::CoordinatorConstraints;
 use crate::agent::planner::{PlanBlueprintArgs, PlanKind};
 use crate::cache::resolve_workspace_path;
-use crate::llm::LlmTool;
 use serde_json::json;
 
 #[test]
@@ -107,7 +105,7 @@ fn planner_scout_tool_set_excludes_emit_blueprint() {
 }
 
 #[test]
-fn planner_emit_tool_set_includes_emit_and_read_file_only() {
+fn planner_emit_tool_set_includes_draft_tools() {
     let tools = planner_emit_tool_set(CoordinatorConstraints::none());
     let names: Vec<_> = tools
         .definitions()
@@ -116,8 +114,16 @@ fn planner_emit_tool_set_includes_emit_and_read_file_only() {
         .collect();
     assert_eq!(
         names,
-        vec!["read_file".to_string(), "emit_blueprint".to_string()]
+        vec![
+            "read_file".to_string(),
+            "blueprint_begin".to_string(),
+            "blueprint_add_patch".to_string(),
+            "blueprint_add_create".to_string(),
+            "blueprint_add_tests".to_string(),
+            "blueprint_finalize".to_string(),
+        ]
     );
+    assert!(!names.contains(&"emit_blueprint".to_string()));
 }
 
 #[test]
@@ -134,10 +140,8 @@ fn hybrid_tool_sets_cover_scout_and_emit() {
         .collect();
     assert!(!scout_names.contains(&"emit_blueprint".to_string()));
     assert!(scout_names.contains(&"extract_search_anchor".to_string()));
-    assert_eq!(
-        emit_names,
-        vec!["read_file".to_string(), "emit_blueprint".to_string()]
-    );
+    assert!(emit_names.contains(&"blueprint_finalize".to_string()));
+    assert!(!emit_names.contains(&"emit_blueprint".to_string()));
 }
 
 #[test]
@@ -895,21 +899,4 @@ fn validate_accepts_generate_tests_target_in_tests() {
         "{:?}",
         validate_blueprint(raw).err()
     );
-}
-
-#[test]
-fn emit_blueprint_invoke_returns_pretty_json_on_valid_input() {
-    let tool = EmitBlueprintTool::new(CoordinatorConstraints::none());
-    let args = json!({ "blueprint": valid_blueprint() });
-    let out = tool.invoke(&args).unwrap();
-    assert!(out.contains("\"task_id\""));
-    assert!(out.contains("\"add-cache-layer\""));
-}
-
-#[test]
-fn emit_blueprint_invoke_returns_error_on_invalid_input() {
-    let tool = EmitBlueprintTool::new(CoordinatorConstraints::none());
-    let args = json!({ "blueprint": "not json" });
-    let err = tool.invoke(&args).unwrap_err();
-    assert!(err.contains("Blueprint rejected"), "{err}");
 }

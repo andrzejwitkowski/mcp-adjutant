@@ -38,6 +38,9 @@ Rules:
 6. Follow commit_format.pattern and commit_style. Default to Conventional Commits when unsure.
 7. Fill PR body using any template sections present.
 8. changelog_entry must be two short sentences for end users.
+9. Ground copy only in scout diffs / hook output — never invent tickets.
+10. If ticket_id is set (or require_ticket), put the same ticket in commit_message AND pr_title.
+11. Testing section: list commands to run, or say evidence is missing — never claim CI/tests passed without scout/hook proof.
 
 Available tools: emit_git_copy, propose_conventions_patch, update_git_conventions."#;
 

@@ -6,7 +6,6 @@ mod validate;
 mod tests;
 
 use crate::agent::planner::constraints::CoordinatorConstraints;
-use crate::agent::read_only_tools::ReadFileTool;
 use crate::llm::LlmToolSet;
 
 pub use apply::{apply_blueprint_file_steps, apply_hunks_to_body};
@@ -18,7 +17,5 @@ pub use validate::{
 pub use crate::agent::read_only_tools::planner_scout_tool_set;
 
 pub fn planner_emit_tool_set(coordinator: CoordinatorConstraints) -> LlmToolSet {
-    LlmToolSet::new()
-        .register(ReadFileTool::new())
-        .register(emit::EmitBlueprintTool::new(coordinator))
+    emit::draft_emit_tools(coordinator)
 }

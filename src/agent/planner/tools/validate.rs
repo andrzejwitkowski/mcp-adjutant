@@ -6,13 +6,13 @@ use crate::agent::planner::args::PlanKind;
 use crate::agent::planner::constraints::CoordinatorConstraints;
 use crate::cache::resolve_workspace_path;
 
-/// ponytail: SEARCH/REPLACE hunk delimiters — markers the planner must emit in `patch_content`.
-const HUNK_SEARCH_START: &str = "<<<<<<< SEARCH";
-const HUNK_SEPARATOR: &str = "=======";
-const HUNK_REPLACE_END: &str = ">>>>>>> REPLACE";
+/// ponytail: SEARCH/REPLACE hunk delimiters — Rust wraps these in draft tools; models must not invent them.
+pub(crate) const HUNK_SEARCH_START: &str = "<<<<<<< SEARCH";
+pub(crate) const HUNK_SEPARATOR: &str = "=======";
+pub(crate) const HUNK_REPLACE_END: &str = ">>>>>>> REPLACE";
 
 /// ponytail: REPLACE may add at most this many non-empty lines over SEARCH — guards against logic dumps.
-const SURGICAL_MAX_NEW_LINES: usize = 15;
+pub(crate) const SURGICAL_MAX_NEW_LINES: usize = 15;
 
 /// Pipeline agents — TriageAgent is never a blueprint step (triage runs downstream).
 const ALLOWED_AGENTS: [&str; 2] = ["TranspilerAgent", "BuilderAgent"];
@@ -411,7 +411,7 @@ pub fn validate_blueprint_grounding(
 
     if touched.is_empty() {
         return Err(
-            "no files scouted — read_file every target_file before emit_blueprint".to_string(),
+            "no files scouted — read_file every target_file before blueprint_finalize".to_string(),
         );
     }
 
@@ -431,7 +431,7 @@ pub fn validate_blueprint_grounding(
 
         if !touched.iter().any(|path| path_matches_target(path, target)) {
             return Err(format!(
-                "pipeline[{idx}]: target_file {target:?} was not read — call read_file on it before emit_blueprint"
+                "pipeline[{idx}]: target_file {target:?} was not read — call read_file on it before blueprint_finalize"
             ));
         }
     }
