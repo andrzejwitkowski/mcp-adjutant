@@ -2,6 +2,7 @@ mod factory;
 mod openai_compatible;
 mod preflight;
 mod request;
+mod sse;
 mod tools;
 mod traits;
 mod types;

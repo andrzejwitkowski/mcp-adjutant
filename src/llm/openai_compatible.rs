@@ -1,13 +1,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::domain::PhaseProfile;
 
 use super::request::LlmRequest;
+use super::sse::assemble_sse_stream;
 use super::traits::LlmClient;
-use super::types::{LlmModelTurn, LlmToolCall, LlmUsage};
+use super::types::LlmModelTurn;
 
 /// OpenAI-compatible `/v1/chat/completions` transport for all configured providers.
 pub struct OpenAiCompatibleClient {
@@ -60,53 +61,13 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     max_tokens: u32,
+    stream: bool,
 }
 
 #[derive(Clone, Serialize)]
 struct ChatMessage<'a> {
     role: &'a str,
     content: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-    usage: Option<ChatUsage>,
-}
-
-#[derive(Deserialize)]
-struct ChatUsage {
-    prompt_tokens: Option<u32>,
-    completion_tokens: Option<u32>,
-    total_tokens: Option<u32>,
-    prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Deserialize)]
-struct PromptTokensDetails {
-    cached_tokens: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatChoiceMessage {
-    content: Option<String>,
-    tool_calls: Option<Vec<ApiToolCall>>,
-}
-
-#[derive(Deserialize)]
-struct ApiToolCall {
-    function: ApiToolFunction,
-}
-
-#[derive(Deserialize)]
-struct ApiToolFunction {
-    name: String,
-    arguments: String,
 }
 
 /// Builds the JSON body for chat/completions (testable without HTTP).
@@ -135,6 +96,7 @@ pub(crate) fn build_chat_request_body(
         tool_choice,
         temperature,
         max_tokens,
+        stream: true,
     };
     serde_json::to_value(body).expect("ChatRequest serializes")
 }
@@ -220,38 +182,7 @@ impl LlmClient for OpenAiCompatibleClient {
                 );
             }
         }
-        let response = response?;
-
-        let body: ChatResponse = response
-            .into_json()
-            .map_err(|err| format!("LLM response parse failed ({label}): {err}"))?;
-
-        let message = body
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message)
-            .ok_or_else(|| format!("LLM returned no choices ({label})"))?;
-
-        let tool_calls = message
-            .tool_calls
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| {
-                let arguments = serde_json::from_str(&call.function.arguments)
-                    .map_err(|err| format!("invalid tool arguments JSON: {err}"))?;
-                Ok(LlmToolCall {
-                    name: call.function.name,
-                    arguments,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        Ok(LlmModelTurn {
-            content: message.content,
-            tool_calls,
-            usage: body.usage.map(map_chat_usage),
-        })
+        response
     }
 }
 
@@ -266,7 +197,7 @@ impl OpenAiCompatibleClient {
         tool_choice: Option<&'static str>,
         temperature: Option<f32>,
         label: &str,
-    ) -> Result<ureq::Response, String> {
+    ) -> Result<LlmModelTurn, String> {
         let body = build_chat_request_body(
             &self.profile.model_name,
             system_prompt,
@@ -285,7 +216,8 @@ impl OpenAiCompatibleClient {
         }
 
         match http.send_json(body) {
-            Ok(response) => Ok(response),
+            Ok(response) => assemble_sse_stream(response.into_reader())
+                .map_err(|err| format!("{err} ({label})")),
             Err(ureq::Error::Status(code, response)) => {
                 let detail = response.into_string().unwrap_or_default();
                 Err(format!(
@@ -320,56 +252,10 @@ impl OpenAiCompatibleClient {
     }
 }
 
-fn map_chat_usage(usage: ChatUsage) -> LlmUsage {
-    let prompt_tokens = usage.prompt_tokens.unwrap_or(0);
-    let completion_tokens = usage.completion_tokens.unwrap_or(0);
-    let total_tokens = usage
-        .total_tokens
-        .unwrap_or(prompt_tokens + completion_tokens);
-    let cached_tokens = usage
-        .prompt_tokens_details
-        .and_then(|details| details.cached_tokens)
-        .unwrap_or(0);
-    LlmUsage {
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-        cached_tokens,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn map_chat_usage_parses_openai_shape() {
-        let usage = map_chat_usage(ChatUsage {
-            prompt_tokens: Some(100),
-            completion_tokens: Some(50),
-            total_tokens: Some(150),
-            prompt_tokens_details: Some(PromptTokensDetails {
-                cached_tokens: Some(40),
-            }),
-        });
-        assert_eq!(usage.prompt_tokens, 100);
-        assert_eq!(usage.completion_tokens, 50);
-        assert_eq!(usage.total_tokens, 150);
-        assert_eq!(usage.cached_tokens, 40);
-    }
-
-    #[test]
-    fn map_chat_usage_defaults_missing_fields() {
-        let usage = map_chat_usage(ChatUsage {
-            prompt_tokens: Some(10),
-            completion_tokens: Some(5),
-            total_tokens: None,
-            prompt_tokens_details: None,
-        });
-        assert_eq!(usage.total_tokens, 15);
-        assert_eq!(usage.cached_tokens, 0);
-    }
 
     #[test]
     fn empty_tools_omits_tools_and_tool_choice() {
@@ -379,6 +265,12 @@ mod tests {
         assert!(body.get("tool_choice").is_none());
         assert!((body["temperature"].as_f64().unwrap() - 0.2).abs() < 1e-6);
         assert_eq!(body["model"], json!("gpt-5-mini"));
+    }
+
+    #[test]
+    fn request_body_always_streams() {
+        let body = build_chat_request_body("m", "s", "u", None, None, None, 100);
+        assert_eq!(body["stream"], json!(true));
     }
 
     #[test]
