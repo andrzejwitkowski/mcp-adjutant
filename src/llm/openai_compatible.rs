@@ -216,9 +216,8 @@ impl OpenAiCompatibleClient {
         }
 
         match http.send_json(body) {
-            Ok(response) => {
-                assemble_sse_stream(response.into_reader()).map_err(|err| format!("{err} ({label})"))
-            }
+            Ok(response) => assemble_sse_stream(response.into_reader())
+                .map_err(|err| format!("{err} ({label})")),
             Err(ureq::Error::Status(code, response)) => {
                 let detail = response.into_string().unwrap_or_default();
                 Err(format!(
